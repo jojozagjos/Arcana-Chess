@@ -37,6 +37,31 @@ import {
   TemporalEchoEffect,
 } from './ArcanaEffects.jsx';
 
+// Helper function to determine what type of target an arcana card needs
+function getTargetTypeForArcana(arcanaId) {
+  const targetingCards = {
+    // Cards that need a specific pawn
+    'shield_pawn': 'pawn',
+    'promotion_ritual': 'pawn',
+    
+    // Cards that need any of your pieces
+    'royal_swap': 'piece',
+    'metamorphosis': 'piece',
+    'mirror_image': 'piece',
+    'sacrifice': 'piece',
+    
+    // Cards that need an enemy piece
+    'execution': 'enemyPiece',
+    
+    // Cards that need a square
+    'cursed_square': 'square',
+    'sanctuary': 'square',
+    'mind_control': 'enemyPiece', // Mind control needs enemy piece
+  };
+  
+  return targetingCards[arcanaId] || null;
+}
+
 export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const [showMenu, setShowMenu] = useState(false);
   // Panels are always visible in the in-game menu (no collapse)
@@ -50,6 +75,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [isDrawingCard, setIsDrawingCard] = useState(false);
   const [promotionDialog, setPromotionDialog] = useState(null); // { from, to } when promotion is pending
   const [rematchVote, setRematchVote] = useState(null); // 'voted' when player votes for rematch
+  const [targetingMode, setTargetingMode] = useState(null); // { arcanaId, targetType: 'pawn'|'piece'|'square'|'enemyPiece', params: {} }
+  const [metamorphosisDialog, setMetamorphosisDialog] = useState(null); // { square } when showing piece type choice
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -87,11 +114,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const arr = gameState.usedArcanaIdsByPlayer[mySocketId] || [];
     return new Set(arr);
   }, [gameState?.usedArcanaIdsByPlayer, mySocketId]);
-
-  const pendingArcana = useMemo(() => {
-    if (!gameState?.pendingArcana || !mySocketId) return [];
-    return gameState.pendingArcana[mySocketId] || [];
-  }, [gameState?.pendingArcana, mySocketId]);
 
   const isAscended = gameState?.ascended || !!ascendedInfo;
   const pawnShields = gameState?.pawnShields || { w: null, b: null };
@@ -152,6 +174,41 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     setPendingMoveError('');
 
+    // Handle targeting mode for arcana cards
+    if (targetingMode) {
+      const piece = chess.get(square);
+      const { arcanaId, targetType, params } = targetingMode;
+      
+      // Validate target based on type
+      let validTarget = false;
+      if (targetType === 'pawn' && piece?.type === 'p' && piece.color === myColorCode) {
+        validTarget = true;
+      } else if (targetType === 'piece' && piece && piece.color === myColorCode) {
+        validTarget = true;
+      } else if (targetType === 'enemyPiece' && piece && piece.color !== myColorCode && piece.type !== 'k') {
+        validTarget = true;
+      } else if (targetType === 'square') {
+        validTarget = true;
+      }
+      
+      if (validTarget) {
+        // Store the target in params and exit targeting mode
+        const updatedParams = { ...params, targetSquare: square };
+        
+        // Special handling for metamorphosis - need to select piece type
+        if (arcanaId === 'metamorphosis') {
+          setMetamorphosisDialog({ square, arcanaId });
+          setTargetingMode(null);
+        } else {
+          setSelectedArcanaId(arcanaId);
+          setTargetingMode({ ...targetingMode, params: updatedParams, targetSelected: true });
+        }
+      } else {
+        setPendingMoveError(`Invalid target - please select a ${targetType}`);
+      }
+      return;
+    }
+
     if (!selectedSquare) {
       const piece = chess.get(square);
       if (!piece) return;
@@ -182,9 +239,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       
       const move = { from: selectedSquare, to: square };
       
+      // Include params from targeting mode if available
+      const arcanaParams = targetingMode?.targetSelected ? targetingMode.params : {};
       const arcanaUsed =
         selectedArcanaId && !usedArcanaIds.has(selectedArcanaId)
-          ? [{ arcanaId: selectedArcanaId, params: {} }]
+          ? [{ arcanaId: selectedArcanaId, params: arcanaParams }]
           : [];
 
       // Play sound immediately on local move to ensure browser allows playback
@@ -224,6 +283,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             setLegalTargets([]);
             if (arcanaUsed.length > 0) {
               setSelectedArcanaId(null);
+              setTargetingMode(null);
             }
           }
         },
@@ -249,9 +309,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const { from, to } = promotionDialog;
     const move = { from, to, promotion: promotionPiece };
     
+    // Include params from targeting mode if available
+    const arcanaParams = targetingMode?.targetSelected ? targetingMode.params : {};
     const arcanaUsed =
       selectedArcanaId && !usedArcanaIds.has(selectedArcanaId)
-        ? [{ arcanaId: selectedArcanaId, params: {} }]
+        ? [{ arcanaId: selectedArcanaId, params: arcanaParams }]
         : [];
 
     // Play sound immediately on local move
@@ -288,6 +350,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setLegalTargets([]);
           if (arcanaUsed.length > 0) {
             setSelectedArcanaId(null);
+            setTargetingMode(null);
           }
         }
       },
@@ -498,6 +561,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           lastMove={settings.gameplay.highlightLastMove ? lastMove : null}
           pawnShields={pawnShields}
           onTileClick={handleTileClick}
+          targetingMode={targetingMode}
+          chess={chess}
+          myColor={myColor}
         />
         <group>
           {piecesState.map((p) => (
@@ -633,7 +699,26 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           myArcana={myArcana}
           usedArcanaIds={usedArcanaIds}
           selectedArcanaId={selectedArcanaId}
-          onSelectArcana={setSelectedArcanaId}
+          onSelectArcana={(arcanaId) => {
+            if (!arcanaId) {
+              setSelectedArcanaId(null);
+              setTargetingMode(null);
+              return;
+            }
+            
+            // Determine if this card needs targeting
+            const targetType = getTargetTypeForArcana(arcanaId);
+            if (targetType) {
+              // Enter targeting mode
+              setTargetingMode({ arcanaId, targetType, params: {}, targetSelected: false });
+              setSelectedArcanaId(null); // Don't select until target is chosen
+            } else {
+              // No targeting needed, just select
+              setSelectedArcanaId(arcanaId);
+              setTargetingMode(null);
+            }
+          }}
+          targetingMode={targetingMode}
           isAscended={isAscended}
           isOpen={arcanaSidebarOpen}
           onToggle={() => setArcanaSidebarOpen(!arcanaSidebarOpen)}
@@ -646,19 +731,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               }
             });
           }}
-          onQueueArcana={(arcanaId) => {
-            const arcanaUsed = [{ arcanaId, params: {} }];
-            socket.emit('playerAction', { actionType: 'queueArcana', arcanaUsed }, (res) => {
-              if (!res || !res.ok) {
-                setPendingMoveError(res?.error || 'Failed to queue arcana');
-              } else {
-                setSelectedArcanaId(null); // Clear selection after queuing
-              }
-            });
-          }}
           isDrawingCard={isDrawingCard}
-          pendingArcana={pendingArcana}
-          mySocketId={mySocketId}
           currentTurn={chess?.turn()}
           myColor={myColor}
         />
@@ -868,11 +941,52 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           </div>
         </div>
       )}
+
+      {metamorphosisDialog && (
+        <div style={styles.promotionOverlay}>
+          <div style={styles.promotionDialog}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#eceff4' }}>Transform Piece To:</h3>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              {['q', 'r', 'b', 'n', 'p'].map(pieceType => (
+                <button
+                  key={pieceType}
+                  style={styles.promotionButton}
+                  onClick={() => {
+                    const updatedParams = { 
+                      targetSquare: metamorphosisDialog.square,
+                      newType: pieceType 
+                    };
+                    setSelectedArcanaId(metamorphosisDialog.arcanaId);
+                    setTargetingMode({ 
+                      arcanaId: metamorphosisDialog.arcanaId, 
+                      params: updatedParams, 
+                      targetSelected: true 
+                    });
+                    setMetamorphosisDialog(null);
+                  }}
+                >
+                  {pieceType === 'q' && '♕ Queen'}
+                  {pieceType === 'r' && '♖ Rook'}
+                  {pieceType === 'b' && '♗ Bishop'}
+                  {pieceType === 'n' && '♘ Knight'}
+                  {pieceType === 'p' && '♙ Pawn'}
+                </button>
+              ))}
+            </div>
+            <button
+              style={{ ...styles.promotionButton, marginTop: 12, background: '#bf616a' }}
+              onClick={() => setMetamorphosisDialog(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick }) {
+function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, targetingMode, chess, myColor }) {
   const tiles = [];
 
   const isLegalTarget = (fileIndex, rankIndex) => {
@@ -880,6 +994,27 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
     const rankNum = 8 - rankIndex;
     const sq = `${fileChar}${rankNum}`;
     return legalTargets.includes(sq);
+  };
+  
+  const isValidTargetSquare = (fileIndex, rankIndex) => {
+    if (!targetingMode) return false;
+    const fileChar = 'abcdefgh'[fileIndex];
+    const rankNum = 8 - rankIndex;
+    const sq = `${fileChar}${rankNum}`;
+    const piece = chess?.get(sq);
+    const myColorCode = myColor === 'white' ? 'w' : 'b';
+    
+    const { targetType } = targetingMode;
+    if (targetType === 'pawn') {
+      return piece?.type === 'p' && piece.color === myColorCode;
+    } else if (targetType === 'piece') {
+      return piece && piece.color === myColorCode;
+    } else if (targetType === 'enemyPiece') {
+      return piece && piece.color !== myColorCode && piece.type !== 'k';
+    } else if (targetType === 'square') {
+      return true; // Any square is valid
+    }
+    return false;
   };
 
   const isSelected = (fileIndex, rankIndex) => {
@@ -917,12 +1052,14 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
       const legal = isLegalTarget(file, rank);
       const last = isLastMoveSquare(file, rank);
       const shielded = isShieldSquare(file, rank);
+      const validTarget = isValidTargetSquare(file, rank);
 
       let color = baseColor;
       if (last) color = '#ffd27f';
       // Brighter selection/target colors for clarity
       if (selected) color = '#4db8ff';
       else if (legal) color = '#4cd964';
+      else if (validTarget) color = '#a3be8c'; // Green for valid arcana targets
       if (shielded) color = '#b48ead';
 
       tiles.push(
@@ -1003,7 +1140,7 @@ function RebirthBeam({ square }) {
   );
 }
 
-function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArcana, isAscended, isOpen, onToggle, onDrawCard, onQueueArcana, isDrawingCard, pendingArcana, mySocketId, currentTurn, myColor }) {
+function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArcana, targetingMode, isAscended, isOpen, onToggle, onDrawCard, isDrawingCard, currentTurn, myColor }) {
   // Don't show panel until ascended
   if (!isAscended) return null;
 
@@ -1012,8 +1149,6 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   const [hoveredId, setHoveredId] = React.useState(null);
   
   const isMyTurn = currentTurn === (myColor === 'white' ? 'w' : 'b');
-  const hasPendingArcana = pendingArcana && pendingArcana.length > 0;
-  const pendingArcanaIds = new Set(pendingArcana.map(p => p.arcanaId));
 
   // Group cards by ID to handle duplicates
   const groupedCards = React.useMemo(() => {
@@ -1027,19 +1162,21 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
     return Array.from(groups.values());
   }, [availableArcana]);
 
+  const getTargetDescription = (targetType) => {
+    switch(targetType) {
+      case 'pawn': return 'Select a pawn';
+      case 'piece': return 'Select one of your pieces';
+      case 'enemyPiece': return 'Select an enemy piece';
+      case 'square': return 'Select a square';
+      default: return 'Select a target';
+    }
+  };
+
   return (
     <div style={styles.arcanaBottomPanel}>
       <div style={styles.arcanaBottomHeader}>
-        <span>Arcana {hasPendingArcana && <span style={styles.pendingIndicator}>(Queued for next turn)</span>}</span>
+        <span>Arcana</span>
         <div style={{ display: 'flex', gap: 4 }}>
-          {selectedArcanaId && !isMyTurn && (
-            <button
-              style={styles.queueButton}
-              onClick={() => onQueueArcana(selectedArcanaId)}
-            >
-              ⏱ Queue for Next Turn
-            </button>
-          )}
           <button
             style={styles.drawCardButton}
             onClick={onDrawCard}
@@ -1057,7 +1194,6 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
         {groupedCards.map(({ card, indices }) => {
           const isSelected = selectedArcanaId === card.id;
           const isHovered = hoveredId === card.id;
-          const isPending = pendingArcanaIds.has(card.id);
           const count = indices.length;
           
           return (
@@ -1077,9 +1213,6 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
               {count > 1 && (
                 <div style={styles.cardCountBadge}>×{count}</div>
               )}
-              {isPending && (
-                <div style={styles.pendingBadge}>QUEUED</div>
-              )}
               {isHovered && (
                 <div style={styles.arcanaTooltip}>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>{card.name} {count > 1 && `(×${count})`}</div>
@@ -1093,7 +1226,12 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       {selectedArcanaId && (
         <div style={styles.arcanaSelectedIndicator}>
           Selected: {groupedCards.find(g => g.card.id === selectedArcanaId)?.card.name || selectedArcanaId}
-          {!isMyTurn && <span style={{ marginLeft: 8, opacity: 0.7 }}>(Queue it for your next turn)</span>}
+          {!isMyTurn && <span style={{ marginLeft: 8, opacity: 0.7 }}>(Wait for your turn)</span>}
+        </div>
+      )}
+      {targetingMode && !targetingMode.targetSelected && (
+        <div style={{ ...styles.arcanaSelectedIndicator, background: 'rgba(235, 203, 139, 0.15)', borderColor: '#ebcb8b' }}>
+          🎯 {getTargetDescription(targetingMode.targetType)} for {groupedCards.find(g => g.card.id === targetingMode.arcanaId)?.card.name}
         </div>
       )}
     </div>

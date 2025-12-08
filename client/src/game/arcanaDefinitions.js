@@ -5,7 +5,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Shield Pawn',
     rarity: 'common',
     category: 'defense',
-    description: 'Grant a pawn temporary protection for one enemy turn.',
+    description: 'Select a pawn to grant temporary protection: it cannot be captured for one enemy turn.',
     visual: { particles: false, animation: false, cutscene: false },
   },
   {
@@ -71,7 +71,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Royal Swap',
     rarity: 'epic',
     category: 'movement',
-    description: 'Swap positions of your king and any friendly piece.',
+    description: 'Select any of your pieces to swap positions with your king.',
     visual: { particles: true, animation: true, cutscene: false },
   },
   {
@@ -121,7 +121,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Execution',
     rarity: 'legendary',
     category: 'offense',
-    description: 'Instantly remove any enemy piece of your choice (except king).',
+    description: 'Select and instantly remove any enemy piece of your choice (except king).',
     visual: { particles: true, animation: true, cutscene: true },
   },
   
@@ -147,7 +147,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Promotion Ritual',
     rarity: 'uncommon',
     category: 'transformation',
-    description: 'Instantly promote any pawn to a queen regardless of position.',
+    description: 'Select any of your pawns to instantly promote it to a queen regardless of position.',
     visual: { particles: true, animation: true, cutscene: false },
   },
   {
@@ -155,7 +155,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Metamorphosis',
     rarity: 'rare',
     category: 'transformation',
-    description: 'Transform any of your pieces into a different piece type (not king).',
+    description: 'Select one of your pieces to transform it into a different piece type (not king).',
     visual: { particles: true, animation: true, cutscene: false },
   },
   {
@@ -163,7 +163,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Mirror Image',
     rarity: 'epic',
     category: 'transformation',
-    description: 'Create a duplicate of one of your pieces (lasts 3 turns).',
+    description: 'Select one of your pieces to create a duplicate of it (lasts 3 turns).',
     visual: { particles: true, animation: true, cutscene: false },
   },
   
@@ -189,7 +189,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Cursed Square',
     rarity: 'rare',
     category: 'utility',
-    description: 'Mark a square - any piece that lands there is destroyed.',
+    description: 'Select a square to mark it as cursed - any piece that lands there is destroyed.',
     visual: { particles: true, animation: true, cutscene: false },
   },
   {
@@ -197,7 +197,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Sanctuary',
     rarity: 'uncommon',
     category: 'utility',
-    description: 'Designate one square as safe - no captures can occur there for 2 turns.',
+    description: 'Select a square to designate it as safe - no captures can occur there for 2 turns.',
     visual: { particles: true, animation: true, cutscene: false },
   },
   {
@@ -221,7 +221,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Mind Control',
     rarity: 'legendary',
     category: 'utility',
-    description: 'Take control of an enemy piece for one turn.',
+    description: 'Select an enemy piece to take control of it for one turn.',
     visual: { particles: true, animation: true, cutscene: true },
   },
   {
@@ -229,7 +229,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Sacrifice',
     rarity: 'rare',
     category: 'utility',
-    description: 'Destroy one of your pieces to gain two random arcana.',
+    description: 'Select one of your pieces to destroy it and gain two random arcana.',
     visual: { particles: true, animation: true, cutscene: false },
   },
   

@@ -73,10 +73,24 @@ export function App() {
   };
 
   const handleBackToMenu = () => {
-    setGameState(null);
-    setAscendedInfo(null);
-    setLastArcanaEvent(null);
-    setScreen('main-menu');
+    // If there's an active game, forfeit it
+    if (gameState && gameState.status === 'ongoing') {
+      socket.emit('forfeitGame', {}, (res) => {
+        // Game forfeited, clean up state
+        setGameState(null);
+        setGameEndOutcome(null);
+        setAscendedInfo(null);
+        setLastArcanaEvent(null);
+        setScreen('main-menu');
+      });
+    } else {
+      // No active game, just return to menu
+      setGameState(null);
+      setGameEndOutcome(null);
+      setAscendedInfo(null);
+      setLastArcanaEvent(null);
+      setScreen('main-menu');
+    }
   };
 
   return (

@@ -32,7 +32,6 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
     lastDrawnBy: null,  // Track last player who drew a card
-    pendingArcana: {},  // Track arcana queued for next turn, keyed by player ID
     // Extended state for Arcana effects
     activeEffects: {
       ironFortress: { w: false, b: false },
@@ -157,7 +156,6 @@ export class GameManager {
       lastMove: gameState.lastMove,
       pawnShields: gameState.pawnShields,
       activeEffects: gameState.activeEffects,
-      pendingArcana: gameState.pendingArcana || {},
     };
   }
 
@@ -170,35 +168,6 @@ export class GameManager {
     const { move, arcanaUsed, actionType } = payload || {};
 
     if (gameState.status !== 'ongoing') throw new Error('Game is not active');
-
-    // Handle Queue Arcana action (queue cards for your next turn)
-    if (actionType === 'queueArcana') {
-      if (!gameState.ascended) throw new Error('Cannot use arcana before ascension');
-      if (!Array.isArray(arcanaUsed) || arcanaUsed.length === 0) {
-        throw new Error('No arcana specified to queue');
-      }
-      
-      // Initialize pendingArcana for this player if needed
-      if (!gameState.pendingArcana) gameState.pendingArcana = {};
-      if (!gameState.pendingArcana[socket.id]) gameState.pendingArcana[socket.id] = [];
-      
-      // Queue the arcana
-      gameState.pendingArcana[socket.id] = arcanaUsed;
-      
-      // Emit to both players
-      const serialised = this.serialiseGameState(gameState);
-      for (const pid of gameState.playerIds) {
-        if (!pid.startsWith('AI-')) {
-          this.io.to(pid).emit('gameUpdated', serialised);
-          this.io.to(pid).emit('arcanaQueued', {
-            playerId: socket.id,
-            arcana: arcanaUsed,
-          });
-        }
-      }
-      
-      return { ok: true, queued: arcanaUsed };
-    }
 
     // Handle Draw Arcana action
     if (actionType === 'drawArcana') {
@@ -286,21 +255,16 @@ export class GameManager {
     gameState.moveHistory.push(chess.fen());
     if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
 
-    // Apply any pending arcana for this player at the start of their turn
-    const pendingForPlayer = gameState.pendingArcana[socket.id];
-    let appliedPendingArcana = [];
-    if (pendingForPlayer && pendingForPlayer.length > 0) {
-      appliedPendingArcana = this.applyArcana(socket.id, gameState, pendingForPlayer, null);
-      gameState.pendingArcana[socket.id] = []; // Clear after applying
-    }
-
     const result = chess.move(candidate);
 
-    // Check cursed squares - destroy piece that lands there
+    // Check cursed squares - destroy piece that lands there (but not kings)
     for (const cursed of gameState.activeEffects.cursedSquares || []) {
       if (cursed.square === result.to) {
-        chess.remove(result.to);
-        result.cursed = true;
+        const piece = chess.get(result.to);
+        if (piece && piece.type !== 'k') {
+          chess.remove(result.to);
+          result.cursed = true;
+        }
       }
     }
 
@@ -343,6 +307,21 @@ export class GameManager {
     // Apply Arcana effects that depend on the move result
     const appliedArcana = this.applyArcana(socket.id, gameState, arcanaUsed, result);
     const allAppliedArcana = [...appliedPendingArcana, ...appliedArcana];
+
+    // Check if arcana effects removed a king
+    const arcanaKingCheck = this.checkForKingRemoval(chess);
+    if (arcanaKingCheck.kingRemoved) {
+      gameState.status = 'finished';
+      const outcome = { type: 'king-destroyed', winner: arcanaKingCheck.winner };
+      const serialised = this.serialiseGameState(gameState);
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          this.io.to(pid).emit('gameUpdated', serialised);
+          this.io.to(pid).emit('gameEnded', outcome);
+        }
+      }
+      return { gameState: serialised, appliedArcana: allAppliedArcana };
+    }
 
     // After opponent has moved once, shield expires
     const enemyColor = result.color === 'w' ? 'b' : 'w';
@@ -411,7 +390,17 @@ export class GameManager {
 
       // === DEFENSE CARDS ===
       if (def.id === 'shield_pawn') {
-        if (moveResult && moveResult.piece === 'p') {
+        // If targetSquare is provided, only shield that specific pawn
+        // Otherwise default to the pawn that just moved (backward compatibility)
+        const targetSquare = use.params?.targetSquare;
+        if (targetSquare) {
+          const targetPiece = chess.get(targetSquare);
+          if (targetPiece && targetPiece.type === 'p' && targetPiece.color === moverColor) {
+            gameState.pawnShields[moverColor] = { square: targetSquare };
+            params = { square: targetSquare, color: moverColor };
+          }
+        } else if (moveResult && moveResult.piece === 'p') {
+          // Backward compatibility: shield the pawn that just moved
           const shieldColor = moveResult.color;
           const shieldSquare = moveResult.to;
           gameState.pawnShields[shieldColor] = { square: shieldSquare };
@@ -534,26 +523,28 @@ export class GameManager {
         }
       } else if (def.id === 'metamorphosis') {
         // Transform piece to different type
-        if (use.params?.pieceSquare && use.params?.newType) {
-          const piece = chess.get(use.params.pieceSquare);
+        const targetSquare = use.params?.targetSquare || use.params?.pieceSquare;
+        if (targetSquare && use.params?.newType) {
+          const piece = chess.get(targetSquare);
           if (piece && piece.color === moverColor && use.params.newType !== 'k') {
-            chess.remove(use.params.pieceSquare);
-            chess.put({ type: use.params.newType, color: moverColor }, use.params.pieceSquare);
-            params = { square: use.params.pieceSquare, from: piece.type, to: use.params.newType };
+            chess.remove(targetSquare);
+            chess.put({ type: use.params.newType, color: moverColor }, targetSquare);
+            params = { square: targetSquare, from: piece.type, to: use.params.newType };
           }
         }
       } else if (def.id === 'mirror_image') {
         // Create duplicate (tracked in state, expires after 3 turns)
-        if (use.params?.pieceSquare) {
-          const piece = chess.get(use.params.pieceSquare);
+        const targetSquare = use.params?.targetSquare || use.params?.pieceSquare;
+        if (targetSquare) {
+          const piece = chess.get(targetSquare);
           if (piece && piece.color === moverColor) {
             gameState.activeEffects.mirrorImages.push({
-              square: use.params.pieceSquare,
+              square: targetSquare,
               type: piece.type,
               color: piece.color,
               turnsLeft: 3,
             });
-            params = { square: use.params.pieceSquare, type: piece.type };
+            params = { square: targetSquare, type: piece.type };
           }
         }
       }
@@ -599,14 +590,15 @@ export class GameManager {
         }
       } else if (def.id === 'sacrifice') {
         // Destroy own piece, gain 2 random arcana
-        if (use.params?.pieceSquare) {
-          const piece = chess.get(use.params.pieceSquare);
+        const targetSquare = use.params?.targetSquare || use.params?.pieceSquare;
+        if (targetSquare) {
+          const piece = chess.get(targetSquare);
           if (piece && piece.color === moverColor) {
-            chess.remove(use.params.pieceSquare);
+            chess.remove(targetSquare);
             const card1 = this.drawRandomArcana();
             const card2 = this.drawRandomArcana();
             gameState.arcanaByPlayer[socketId].push(card1, card2);
-            params = { sacrificed: use.params.pieceSquare, gained: [card1.id, card2.id] };
+            params = { sacrificed: targetSquare, gained: [card1.id, card2.id] };
           }
         }
       }
@@ -651,6 +643,20 @@ export class GameManager {
   }
 
   // Helper methods for complex Arcana effects
+  checkForKingRemoval(chess) {
+    // Check if either king is missing from the board
+    const whiteKing = this.findKing(chess, 'w');
+    const blackKing = this.findKing(chess, 'b');
+    
+    if (!whiteKing) {
+      return { kingRemoved: true, winner: 'black' };
+    }
+    if (!blackKing) {
+      return { kingRemoved: true, winner: 'white' };
+    }
+    return { kingRemoved: false };
+  }
+
   findKing(chess, color) {
     const board = chess.board();
     for (let rank = 0; rank < 8; rank++) {
@@ -680,7 +686,7 @@ export class GameManager {
       for (let r = fromRank + step; r !== toRank; r += step) {
         const sq = `${from[0]}${r}`;
         const piece = chess.get(sq);
-        if (piece && piece.color !== color) {
+        if (piece && piece.color !== color && piece.type !== 'k') {
           chess.remove(sq);
           damaged.push(sq);
         }
@@ -691,7 +697,7 @@ export class GameManager {
       for (let f = fromFile + step; f !== toFile; f += step) {
         const sq = `${String.fromCharCode(97 + f)}${fromRank}`;
         const piece = chess.get(sq);
-        if (piece && piece.color !== color) {
+        if (piece && piece.color !== color && piece.type !== 'k') {
           chess.remove(sq);
           damaged.push(sq);
         }
@@ -707,7 +713,7 @@ export class GameManager {
     for (const sq of adjacent) {
       if (chained.length >= maxChains) break;
       const piece = chess.get(sq);
-      if (piece && piece.color !== color) {
+      if (piece && piece.color !== color && piece.type !== 'k') {
         chess.remove(sq);
         chained.push(sq);
       }
@@ -907,11 +913,14 @@ export class GameManager {
     
     const result = chess.move(move);
 
-    // Check cursed squares
+    // Check cursed squares (don't destroy kings)
     for (const cursed of gameState.activeEffects?.cursedSquares || []) {
       if (cursed.square === result.to) {
-        chess.remove(result.to);
-        result.cursed = true;
+        const piece = chess.get(result.to);
+        if (piece && piece.type !== 'k') {
+          chess.remove(result.to);
+          result.cursed = true;
+        }
       }
     }
 
