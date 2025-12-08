@@ -32,6 +32,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
     lastDrawnBy: null,  // Track last player who drew a card
+    pendingArcana: {},  // Track arcana queued for next turn, keyed by player ID
     // Extended state for Arcana effects
     activeEffects: {
       ironFortress: { w: false, b: false },
@@ -156,6 +157,7 @@ export class GameManager {
       lastMove: gameState.lastMove,
       pawnShields: gameState.pawnShields,
       activeEffects: gameState.activeEffects,
+      pendingArcana: gameState.pendingArcana || {},
     };
   }
 
@@ -169,9 +171,47 @@ export class GameManager {
 
     if (gameState.status !== 'ongoing') throw new Error('Game is not active');
 
+    // Handle Queue Arcana action (queue cards for your next turn)
+    if (actionType === 'queueArcana') {
+      if (!gameState.ascended) throw new Error('Cannot use arcana before ascension');
+      if (!Array.isArray(arcanaUsed) || arcanaUsed.length === 0) {
+        throw new Error('No arcana specified to queue');
+      }
+      
+      // Initialize pendingArcana for this player if needed
+      if (!gameState.pendingArcana) gameState.pendingArcana = {};
+      if (!gameState.pendingArcana[socket.id]) gameState.pendingArcana[socket.id] = [];
+      
+      // Queue the arcana
+      gameState.pendingArcana[socket.id] = arcanaUsed;
+      
+      // Emit to both players
+      const serialised = this.serialiseGameState(gameState);
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          this.io.to(pid).emit('gameUpdated', serialised);
+          this.io.to(pid).emit('arcanaQueued', {
+            playerId: socket.id,
+            arcana: arcanaUsed,
+          });
+        }
+      }
+      
+      return { ok: true, queued: arcanaUsed };
+    }
+
     // Handle Draw Arcana action
     if (actionType === 'drawArcana') {
       if (!gameState.ascended) throw new Error('Cannot draw arcana before ascension');
+      
+      // Validate it's the player's turn
+      const playerColor = gameState.playerColors[socket.id];
+      const currentTurn = gameState.chess.turn();
+      const playerTurnChar = playerColor === 'white' ? 'w' : 'b';
+      if (currentTurn !== playerTurnChar) {
+        throw new Error('You can only draw a card on your turn');
+      }
+      
       if (gameState.lastDrawnBy === socket.id) throw new Error('Cannot draw on consecutive turns');
       
       const newCard = pickWeightedArcana();
@@ -246,6 +286,14 @@ export class GameManager {
     gameState.moveHistory.push(chess.fen());
     if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
 
+    // Apply any pending arcana for this player at the start of their turn
+    const pendingForPlayer = gameState.pendingArcana[socket.id];
+    let appliedPendingArcana = [];
+    if (pendingForPlayer && pendingForPlayer.length > 0) {
+      appliedPendingArcana = this.applyArcana(socket.id, gameState, pendingForPlayer, null);
+      gameState.pendingArcana[socket.id] = []; // Clear after applying
+    }
+
     const result = chess.move(candidate);
 
     // Check cursed squares - destroy piece that lands there
@@ -294,6 +342,7 @@ export class GameManager {
 
     // Apply Arcana effects that depend on the move result
     const appliedArcana = this.applyArcana(socket.id, gameState, arcanaUsed, result);
+    const allAppliedArcana = [...appliedPendingArcana, ...appliedArcana];
 
     // After opponent has moved once, shield expires
     const enemyColor = result.color === 'w' ? 'b' : 'w';

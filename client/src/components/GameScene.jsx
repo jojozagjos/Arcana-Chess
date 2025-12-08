@@ -18,6 +18,23 @@ import {
   ShieldGlowEffect,
   PromotionRitualEffect,
   MetamorphosisEffect,
+  IronFortressEffect,
+  BishopsBlessingEffect,
+  TimeFreezeEffect,
+  SpectralMarchEffect,
+  KnightOfStormsEffect,
+  QueensGambitEffect,
+  RoyalSwapEffect,
+  DoubleStrikeEffect,
+  SharpshooterEffect,
+  BerserkerRageEffect,
+  NecromancyEffect,
+  MirrorImageEffect,
+  FogOfWarEffect,
+  ChaosTheoryEffect,
+  SacrificeEffect,
+  CastleBreakerEffect,
+  TemporalEchoEffect,
 } from './ArcanaEffects.jsx';
 
 export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
@@ -54,6 +71,12 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     return gameState.playerColors[mySocketId] || 'white';
   }, [gameState?.playerColors, mySocketId]);
 
+  // Initial camera position: place the camera on the same side as the player's color.
+  // White views from positive Z (rank 1 side), Black views from negative Z (rank 8 side).
+  const cameraPosition = useMemo(() => {
+    return myColor === 'white' ? [8, 10, 8] : [-8, 10, -8];
+  }, [myColor]);
+
   const myArcana = useMemo(() => {
     if (!gameState?.arcanaByPlayer || !mySocketId) return [];
     return gameState.arcanaByPlayer[mySocketId] || [];
@@ -64,6 +87,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const arr = gameState.usedArcanaIdsByPlayer[mySocketId] || [];
     return new Set(arr);
   }, [gameState?.usedArcanaIdsByPlayer, mySocketId]);
+
+  const pendingArcana = useMemo(() => {
+    if (!gameState?.pendingArcana || !mySocketId) return [];
+    return gameState.pendingArcana[mySocketId] || [];
+  }, [gameState?.pendingArcana, mySocketId]);
 
   const isAscended = gameState?.ascended || !!ascendedInfo;
   const pawnShields = gameState?.pawnShields || { w: null, b: null };
@@ -448,7 +476,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <Canvas camera={{ position: [8, 10, 8], fov: 40 }} shadows>
+      <Canvas camera={{ position: cameraPosition, fov: 40 }} shadows>
         {/* Use the ascension-style lighting by default: slightly dimmer, dramatic "night" environment */}
         <color attach="background" args={["#0b1020"]} />
         <ambientLight intensity={0.4} />
@@ -513,6 +541,57 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         {activeVisualArcana?.arcanaId === 'metamorphosis' && activeVisualArcana.params?.square && (
           <MetamorphosisEffect square={activeVisualArcana.params.square} />
         )}
+        {activeVisualArcana?.arcanaId === 'iron_fortress' && activeVisualArcana.params?.square && (
+          <IronFortressEffect kingSquare={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'bishops_blessing' && activeVisualArcana.params?.square && (
+          <BishopsBlessingEffect bishopSquare={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'time_freeze' && (
+          <TimeFreezeEffect />
+        )}
+        {activeVisualArcana?.arcanaId === 'spectral_march' && activeVisualArcana.params?.from && activeVisualArcana.params?.to && (
+          <SpectralMarchEffect fromSquare={activeVisualArcana.params.from} toSquare={activeVisualArcana.params.to} />
+        )}
+        {activeVisualArcana?.arcanaId === 'knight_of_storms' && activeVisualArcana.params?.to && (
+          <KnightOfStormsEffect square={activeVisualArcana.params.to} />
+        )}
+        {activeVisualArcana?.arcanaId === 'queens_gambit' && activeVisualArcana.params?.square && (
+          <QueensGambitEffect square={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'royal_swap' && activeVisualArcana.params?.kingFrom && activeVisualArcana.params?.kingTo && (
+          <RoyalSwapEffect kingFrom={activeVisualArcana.params.kingFrom} kingTo={activeVisualArcana.params.kingTo} />
+        )}
+        {activeVisualArcana?.arcanaId === 'double_strike' && activeVisualArcana.params?.square && (
+          <DoubleStrikeEffect square={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'sharpshooter' && activeVisualArcana.params?.from && activeVisualArcana.params?.to && (
+          <SharpshooterEffect fromSquare={activeVisualArcana.params.from} toSquare={activeVisualArcana.params.to} />
+        )}
+        {activeVisualArcana?.arcanaId === 'berserker_rage' && activeVisualArcana.params?.square && (
+          <BerserkerRageEffect square={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'necromancy' && activeVisualArcana.params?.revived && (
+          <NecromancyEffect squares={activeVisualArcana.params.revived} />
+        )}
+        {activeVisualArcana?.arcanaId === 'mirror_image' && activeVisualArcana.params?.square && (
+          <MirrorImageEffect square={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'fog_of_war' && (
+          <FogOfWarEffect />
+        )}
+        {activeVisualArcana?.arcanaId === 'chaos_theory' && (
+          <ChaosTheoryEffect />
+        )}
+        {activeVisualArcana?.arcanaId === 'sacrifice' && activeVisualArcana.params?.sacrificed && (
+          <SacrificeEffect square={activeVisualArcana.params.sacrificed} />
+        )}
+        {activeVisualArcana?.arcanaId === 'castle_breaker' && activeVisualArcana.params?.destroyed && (
+          <CastleBreakerEffect square={activeVisualArcana.params.destroyed} />
+        )}
+        {activeVisualArcana?.arcanaId === 'temporal_echo' && activeVisualArcana.params?.square && (
+          <TemporalEchoEffect square={activeVisualArcana.params.square} />
+        )}
         
         {/* Persistent Effects */}
         {gameState?.activeEffects?.cursedSquares?.map((c, i) => (
@@ -521,6 +600,12 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         {gameState?.activeEffects?.sanctuaries?.map((s, i) => (
           <SanctuaryEffect key={`sanctuary-${i}`} square={s.square} />
         ))}
+        {gameState?.activeEffects?.mirrorImages?.map((m, i) => (
+          <MirrorImageEffect key={`mirror-${i}`} square={m.square} />
+        ))}
+        {(gameState?.activeEffects?.fogOfWar?.w || gameState?.activeEffects?.fogOfWar?.b) && (
+          <FogOfWarEffect />
+        )}
         {pawnShields.w?.square && (
           <ShieldGlowEffect square={pawnShields.w.square} />
         )}
@@ -561,7 +646,21 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               }
             });
           }}
+          onQueueArcana={(arcanaId) => {
+            const arcanaUsed = [{ arcanaId, params: {} }];
+            socket.emit('playerAction', { actionType: 'queueArcana', arcanaUsed }, (res) => {
+              if (!res || !res.ok) {
+                setPendingMoveError(res?.error || 'Failed to queue arcana');
+              } else {
+                setSelectedArcanaId(null); // Clear selection after queuing
+              }
+            });
+          }}
           isDrawingCard={isDrawingCard}
+          pendingArcana={pendingArcana}
+          mySocketId={mySocketId}
+          currentTurn={chess?.turn()}
+          myColor={myColor}
         />
 
       {showMenu && (
@@ -904,51 +1003,87 @@ function RebirthBeam({ square }) {
   );
 }
 
-function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArcana, isAscended, isOpen, onToggle, onDrawCard, isDrawingCard }) {
+function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArcana, isAscended, isOpen, onToggle, onDrawCard, onQueueArcana, isDrawingCard, pendingArcana, mySocketId, currentTurn, myColor }) {
   // Don't show panel until ascended
   if (!isAscended) return null;
 
-  // Filter out used arcana
+  // Filter out used arcana and group by card ID
   const availableArcana = myArcana.filter(a => !usedArcanaIds.has(a.id));
   const [hoveredId, setHoveredId] = React.useState(null);
+  
+  const isMyTurn = currentTurn === (myColor === 'white' ? 'w' : 'b');
+  const hasPendingArcana = pendingArcana && pendingArcana.length > 0;
+  const pendingArcanaIds = new Set(pendingArcana.map(p => p.arcanaId));
+
+  // Group cards by ID to handle duplicates
+  const groupedCards = React.useMemo(() => {
+    const groups = new Map();
+    availableArcana.forEach((card, index) => {
+      if (!groups.has(card.id)) {
+        groups.set(card.id, { card, indices: [] });
+      }
+      groups.get(card.id).indices.push(index);
+    });
+    return Array.from(groups.values());
+  }, [availableArcana]);
 
   return (
     <div style={styles.arcanaBottomPanel}>
       <div style={styles.arcanaBottomHeader}>
-        <span>Arcana</span>
-        <button
-          style={styles.drawCardButton}
-          onClick={onDrawCard}
-          disabled={isDrawingCard}
-        >
-          {isDrawingCard ? 'Drawing...' : '+ Draw'}
-        </button>
+        <span>Arcana {hasPendingArcana && <span style={styles.pendingIndicator}>(Queued for next turn)</span>}</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {selectedArcanaId && !isMyTurn && (
+            <button
+              style={styles.queueButton}
+              onClick={() => onQueueArcana(selectedArcanaId)}
+            >
+              ⏱ Queue for Next Turn
+            </button>
+          )}
+          <button
+            style={styles.drawCardButton}
+            onClick={onDrawCard}
+            disabled={isDrawingCard || !isMyTurn}
+            title={!isMyTurn ? "You can only draw on your turn" : "Draw a new arcana card"}
+          >
+            {isDrawingCard ? 'Drawing...' : '+ Draw'}
+          </button>
+        </div>
       </div>
       <div style={styles.arcanaCardRow}>
-        {availableArcana.length === 0 && (
+        {groupedCards.length === 0 && (
           <div style={styles.arcanaEmpty}>No Arcana available. Draw a card!</div>
         )}
-        {availableArcana.map((a) => {
-          const isSelected = selectedArcanaId === a.id;
-          const isHovered = hoveredId === a.id;
+        {groupedCards.map(({ card, indices }) => {
+          const isSelected = selectedArcanaId === card.id;
+          const isHovered = hoveredId === card.id;
+          const isPending = pendingArcanaIds.has(card.id);
+          const count = indices.length;
+          
           return (
             <div
-              key={a.id}
+              key={card.id}
               style={{ position: 'relative' }}
-              onMouseEnter={() => setHoveredId(a.id)}
+              onMouseEnter={() => setHoveredId(card.id)}
               onMouseLeave={() => setHoveredId(null)}
             >
               <ArcanaCard
-                arcana={a}
+                arcana={card}
                 size="small"
                 isSelected={isSelected}
-                hoverInfo={a.description}
-                onClick={() => onSelectArcana(isSelected ? null : a.id)}
+                hoverInfo={card.description}
+                onClick={() => onSelectArcana(isSelected ? null : card.id)}
               />
+              {count > 1 && (
+                <div style={styles.cardCountBadge}>×{count}</div>
+              )}
+              {isPending && (
+                <div style={styles.pendingBadge}>QUEUED</div>
+              )}
               {isHovered && (
                 <div style={styles.arcanaTooltip}>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>{a.name}</div>
-                  <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>{a.description}</div>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>{card.name} {count > 1 && `(×${count})`}</div>
+                  <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>{card.description}</div>
                 </div>
               )}
             </div>
@@ -957,7 +1092,8 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       </div>
       {selectedArcanaId && (
         <div style={styles.arcanaSelectedIndicator}>
-          Selected: {availableArcana.find(a => a.id === selectedArcanaId)?.name || selectedArcanaId}
+          Selected: {groupedCards.find(g => g.card.id === selectedArcanaId)?.card.name || selectedArcanaId}
+          {!isMyTurn && <span style={{ marginLeft: 8, opacity: 0.7 }}>(Queue it for your next turn)</span>}
         </div>
       )}
     </div>
@@ -1191,6 +1327,45 @@ const styles = {
     color: '#88c0d0',
     cursor: 'pointer',
     transition: 'all 0.2s',
+  },
+  queueButton: {
+    padding: '4px 8px',
+    fontSize: '0.75rem',
+    borderRadius: 4,
+    border: '1px solid rgba(200,160,80,0.4)',
+    background: 'rgba(200,160,80,0.08)',
+    color: '#ffd479',
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+    marginRight: 6,
+  },
+  pendingBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    background: 'rgba(255,200,80,0.95)',
+    color: '#2b2b2b',
+    padding: '2px 6px',
+    borderRadius: 4,
+    fontSize: '0.7rem',
+    fontWeight: 700,
+  },
+  cardCountBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    background: 'rgba(136,192,208,0.95)',
+    color: '#2b2b2b',
+    padding: '2px 6px',
+    borderRadius: 4,
+    fontSize: '0.75rem',
+    fontWeight: 700,
+  },
+  pendingIndicator: {
+    marginLeft: 8,
+    fontSize: '0.8rem',
+    color: '#ffd479',
+    fontWeight: 600,
   },
   arcanaEmpty: {
     opacity: 0.7,
