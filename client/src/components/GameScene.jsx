@@ -6,6 +6,7 @@ import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
+import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
 // Arcana visual effects are loaded on-demand to reduce initial bundle size.
 // We dynamically import `ArcanaEffects.jsx` when an arcana visual or persistent effect is active.
 
@@ -50,6 +51,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [targetingMode, setTargetingMode] = useState(null); // { arcanaId, targetType: 'pawn'|'piece'|'square'|'enemyPiece', params: {} }
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null); // { square } when showing piece type choice
   const [effectsModule, setEffectsModule] = useState(null);
+  const [visionMoves, setVisionMoves] = useState([]); // Opponent legal moves when vision is active
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -90,6 +92,38 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   const isAscended = gameState?.ascended || !!ascendedInfo;
   const pawnShields = gameState?.pawnShields || { w: null, b: null };
+
+  // Calculate vision moves when vision effect is active
+  const opponentColor = myColor === 'white' ? 'black' : 'white';
+  const opponentColorChar = opponentColor === 'white' ? 'w' : 'b';
+  const hasVision = gameState?.activeEffects?.vision?.[myColor === 'white' ? 'w' : 'b'];
+
+  useEffect(() => {
+    if (hasVision && chess) {
+      // Get all legal moves for opponent
+      const currentTurn = chess.turn();
+      if (currentTurn !== (myColor === 'white' ? 'w' : 'b')) {
+        // It's opponent's turn, show their moves
+        const moves = chess.moves({ verbose: true });
+        setVisionMoves(moves.map(m => m.to));
+      } else {
+        // Create temporary chess to see opponent's potential moves
+        const tempChess = new Chess(chess.fen());
+        // Flip turn to opponent
+        const fenParts = tempChess.fen().split(' ');
+        fenParts[1] = opponentColorChar;
+        try {
+          tempChess.load(fenParts.join(' '));
+          const moves = tempChess.moves({ verbose: true });
+          setVisionMoves(moves.map(m => m.to));
+        } catch {
+          setVisionMoves([]);
+        }
+      }
+    } else {
+      setVisionMoves([]);
+    }
+  }, [hasVision, chess, myColor, opponentColorChar]);
 
   useEffect(() => {
     if (ascendedInfo) {
@@ -204,7 +238,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       if (piece.color !== myColorCode) return;
 
       setSelectedSquare(square);
-      const moves = chess.moves({ square, verbose: true });
+      const moves = getArcanaEnhancedMoves(chess, square, gameState, myColor);
       setLegalTargets(moves.map((m) => m.to));
       return;
     }
@@ -271,7 +305,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       const myColorCode = myColor === 'white' ? 'w' : 'b';
       if (piece && piece.color === myColorCode) {
         setSelectedSquare(square);
-        const moves = chess.moves({ square, verbose: true });
+        const moves = getArcanaEnhancedMoves(chess, square, gameState, myColor);
         setLegalTargets(moves.map((m) => m.to));
       } else {
         setSelectedSquare(null);
@@ -531,17 +565,26 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           targetingMode={targetingMode}
           chess={chess}
           myColor={myColor}
+          visionMoves={visionMoves}
         />
         <group>
-          {piecesState.map((p) => (
-            <ChessPiece
-              key={p.uid}
-              type={p.type}
-              isWhite={p.isWhite}
-              targetPosition={p.targetPosition}
-              square={p.square}
-            />
-          ))}
+          {piecesState.map((p) => {
+            // Hide opponent pieces when fog of war is active
+            const myColorIsWhite = myColor === 'white';
+            const hasFogOfWar = gameState?.activeEffects?.fogOfWar?.[myColorIsWhite ? 'w' : 'b'];
+            if (hasFogOfWar && p.isWhite !== myColorIsWhite) {
+              return null; // Hide opponent pieces
+            }
+            return (
+              <ChessPiece
+                key={p.uid}
+                type={p.type}
+                isWhite={p.isWhite}
+                targetPosition={p.targetPosition}
+                square={p.square}
+              />
+            );
+          })}
         </group>
         {/* Ascension ring disabled - was causing visual artifacts */}
         {/* {isAscended && <AscensionRing />} */}
@@ -967,7 +1010,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   );
 }
 
-function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, targetingMode, chess, myColor }) {
+function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, targetingMode, chess, myColor, visionMoves }) {
   const tiles = [];
 
   const isLegalTarget = (fileIndex, rankIndex) => {
@@ -975,6 +1018,13 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
     const rankNum = 8 - rankIndex;
     const sq = `${fileChar}${rankNum}`;
     return legalTargets.includes(sq);
+  };
+  
+  const isVisionMove = (fileIndex, rankIndex) => {
+    const fileChar = 'abcdefgh'[fileIndex];
+    const rankNum = 8 - rankIndex;
+    const sq = `${fileChar}${rankNum}`;
+    return visionMoves && visionMoves.includes(sq);
   };
   
   const isValidTargetSquare = (fileIndex, rankIndex) => {
@@ -1034,6 +1084,7 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
       const last = isLastMoveSquare(file, rank);
       const shielded = isShieldSquare(file, rank);
       const validTarget = isValidTargetSquare(file, rank);
+      const vision = isVisionMove(file, rank);
 
       let color = baseColor;
       if (last) color = '#ffd27f';
@@ -1041,6 +1092,7 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
       if (selected) color = '#4db8ff';
       else if (legal) color = '#4cd964';
       else if (validTarget) color = '#a3be8c'; // Green for valid arcana targets
+      else if (vision) color = '#bf616a'; // Red for opponent's potential moves (vision)
       if (shielded) color = '#b48ead';
 
       tiles.push(

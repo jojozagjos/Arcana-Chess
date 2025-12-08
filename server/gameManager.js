@@ -41,10 +41,19 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       sanctuaries: [],    // [{ square, turns }]
       fogOfWar: { w: false, b: false },
       doubleStrike: { w: false, b: false },
+      doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
       queensGambit: { w: 0, b: 0 }, // extra moves remaining
+      queensGambitUsed: { w: false, b: false }, // track if extra move was used this turn
       divineIntervention: { w: false, b: false },
       mirrorImages: [],   // [{ square, type, color, turnsLeft }]
+      spectralMarch: { w: false, b: false },  // rook passes through friendly
+      phantomStep: { w: false, b: false },    // piece moves as knight
+      pawnRush: { w: false, b: false },       // all pawns can move 2
+      sharpshooter: { w: false, b: false },   // bishop ignores blockers
+      mindControlled: [],  // [{ square, originalColor, controlledBy }]
+      enPassantMaster: { w: false, b: false }, // enhanced en passant
+      temporalEcho: null,  // { pattern, color } for repeating last move
     },
     moveHistory: [],  // for time_travel
   };
@@ -277,25 +286,62 @@ export class GameManager {
 
     // Regular move handling
     const chess = gameState.chess;
+    const moverColor = chess.turn();
 
     // Work with verbose moves so we can inspect captures and types
     const legalMoves = chess.moves({ verbose: true });
-    const candidate = legalMoves.find((m) => {
+    let candidate = legalMoves.find((m) => {
       if (m.from !== move.from || m.to !== move.to) return false;
       if (move.promotion && m.promotion !== move.promotion) return false;
       return true;
     });
+
+    // If not a standard legal move, check if it's an arcana-enhanced move
+    if (!candidate && gameState.activeEffects) {
+      candidate = this.validateArcanaMove(chess, move, gameState.activeEffects, moverColor);
+    }
 
     if (!candidate) {
       throw new Error('Illegal move');
     }
 
     // Shielded pawn protection: prevent captures on shielded pawn for one enemy turn
-    const moverColor = chess.turn(); // color about to move
     const opponentColor = moverColor === 'w' ? 'b' : 'w';
     const shield = gameState.pawnShields[opponentColor];
     if (shield && candidate.captured && candidate.to === shield.square) {
       throw new Error('That pawn is shielded for this turn.');
+    }
+
+    // Iron Fortress: prevent ALL pawn captures
+    if (gameState.activeEffects.ironFortress[opponentColor] && candidate.captured) {
+      const targetPiece = chess.get(candidate.to);
+      if (targetPiece && targetPiece.type === 'p') {
+        throw new Error('Iron Fortress protects all pawns from capture!');
+      }
+    }
+
+    // Bishop's Blessing: prevent blessed bishop from being captured
+    const blessedSquare = gameState.activeEffects.bishopsBlessing[opponentColor];
+    if (blessedSquare && candidate.captured && candidate.to === blessedSquare) {
+      throw new Error('That bishop is blessed and cannot be captured!');
+    }
+
+    // Divine Intervention: prevent king from being in check or captured
+    if (gameState.activeEffects.divineIntervention[opponentColor]) {
+      const targetPiece = chess.get(candidate.to);
+      if (targetPiece && targetPiece.type === 'k') {
+        throw new Error('Divine Intervention protects the king!');
+      }
+      // Also check if move would put divine king in check
+      const tempChess = new Chess(chess.fen());
+      tempChess.move(candidate);
+      if (tempChess.inCheck()) {
+        const kingInCheck = tempChess.turn(); // After move, turn switches
+        const protectedColor = opponentColor === 'w' ? 'b' : 'w';
+        if (kingInCheck === protectedColor) {
+          throw new Error('Divine Intervention prevents check on the king!');
+        }
+      }
     }
 
     // Check time freeze - skip opponent's turn
@@ -310,6 +356,20 @@ export class GameManager {
     if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
 
     const result = chess.move(candidate);
+
+    // Update shield position if the shielded piece moved
+    const myShield = gameState.pawnShields[moverColor];
+    if (myShield && result.from === myShield.square && result.piece === 'p') {
+      // Shield follows the pawn to its new square
+      myShield.square = result.to;
+    }
+
+    // Update Bishop's Blessing position if the blessed bishop moved
+    const myBlessing = gameState.activeEffects.bishopsBlessing[moverColor];
+    if (myBlessing && result.from === myBlessing && result.piece === 'b') {
+      // Blessing follows the bishop to its new square
+      gameState.activeEffects.bishopsBlessing[moverColor] = result.to;
+    }
 
     // Check cursed squares - destroy piece that lands there (but not kings)
     for (const cursed of gameState.activeEffects.cursedSquares || []) {
@@ -338,6 +398,23 @@ export class GameManager {
         by: result.color,
         at: result.to,
       });
+
+      // Poison Touch: destroy adjacent enemy pieces after capture
+      if (gameState.activeEffects.poisonTouch[moverColor]) {
+        const poisoned = this.applyChainLightning(chess, result.to, moverColor, 8); // All adjacent
+        if (poisoned.length > 0) {
+          result.poisoned = poisoned;
+        }
+      }
+
+      // Double Strike: allow immediate second attack
+      if (gameState.activeEffects.doubleStrike[moverColor]) {
+        // Mark that this player can make another capturing move
+        gameState.activeEffects.doubleStrikeActive = {
+          color: moverColor,
+          from: result.to, // Must attack from the piece that just captured
+        };
+      }
     }
 
     // Ascension trigger: first capture - award 1 weighted-random card to each player
@@ -358,10 +435,6 @@ export class GameManager {
       }
     }
 
-    // After opponent has moved once, shield expires
-    const enemyColor = result.color === 'w' ? 'b' : 'w';
-    gameState.pawnShields[enemyColor] = null;
-
     // Decrement turn-based effects
     this.decrementEffects(gameState);
 
@@ -372,6 +445,39 @@ export class GameManager {
     } else if (chess.isStalemate() || chess.isDraw()) {
       gameState.status = 'finished';
       outcome = { type: 'draw' };
+    }
+
+    // Check if Queen's Gambit allows an extra move
+    const hasQueensGambit = gameState.activeEffects.queensGambit[moverColor] > 0 && 
+                           !gameState.activeEffects.queensGambitUsed[moverColor];
+    
+    // Check if Double Strike is active (second attack ready)
+    const hasDoubleStrike = gameState.activeEffects.doubleStrikeActive?.color === moverColor;
+
+    // If player has extra move available, don't switch turns yet
+    if ((hasQueensGambit || hasDoubleStrike) && !outcome) {
+      // Mark that they used their extra move opportunity
+      if (hasQueensGambit) {
+        gameState.activeEffects.queensGambitUsed[moverColor] = true;
+      }
+      if (hasDoubleStrike) {
+        // Clear double strike after second attack
+        gameState.activeEffects.doubleStrikeActive = null;
+      }
+      
+      // Don't change turn - same player can move again
+      const serialised = this.serialiseGameState(gameState);
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          this.io.to(pid).emit('gameUpdated', serialised);
+          // Notify about extra move
+          this.io.to(pid).emit('extraMoveAvailable', { 
+            color: moverColor, 
+            type: hasQueensGambit ? 'queensGambit' : 'doubleStrike'
+          });
+        }
+      }
+      return { gameState: serialised, appliedArcana: [], extraMove: true };
     }
 
     const serialised = this.serialiseGameState(gameState);
@@ -448,7 +554,15 @@ export class GameManager {
           params = { color: moverColor };
         }
       } else if (def.id === 'bishops_blessing') {
-        if (moverColor && moveResult?.piece === 'b') {
+        // Can target a specific bishop or use one that just moved
+        const targetSquare = use.params?.targetSquare;
+        if (targetSquare) {
+          const targetPiece = chess.get(targetSquare);
+          if (targetPiece && targetPiece.type === 'b' && targetPiece.color === moverColor) {
+            gameState.activeEffects.bishopsBlessing[moverColor] = targetSquare;
+            params = { square: targetSquare, color: moverColor };
+          }
+        } else if (moverColor && moveResult?.piece === 'b') {
           gameState.activeEffects.bishopsBlessing[moverColor] = moveResult.to;
           params = { square: moveResult.to, color: moverColor };
         }
@@ -460,8 +574,11 @@ export class GameManager {
       
       // === MOVEMENT CARDS ===
       else if (def.id === 'spectral_march') {
-        // Allow rook to pass through friendlies - handled client-side with special move validation
-        params = { piece: moveResult?.piece, from: moveResult?.from, to: moveResult?.to };
+        // Allow rook to pass through friendlies - enable custom move generation
+        if (moverColor) {
+          gameState.activeEffects.spectralMarch[moverColor] = true;
+          params = { color: moverColor };
+        }
       } else if (def.id === 'knight_of_storms') {
         // Teleport handled as normal move, just visual effect
         params = { from: moveResult?.from, to: moveResult?.to };
@@ -471,8 +588,11 @@ export class GameManager {
           params = { color: moverColor };
         }
       } else if (def.id === 'phantom_step') {
-        // Piece moves like knight - handled client-side
-        params = { from: moveResult?.from, to: moveResult?.to };
+        // Piece moves like knight - enable custom move generation
+        if (moverColor) {
+          gameState.activeEffects.phantomStep[moverColor] = true;
+          params = { color: moverColor };
+        }
       } else if (def.id === 'royal_swap') {
         // Swap king with another piece - requires special handling
         if (use.params?.targetSquare && moverColor) {
@@ -487,7 +607,9 @@ export class GameManager {
           }
         }
       } else if (def.id === 'pawn_rush') {
+        // All pawns can move 2 squares - enable custom move generation
         if (moverColor) {
+          gameState.activeEffects.pawnRush[moverColor] = true;
           params = { color: moverColor };
         }
       }
@@ -504,8 +626,11 @@ export class GameManager {
           params = { color: moverColor };
         }
       } else if (def.id === 'sharpshooter') {
-        // Bishop ignores blockers - special validation needed
-        params = { from: moveResult?.from, to: moveResult?.to };
+        // Bishop ignores blockers - enable custom move generation
+        if (moverColor) {
+          gameState.activeEffects.sharpshooter[moverColor] = true;
+          params = { color: moverColor };
+        }
       } else if (def.id === 'berserker_rage') {
         // Rook damages path - apply after move
         if (moveResult && moveResult.piece === 'r') {
@@ -620,9 +745,25 @@ export class GameManager {
         const shuffled = this.shufflePieces(chess, 3);
         params = { shuffled };
       } else if (def.id === 'mind_control') {
-        // Take control of enemy piece for 1 turn - complex, mark as active
+        // Take control of enemy piece for 1 turn
         if (use.params?.targetSquare) {
-          params = { square: use.params.targetSquare };
+          const target = chess.get(use.params.targetSquare);
+          if (target && target.color !== moverColor && target.type !== 'k') {
+            // Temporarily flip the piece color
+            const originalColor = target.color;
+            chess.remove(use.params.targetSquare);
+            chess.put({ type: target.type, color: moverColor }, use.params.targetSquare);
+            
+            // Track this for reversal after 1 turn
+            gameState.activeEffects.mindControlled.push({
+              square: use.params.targetSquare,
+              originalColor: originalColor,
+              controlledBy: moverColor,
+              type: target.type,
+            });
+            
+            params = { square: use.params.targetSquare, piece: target.type, originalColor };
+          }
         }
       } else if (def.id === 'sacrifice') {
         // Destroy own piece, gain 2 random arcana
@@ -641,7 +782,11 @@ export class GameManager {
       
       // === SPECIAL ===
       else if (def.id === 'en_passant_master') {
-        params = { color: moverColor };
+        // Enable enhanced en passant for this turn
+        if (moverColor) {
+          gameState.activeEffects.enPassantMaster[moverColor] = true;
+          params = { color: moverColor };
+        }
       } else if (def.id === 'divine_intervention') {
         if (moverColor) {
           gameState.activeEffects.divineIntervention[moverColor] = true;
@@ -649,8 +794,25 @@ export class GameManager {
         }
       } else if (def.id === 'temporal_echo') {
         // Repeat last move pattern with different piece
-        if (gameState.lastMove) {
-          params = { lastMove: gameState.lastMove };
+        if (gameState.lastMove && gameState.lastMove.from && gameState.lastMove.to) {
+          const lastFrom = gameState.lastMove.from;
+          const lastTo = gameState.lastMove.to;
+          
+          // Calculate the move pattern (direction and distance)
+          const fromFile = lastFrom.charCodeAt(0);
+          const fromRank = parseInt(lastFrom[1]);
+          const toFile = lastTo.charCodeAt(0);
+          const toRank = parseInt(lastTo[1]);
+          
+          const fileDelta = toFile - fromFile;
+          const rankDelta = toRank - fromRank;
+          
+          gameState.activeEffects.temporalEcho = {
+            pattern: { fileDelta, rankDelta },
+            color: moverColor,
+          };
+          
+          params = { lastMove: gameState.lastMove, pattern: { fileDelta, rankDelta } };
         }
       }
 
@@ -676,6 +838,242 @@ export class GameManager {
     }
 
     return appliedDefs;
+  }
+
+  // Validate arcana-enhanced moves that aren't normally legal
+  validateArcanaMove(chess, move, activeEffects, moverColor) {
+    const board = chess.board();
+    const fromSquare = move.from;
+    const toSquare = move.to;
+    
+    // Get piece info
+    const piece = chess.get(fromSquare);
+    if (!piece || piece.color !== moverColor) {
+      return null;
+    }
+
+    // Sanctuary check: cannot capture on sanctuary squares
+    if (activeEffects.sanctuaries && activeEffects.sanctuaries.length > 0) {
+      const targetPiece = chess.get(toSquare);
+      if (targetPiece) {
+        const isSanctuary = activeEffects.sanctuaries.some(s => s.square === toSquare);
+        if (isSanctuary) {
+          return null; // Cannot capture on sanctuary
+        }
+      }
+    }
+
+    // Spectral March: Rook can pass through ONE friendly piece
+    if (activeEffects.spectralMarch && activeEffects.spectralMarch[moverColor] && piece.type === 'r') {
+      const validMove = this.validateSpectralMarch(chess, fromSquare, toSquare, moverColor);
+      if (validMove) return validMove;
+    }
+
+    // Phantom Step: Any piece can move like a knight
+    if (activeEffects.phantomStep && activeEffects.phantomStep[moverColor]) {
+      const validMove = this.validatePhantomStep(chess, fromSquare, toSquare, piece);
+      if (validMove) return validMove;
+    }
+
+    // Pawn Rush: Pawn can move 2 squares even if already moved
+    if (activeEffects.pawnRush && activeEffects.pawnRush[moverColor] && piece.type === 'p') {
+      const validMove = this.validatePawnRush(chess, fromSquare, toSquare, moverColor);
+      if (validMove) return validMove;
+    }
+
+    // Sharpshooter: Bishop can capture through blockers on diagonal
+    if (activeEffects.sharpshooter && activeEffects.sharpshooter[moverColor] && piece.type === 'b') {
+      const validMove = this.validateSharpshooter(chess, fromSquare, toSquare, moverColor);
+      if (validMove) return validMove;
+    }
+
+    // Temporal Echo: Repeat last move pattern
+    if (activeEffects.temporalEcho && activeEffects.temporalEcho.color === moverColor) {
+      const validMove = this.validateTemporalEcho(chess, fromSquare, toSquare, piece, activeEffects.temporalEcho.pattern);
+      if (validMove) return validMove;
+    }
+
+    // En Passant Master: Enhanced en passant (allow en passant even if not immediate)
+    if (activeEffects.enPassantMaster && activeEffects.enPassantMaster[moverColor] && piece.type === 'p') {
+      const validMove = this.validateEnPassantMaster(chess, fromSquare, toSquare, moverColor);
+      if (validMove) return validMove;
+    }
+
+    return null;
+  }
+
+  validateSpectralMarch(chess, from, to, color) {
+    // Rook must move in straight line (same rank or file)
+    const fromFile = from.charCodeAt(0);
+    const fromRank = parseInt(from[1]);
+    const toFile = to.charCodeAt(0);
+    const toRank = parseInt(to[1]);
+
+    const sameFile = fromFile === toFile;
+    const sameRank = fromRank === toRank;
+    
+    if (!sameFile && !sameRank) return null;
+
+    // Check path - can pass through ONE friendly piece
+    let friendlyCount = 0;
+    const fileStep = sameFile ? 0 : (toFile > fromFile ? 1 : -1);
+    const rankStep = sameRank ? 0 : (toRank > fromRank ? 1 : -1);
+    
+    let currentFile = fromFile + fileStep;
+    let currentRank = fromRank + rankStep;
+    
+    while (currentFile !== toFile || currentRank !== toRank) {
+      const square = String.fromCharCode(currentFile) + currentRank;
+      const piece = chess.get(square);
+      
+      if (piece) {
+        if (piece.color === color) {
+          friendlyCount++;
+          if (friendlyCount > 1) return null; // Can only pass through one friendly
+        } else {
+          return null; // Cannot pass through enemy pieces
+        }
+      }
+      
+      currentFile += fileStep;
+      currentRank += rankStep;
+    }
+
+    // Destination must be empty or enemy piece
+    const destPiece = chess.get(to);
+    if (destPiece && destPiece.color === color) return null;
+
+    return { from, to, piece: 'r', captured: destPiece?.type, color };
+  }
+
+  validatePhantomStep(chess, from, to, piece) {
+    // Check if it's a valid knight move pattern
+    const fromFile = from.charCodeAt(0);
+    const fromRank = parseInt(from[1]);
+    const toFile = to.charCodeAt(0);
+    const toRank = parseInt(to[1]);
+
+    const fileDiff = Math.abs(toFile - fromFile);
+    const rankDiff = Math.abs(toRank - fromRank);
+
+    const isKnightMove = (fileDiff === 2 && rankDiff === 1) || (fileDiff === 1 && rankDiff === 2);
+    if (!isKnightMove) return null;
+
+    // Destination must be empty or enemy piece
+    const destPiece = chess.get(to);
+    if (destPiece && destPiece.color === piece.color) return null;
+
+    return { from, to, piece: piece.type, captured: destPiece?.type, color: piece.color };
+  }
+
+  validatePawnRush(chess, from, to, color) {
+    const fromFile = from.charCodeAt(0);
+    const fromRank = parseInt(from[1]);
+    const toFile = to.charCodeAt(0);
+    const toRank = parseInt(to[1]);
+
+    // Must be same file (straight move)
+    if (fromFile !== toFile) return null;
+
+    // Must be 2 squares forward
+    const direction = color === 'w' ? 1 : -1;
+    if (toRank !== fromRank + (2 * direction)) return null;
+
+    // Path must be clear
+    const middleRank = fromRank + direction;
+    const middleSquare = String.fromCharCode(fromFile) + middleRank;
+    if (chess.get(middleSquare)) return null;
+    if (chess.get(to)) return null;
+
+    return { from, to, piece: 'p', color };
+  }
+
+  validateSharpshooter(chess, from, to, color) {
+    // Must be diagonal move
+    const fromFile = from.charCodeAt(0);
+    const fromRank = parseInt(from[1]);
+    const toFile = to.charCodeAt(0);
+    const toRank = parseInt(to[1]);
+
+    const fileDiff = Math.abs(toFile - fromFile);
+    const rankDiff = Math.abs(toRank - fromRank);
+
+    if (fileDiff !== rankDiff) return null; // Not diagonal
+
+    // Destination must have enemy piece
+    const destPiece = chess.get(to);
+    if (!destPiece || destPiece.color === color) return null;
+
+    // Can ignore blockers on the path (that's the point of sharpshooter)
+    return { from, to, piece: 'b', captured: destPiece.type, color };
+  }
+
+  validateTemporalEcho(chess, from, to, piece, pattern) {
+    // Check if the move follows the same pattern as the last move
+    const fromFile = from.charCodeAt(0);
+    const fromRank = parseInt(from[1]);
+    const toFile = to.charCodeAt(0);
+    const toRank = parseInt(to[1]);
+
+    const fileDelta = toFile - fromFile;
+    const rankDelta = toRank - fromRank;
+
+    // Must match the pattern exactly
+    if (fileDelta !== pattern.fileDelta || rankDelta !== pattern.rankDelta) {
+      return null;
+    }
+
+    // Destination must be empty or enemy piece
+    const destPiece = chess.get(to);
+    if (destPiece && destPiece.color === piece.color) return null;
+
+    // Path must be clear for non-knight moves
+    if (Math.abs(fileDelta) > 1 || Math.abs(rankDelta) > 1) {
+      const fileStep = fileDelta === 0 ? 0 : fileDelta / Math.abs(fileDelta);
+      const rankStep = rankDelta === 0 ? 0 : rankDelta / Math.abs(rankDelta);
+      
+      let currentFile = fromFile + fileStep;
+      let currentRank = fromRank + rankStep;
+      
+      while (currentFile !== toFile || currentRank !== toRank) {
+        const square = String.fromCharCode(currentFile) + currentRank;
+        if (chess.get(square)) return null; // Path blocked
+        currentFile += fileStep;
+        currentRank += rankStep;
+      }
+    }
+
+    return { from, to, piece: piece.type, captured: destPiece?.type, color: piece.color };
+  }
+
+  validateEnPassantMaster(chess, from, to, color) {
+    // Enhanced en passant - allow diagonal pawn captures even without immediate en passant setup
+    const fromFile = from.charCodeAt(0);
+    const fromRank = parseInt(from[1]);
+    const toFile = to.charCodeAt(0);
+    const toRank = parseInt(to[1]);
+
+    const fileDiff = Math.abs(toFile - fromFile);
+    const rankDiff = Math.abs(toRank - fromRank);
+
+    // Must be diagonal (1,1)
+    if (fileDiff !== 1 || rankDiff !== 1) return null;
+
+    const direction = color === 'w' ? 1 : -1;
+    if (toRank !== fromRank + direction) return null;
+
+    // Check if there's an enemy pawn on the adjacent square (same rank as from)
+    const adjacentSquare = String.fromCharCode(toFile) + fromRank;
+    const adjacentPiece = chess.get(adjacentSquare);
+
+    if (adjacentPiece && adjacentPiece.type === 'p' && adjacentPiece.color !== color) {
+      // Destination must be empty
+      if (!chess.get(to)) {
+        return { from, to, piece: 'p', color, flags: 'e', captured: 'p' };
+      }
+    }
+
+    return null;
   }
 
   // Helper methods for complex Arcana effects
@@ -949,6 +1347,13 @@ export class GameManager {
     
     const result = chess.move(move);
 
+    // Update shield position if the AI's shielded piece moved
+    const aiShield = gameState.pawnShields[moverColor];
+    if (aiShield && result.from === aiShield.square && result.piece === 'p') {
+      // Shield follows the pawn to its new square
+      aiShield.square = result.to;
+    }
+
     // Check cursed squares (don't destroy kings)
     for (const cursed of gameState.activeEffects?.cursedSquares || []) {
       if (cursed.square === result.to) {
@@ -992,10 +1397,6 @@ export class GameManager {
         }
       }
     }
-
-    // After enemy has moved once, shield expires
-    const enemyColor = result.color === 'w' ? 'b' : 'w';
-    gameState.pawnShields[enemyColor] = null;
 
     // Decrement effects after AI move
     this.decrementEffects(gameState);
@@ -1051,10 +1452,40 @@ export class GameManager {
     effects.fogOfWar = { w: false, b: false };
     effects.doubleStrike = { w: false, b: false };
     effects.poisonTouch = { w: false, b: false };
+    effects.spectralMarch = { w: false, b: false };
+    effects.phantomStep = { w: false, b: false };
+    effects.pawnRush = { w: false, b: false };
+    effects.sharpshooter = { w: false, b: false };
+    effects.enPassantMaster = { w: false, b: false };
+    effects.temporalEcho = null;
+    
+    // Reverse mind control after 1 turn
+    if (effects.mindControlled && effects.mindControlled.length > 0) {
+      const chess = gameState.chess;
+      for (const controlled of effects.mindControlled) {
+        const piece = chess.get(controlled.square);
+        if (piece && piece.type === controlled.type) {
+          // Flip it back to original color
+          chess.remove(controlled.square);
+          chess.put({ type: controlled.type, color: controlled.originalColor }, controlled.square);
+        }
+      }
+      effects.mindControlled = [];
+    }
     
     // Decrement queen's gambit extra moves
     if (effects.queensGambit.w > 0) effects.queensGambit.w--;
     if (effects.queensGambit.b > 0) effects.queensGambit.b--;
+    
+    // Clear Queen's Gambit used flags when counter reaches 0
+    if (effects.queensGambit.w === 0) effects.queensGambitUsed.w = false;
+    if (effects.queensGambit.b === 0) effects.queensGambitUsed.b = false;
+    
+    // Expire shields after the turn ends (opponent had their chance to attack)
+    const currentTurn = gameState.chess.turn();
+    const nextPlayerColor = currentTurn === 'w' ? 'b' : 'w';
+    // Clear the shield for the player whose turn just ended
+    gameState.pawnShields[nextPlayerColor] = null;
   }
 
   forfeitGame(socket, payload) {

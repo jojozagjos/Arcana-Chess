@@ -28,7 +28,7 @@ export function MainMenu({
 
           <div style={styles.secondaryRow}>
             <button style={styles.secondaryButton} onClick={onTutorial}>
-              Tutorial
+              Tutorial (WIP)
             </button>
             <button style={styles.secondaryButton} onClick={onViewArcana}>
               View Arcana
@@ -92,7 +92,7 @@ function HostLobbyScreen({ onBack, initialLobby = null }) {
             onClick={() => !currentLobby && setTab('ai')}
             disabled={!!currentLobby}
           >
-            Versus AI
+            Versus AI (WIP)
           </button>
         </div>
 
