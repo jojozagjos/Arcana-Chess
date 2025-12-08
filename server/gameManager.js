@@ -306,7 +306,7 @@ export class GameManager {
 
     // Apply Arcana effects that depend on the move result
     const appliedArcana = this.applyArcana(socket.id, gameState, arcanaUsed, result);
-    const allAppliedArcana = [...appliedPendingArcana, ...appliedArcana];
+    const allAppliedArcana = appliedArcana;
 
     // Check if arcana effects removed a king
     const arcanaKingCheck = this.checkForKingRemoval(chess);
