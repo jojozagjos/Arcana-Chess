@@ -404,7 +404,7 @@ export class GameManager {
       }
     }
 
-    return { gameState: this.serialiseGameState(gameState), appliedArcana };
+    return { gameState: this.serialiseGameState(gameState), appliedArcana: [] };
   }
 
   applyArcana(socketId, gameState, arcanaUsed, moveResult) {
