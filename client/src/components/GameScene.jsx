@@ -173,7 +173,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       }
       
       if (validTarget) {
-        // Store the target in params and exit targeting mode
+        // Store the target in params and activate arcana immediately
         const updatedParams = { ...params, targetSquare: square };
         
         // Special handling for metamorphosis - need to select piece type
@@ -181,8 +181,16 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setMetamorphosisDialog({ square, arcanaId });
           setTargetingMode(null);
         } else {
-          setSelectedArcanaId(arcanaId);
-          setTargetingMode({ ...targetingMode, params: updatedParams, targetSelected: true });
+          // Activate the arcana immediately with the selected target
+          socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: updatedParams }] }, (res) => {
+            if (!res || !res.ok) {
+              setPendingMoveError(res?.error || 'Failed to use arcana');
+            } else {
+              setPendingMoveError('');
+            }
+          });
+          setSelectedArcanaId(null);
+          setTargetingMode(null);
         }
       } else {
         setPendingMoveError(`Invalid target - please select a ${targetType}`);
@@ -219,13 +227,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       }
       
       const move = { from: selectedSquare, to: square };
-      
-      // Include params from targeting mode if available
-      const arcanaParams = targetingMode?.targetSelected ? targetingMode.params : {};
-      const arcanaUsed =
-        selectedArcanaId && !usedArcanaIds.has(selectedArcanaId)
-          ? [{ arcanaId: selectedArcanaId, params: arcanaParams }]
-          : [];
 
       // Play sound immediately on local move to ensure browser allows playback
       const targetPiecePre = chess.get(square);
@@ -242,7 +243,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
       socket.emit(
         'playerAction',
-        { move, arcanaUsed },
+        { move },
         (res) => {
           if (!res || !res.ok) {
             setPendingMoveError(res?.error || 'Move rejected');
@@ -262,10 +263,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             setPendingMoveError('');
             setSelectedSquare(null);
             setLegalTargets([]);
-            if (arcanaUsed.length > 0) {
-              setSelectedArcanaId(null);
-              setTargetingMode(null);
-            }
           }
         },
       );
@@ -289,13 +286,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     
     const { from, to } = promotionDialog;
     const move = { from, to, promotion: promotionPiece };
-    
-    // Include params from targeting mode if available
-    const arcanaParams = targetingMode?.targetSelected ? targetingMode.params : {};
-    const arcanaUsed =
-      selectedArcanaId && !usedArcanaIds.has(selectedArcanaId)
-        ? [{ arcanaId: selectedArcanaId, params: arcanaParams }]
-        : [];
 
     // Play sound immediately on local move
     const targetPiecePre = chess.get(to);
@@ -312,7 +302,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     socket.emit(
       'playerAction',
-      { move, arcanaUsed },
+      { move },
       (res) => {
         if (!res || !res.ok) {
           setPendingMoveError(res?.error || 'Move rejected');
@@ -329,10 +319,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setPendingMoveError('');
           setSelectedSquare(null);
           setLegalTargets([]);
-          if (arcanaUsed.length > 0) {
-            setSelectedArcanaId(null);
-            setTargetingMode(null);
-          }
         }
       },
     );
@@ -697,8 +683,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               setTargetingMode({ arcanaId, targetType, params: {}, targetSelected: false });
               setSelectedArcanaId(null); // Don't select until target is chosen
             } else {
-              // No targeting needed, just select
-              setSelectedArcanaId(arcanaId);
+              // No targeting needed, activate immediately
+              socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: {} }] }, (res) => {
+                if (!res || !res.ok) {
+                  setPendingMoveError(res?.error || 'Failed to use arcana');
+                } else {
+                  setPendingMoveError('');
+                }
+              });
+              setSelectedArcanaId(null);
               setTargetingMode(null);
             }
           }}
@@ -940,12 +933,16 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       targetSquare: metamorphosisDialog.square,
                       newType: pieceType 
                     };
-                    setSelectedArcanaId(metamorphosisDialog.arcanaId);
-                    setTargetingMode({ 
-                      arcanaId: metamorphosisDialog.arcanaId, 
-                      params: updatedParams, 
-                      targetSelected: true 
+                    // Activate the arcana immediately with the selected piece type
+                    socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId: metamorphosisDialog.arcanaId, params: updatedParams }] }, (res) => {
+                      if (!res || !res.ok) {
+                        setPendingMoveError(res?.error || 'Failed to use arcana');
+                      } else {
+                        setPendingMoveError('');
+                      }
                     });
+                    setSelectedArcanaId(null);
+                    setTargetingMode(null);
                     setMetamorphosisDialog(null);
                   }}
                 >

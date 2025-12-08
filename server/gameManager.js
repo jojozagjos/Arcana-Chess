@@ -221,6 +221,60 @@ export class GameManager {
       return { ok: true, drewCard: newCard };
     }
 
+    // Handle Use Arcana action (activate card before making a move)
+    if (actionType === 'useArcana') {
+      if (!arcanaUsed || arcanaUsed.length === 0) {
+        throw new Error('No arcana specified');
+      }
+
+      // Validate it's the player's turn
+      const playerColor = gameState.playerColors[socket.id];
+      const currentTurn = gameState.chess.turn();
+      const playerTurnChar = playerColor === 'white' ? 'w' : 'b';
+      if (currentTurn !== playerTurnChar) {
+        throw new Error('You can only use arcana on your turn');
+      }
+
+      const chess = gameState.chess;
+
+      // Apply arcana effects (no move result since arcana is used before a move)
+      const appliedArcana = this.applyArcana(socket.id, gameState, arcanaUsed, null);
+
+      // Check if arcana effects removed a king
+      const arcanaKingCheck = this.checkForKingRemoval(chess);
+      if (arcanaKingCheck.kingRemoved) {
+        gameState.status = 'finished';
+        const outcome = { type: 'king-destroyed', winner: arcanaKingCheck.winner };
+        const serialised = this.serialiseGameState(gameState);
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            this.io.to(pid).emit('gameUpdated', serialised);
+            this.io.to(pid).emit('gameEnded', outcome);
+          }
+        }
+        return { gameState: serialised, appliedArcana };
+      }
+
+      // Emit game update to both players
+      const serialised = this.serialiseGameState(gameState);
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          this.io.to(pid).emit('gameUpdated', serialised);
+        }
+      }
+
+      // Emit arcana triggered event for visuals
+      for (const use of appliedArcana) {
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            this.io.to(pid).emit('arcanaTriggered', use);
+          }
+        }
+      }
+
+      return { ok: true, appliedArcana };
+    }
+
     // Regular move handling
     const chess = gameState.chess;
 
@@ -304,25 +358,6 @@ export class GameManager {
       }
     }
 
-    // Apply Arcana effects that depend on the move result
-    const appliedArcana = this.applyArcana(socket.id, gameState, arcanaUsed, result);
-    const allAppliedArcana = appliedArcana;
-
-    // Check if arcana effects removed a king
-    const arcanaKingCheck = this.checkForKingRemoval(chess);
-    if (arcanaKingCheck.kingRemoved) {
-      gameState.status = 'finished';
-      const outcome = { type: 'king-destroyed', winner: arcanaKingCheck.winner };
-      const serialised = this.serialiseGameState(gameState);
-      for (const pid of gameState.playerIds) {
-        if (!pid.startsWith('AI-')) {
-          this.io.to(pid).emit('gameUpdated', serialised);
-          this.io.to(pid).emit('gameEnded', outcome);
-        }
-      }
-      return { gameState: serialised, appliedArcana: allAppliedArcana };
-    }
-
     // After opponent has moved once, shield expires
     const enemyColor = result.color === 'w' ? 'b' : 'w';
     gameState.pawnShields[enemyColor] = null;
@@ -385,7 +420,8 @@ export class GameManager {
       if (!def) continue;
       if (gameState.usedArcanaIdsByPlayer[socketId].has(def.id)) continue;
 
-      const moverColor = moveResult?.color || null;
+      // Get mover color from moveResult if available, otherwise from current turn
+      const moverColor = moveResult?.color || chess.turn();
       let params = use.params || {};
 
       // === DEFENSE CARDS ===
@@ -1028,7 +1064,8 @@ export class GameManager {
     if (!gameState) throw new Error('Game not found');
 
     gameState.status = 'finished';
-    const outcome = { type: 'forfeit', loserSocketId: socket.id };
+    const otherPlayerId = gameState.playerIds.find((id) => id !== socket.id);
+    const outcome = { type: 'forfeit', loserSocketId: socket.id, winnerSocketId: otherPlayerId };
 
     for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {

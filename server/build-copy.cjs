@@ -77,3 +77,15 @@ if (!src) {
   copyRecursive(src, dest);
   console.log('Build copy complete!');
 }
+
+// Also copy a root-level favicon.ico into server/public if present (helps when Vite built directly into server/public)
+try {
+  const rootFavicon = path.join(__dirname, '..', 'favicon.ico');
+  const destFavicon = path.join(dest, 'favicon.ico');
+  if (fs.existsSync(rootFavicon)) {
+    fs.copyFileSync(rootFavicon, destFavicon);
+    console.log('Copied root favicon to', destFavicon);
+  }
+} catch (e) {
+  // Non-fatal; ignore copy errors for favicon
+}
