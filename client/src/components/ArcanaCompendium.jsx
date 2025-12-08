@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
+import { ArcanaCard } from './ArcanaCard.jsx';
 
 export function ArcanaCompendium({ onBack }) {
   const [rarityFilter, setRarityFilter] = useState('all');
@@ -14,7 +15,10 @@ export function ArcanaCompendium({ onBack }) {
     <div style={styles.container}>
       <div style={styles.panel}>
         <div style={styles.headerRow}>
-          <h2 style={styles.heading}>Arcana Compendium</h2>
+          <div>
+            <h2 style={styles.heading}>Arcana Compendium</h2>
+            <div style={styles.totalCount}>Total Arcana: {ARCANA_DEFINITIONS.length}</div>
+          </div>
           <button style={styles.backButton} onClick={onBack}>
             Back
           </button>
@@ -38,16 +42,16 @@ export function ArcanaCompendium({ onBack }) {
         <div style={styles.content}>
           <div style={styles.list}>
             {filtered.map((arcana) => (
-              <div
-                key={arcana.id}
-                style={{
-                  ...styles.card,
-                  borderColor: selected?.id === arcana.id ? '#2f6fed' : 'rgba(255,255,255,0.08)',
-                }}
-                onClick={() => setSelected(arcana)}
-              >
-                <div style={styles.cardName}>{arcana.name}</div>
-                <div style={styles.cardMeta}>{arcana.rarity} · {arcana.category}</div>
+              <div key={arcana.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <ArcanaCard
+                  arcana={arcana}
+                  size="small"
+                  isSelected={selected?.id === arcana.id}
+                  onClick={() => setSelected(arcana)}
+                />
+                <div style={{ fontSize: '0.7rem', textAlign: 'center', opacity: 0.8 }}>
+                  {arcana.rarity} · {arcana.category}
+                </div>
               </div>
             ))}
             {filtered.length === 0 && (
@@ -63,17 +67,17 @@ export function ArcanaCompendium({ onBack }) {
             )}
             {selected && (
               <>
-                <h3 style={{ marginTop: 0 }}>{selected.name}</h3>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+                  <ArcanaCard arcana={selected} size="large" />
+                </div>
+                <h3 style={{ marginTop: 0, textAlign: 'center' }}>{selected.name}</h3>
                 <p style={styles.detailMeta}>
                   <strong>Rarity:</strong> {selected.rarity}<br />
                   <strong>Category:</strong> {selected.category}
                 </p>
                 <p>{selected.description}</p>
-                <p style={{ marginTop: 8, fontSize: '0.9rem', opacity: 0.9 }}>
-                  <strong>Visual flavor:</strong> {selected.visual}
-                </p>
                 <p style={{ marginTop: 16, fontSize: '0.85rem', opacity: 0.8 }}>
-                  During a XXI-Chess match, Arcana remain dormant until the Ascension event is
+                  During an Arcana Chess match, Arcana remain dormant until the Ascension event is
                   triggered (for example, on the first capture). Once Ascended, each player can
                   select one Arcana before making a move to apply its effect. Most Arcana can be
                   used only once per game and may also trigger unique particles, lighting changes,
@@ -149,12 +153,20 @@ const styles = {
   },
   list: {
     flex: 1,
-    maxHeight: 360,
+    maxHeight: 520,
     overflowY: 'auto',
     paddingRight: 4,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, 1fr)',
+    gap: 12,
+    alignItems: 'start',
+    justifyItems: 'center',
+  },
+  totalCount: {
+    marginTop: 6,
+    fontSize: '0.85rem',
+    color: '#cbd6e6',
+    opacity: 0.9,
   },
   card: {
     padding: 10,

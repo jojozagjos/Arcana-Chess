@@ -11,6 +11,7 @@ export function App() {
   const [gameState, setGameState] = useState(null);
   const [ascendedInfo, setAscendedInfo] = useState(null);
   const [lastArcanaEvent, setLastArcanaEvent] = useState(null);
+  const [gameEndOutcome, setGameEndOutcome] = useState(null);
   const [globalSettings, setGlobalSettings] = useState({
     audio: { master: 0.8, music: 0.5, sfx: 0.8 },
     graphics: { quality: 'medium', postProcessing: true, shadows: true },
@@ -33,7 +34,12 @@ export function App() {
 
     const handleGameEnded = (outcome) => {
       console.log('Game ended:', outcome);
-      // You could add a post-game screen here later
+      setGameEndOutcome(outcome);
+      // Show outcome overlay, then return to menu after delay
+      setTimeout(() => {
+        setGameEndOutcome(null);
+        handleBackToMenu();
+      }, 5000);
     };
 
     const handleAscended = (payload) => {
@@ -116,7 +122,9 @@ export function App() {
           settings={globalSettings}
           ascendedInfo={ascendedInfo}
           lastArcanaEvent={lastArcanaEvent}
+          gameEndOutcome={gameEndOutcome}
           onBackToMenu={handleBackToMenu}
+          onSettingsChange={handleSettingsChange}
         />
       )}
     </div>

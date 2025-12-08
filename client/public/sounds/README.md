@@ -10,4 +10,4 @@ Please place your sound files in this directory with the following names:
 - `check.mp3` - Check notification sound
 - `victory.mp3` - Victory/game end sound
 
-The sounds from `xxi-chess-placeholder-sfx` folder can be copied here and renamed accordingly.
+The sounds from `arcana-chess-placeholder-sfx` folder can be copied here and renamed accordingly.

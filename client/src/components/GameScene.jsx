@@ -1,12 +1,28 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import { Chess } from 'chess.js';
 import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
+import { ArcanaCard } from './ArcanaCard.jsx';
+import { ChessPiece } from './ChessPiece.jsx';
+import {
+  ExecutionCutscene,
+  TimeTravelCutscene,
+  MindControlCutscene,
+  DivineInterventionCutscene,
+  CursedSquareEffect,
+  SanctuaryEffect,
+  ChainLightningEffect,
+  PoisonCloudEffect,
+  ShieldGlowEffect,
+  PromotionRitualEffect,
+  MetamorphosisEffect,
+} from './ArcanaEffects.jsx';
 
-export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, onBackToMenu }) {
+export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const [showMenu, setShowMenu] = useState(false);
+  // Panels are always visible in the in-game menu (no collapse)
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [legalTargets, setLegalTargets] = useState([]);
   const [pendingMoveError, setPendingMoveError] = useState('');
@@ -15,6 +31,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [arcanaSidebarOpen, setArcanaSidebarOpen] = useState(false);
   const [cardReveal, setCardReveal] = useState(null); // { arcana, playerId }
   const [isDrawingCard, setIsDrawingCard] = useState(false);
+  const [promotionDialog, setPromotionDialog] = useState(null); // { from, to } when promotion is pending
+  const [rematchVote, setRematchVote] = useState(null); // 'voted' when player votes for rematch
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -26,6 +44,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }
     return c;
   }, [gameState?.fen]);
+
+  // Track when we played a local move sound to avoid duplicate playback
+  const localMoveSoundRef = useRef(false);
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
@@ -92,6 +113,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const handleTileClick = (fileIndex, rankIndex) => {
     if (!chess || !gameState || gameState.status !== 'ongoing') return;
 
+    // Check if it's the player's turn
+    const myColorCode = myColor === 'white' ? 'w' : 'b';
+    const currentTurn = chess.turn();
+    if (currentTurn !== myColorCode) return;
+
     const fileChar = 'abcdefgh'[fileIndex];
     const rankNum = 8 - rankIndex;
     const square = `${fileChar}${rankNum}`;
@@ -101,7 +127,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     if (!selectedSquare) {
       const piece = chess.get(square);
       if (!piece) return;
-      const myColorCode = myColor === 'white' ? 'w' : 'b';
       if (piece.color !== myColorCode) return;
 
       setSelectedSquare(square);
@@ -120,13 +145,32 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       // Check if this is a pawn promotion move
       const piece = chess.get(selectedSquare);
       const isPromotion = piece?.type === 'p' && (square[1] === '1' || square[1] === '8');
+      
+      if (isPromotion) {
+        // Show promotion dialog instead of auto-promoting to queen
+        setPromotionDialog({ from: selectedSquare, to: square });
+        return;
+      }
+      
       const move = { from: selectedSquare, to: square };
-      if (isPromotion) move.promotion = 'q';
       
       const arcanaUsed =
         selectedArcanaId && !usedArcanaIds.has(selectedArcanaId)
           ? [{ arcanaId: selectedArcanaId, params: {} }]
           : [];
+
+      // Play sound immediately on local move to ensure browser allows playback
+      const targetPiecePre = chess.get(square);
+      try {
+        if (targetPiecePre) {
+          soundManager.play('capture');
+        } else {
+          soundManager.play('move');
+        }
+        localMoveSoundRef.current = true;
+      } catch (e) {
+        localMoveSoundRef.current = false;
+      }
 
       socket.emit(
         'playerAction',
@@ -134,15 +178,19 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         (res) => {
           if (!res || !res.ok) {
             setPendingMoveError(res?.error || 'Move rejected');
+            // If move failed, we shouldn't treat the sound as consumed
+            localMoveSoundRef.current = false;
           } else {
-            // Play appropriate sound
-            const targetPiece = chess.get(square);
-            if (targetPiece) {
-              soundManager.play('capture');
+            // Server callback may also attempt to play sounds for moves coming from network.
+            // Skip duplicate playback if we already played for this local move.
+            if (localMoveSoundRef.current) {
+              localMoveSoundRef.current = false;
             } else {
-              soundManager.play('move');
+              const targetPiece = chess.get(square);
+              if (targetPiece) soundManager.play('capture');
+              else soundManager.play('move');
             }
-            
+
             setPendingMoveError('');
             setSelectedSquare(null);
             setLegalTargets([]);
@@ -166,16 +214,247 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }
   };
 
+  // Handle promotion piece selection
+  const handlePromotionChoice = (promotionPiece) => {
+    if (!promotionDialog) return;
+    
+    const { from, to } = promotionDialog;
+    const move = { from, to, promotion: promotionPiece };
+    
+    const arcanaUsed =
+      selectedArcanaId && !usedArcanaIds.has(selectedArcanaId)
+        ? [{ arcanaId: selectedArcanaId, params: {} }]
+        : [];
+
+    // Play sound immediately on local move
+    const targetPiecePre = chess.get(to);
+    try {
+      if (targetPiecePre) {
+        soundManager.play('capture');
+      } else {
+        soundManager.play('move');
+      }
+      localMoveSoundRef.current = true;
+    } catch (e) {
+      localMoveSoundRef.current = false;
+    }
+
+    socket.emit(
+      'playerAction',
+      { move, arcanaUsed },
+      (res) => {
+        if (!res || !res.ok) {
+          setPendingMoveError(res?.error || 'Move rejected');
+          localMoveSoundRef.current = false;
+        } else {
+          if (localMoveSoundRef.current) {
+            localMoveSoundRef.current = false;
+          } else {
+            const targetPiece = chess.get(to);
+            if (targetPiece) soundManager.play('capture');
+            else soundManager.play('move');
+          }
+
+          setPendingMoveError('');
+          setSelectedSquare(null);
+          setLegalTargets([]);
+          if (arcanaUsed.length > 0) {
+            setSelectedArcanaId(null);
+          }
+        }
+      },
+    );
+    
+    setPromotionDialog(null);
+  };
+
   const lastMove = gameState?.lastMove || null;
+
+  // Helper: parse FEN into pieces array (no uid yet)
+  const parseFenPieces = (fen) => {
+    if (!fen) return [];
+    const [placement] = fen.split(' ');
+    const rows = placement.split('/');
+    const pieces = [];
+    for (let rank = 0; rank < 8; rank++) {
+      let file = 0;
+      for (const ch of rows[rank]) {
+        if (/[1-8]/.test(ch)) {
+          file += parseInt(ch, 10);
+        } else {
+          const isWhite = ch === ch.toUpperCase();
+          const type = ch.toLowerCase();
+          const x = file - 3.5;
+          const z = rank - 3.5;
+          const fileChar = 'abcdefgh'[file];
+          const rankNum = 8 - rank;
+          const square = `${fileChar}${rankNum}`;
+          pieces.push({ type, isWhite, square, targetPosition: [x, 0.15, z] });
+          file += 1;
+        }
+      }
+    }
+    return pieces;
+  };
+
+  // Counter to ensure unique UIDs for promoted/new pieces
+  const uidCounterRef = useRef(0);
+
+  // Maintain piecesState so pieces keep stable ids and can animate between squares
+  const [piecesState, setPiecesState] = useState(() => {
+    const initial = parseFenPieces(gameState?.fen);
+    // Assign initial UIDs with unique counter to prevent duplicates
+    return initial.map((p) => {
+      uidCounterRef.current += 1;
+      const uid = `${p.type}-${p.isWhite ? 'w' : 'b'}-${p.square}-${uidCounterRef.current}`;
+      return { ...p, uid };
+    });
+  });
+
+  // Reconcile piecesState when FEN changes: match by nearest same type/color to preserve uid
+  useEffect(() => {
+    const newPieces = parseFenPieces(gameState?.fen);
+    if (!piecesState || piecesState.length === 0) {
+      // First assignment: give UIDs with unique counter
+      const withUids = newPieces.map((p) => {
+        uidCounterRef.current += 1;
+        const uid = `${p.type}-${p.isWhite ? 'w' : 'b'}-${p.square}-${uidCounterRef.current}`;
+        return { ...p, uid };
+      });
+      setPiecesState(withUids);
+      return;
+    }
+
+    // Build a map of old pieces by their previous square for quick lookup
+    const oldPiecesBySquare = new Map();
+    for (const p of piecesState) {
+      oldPiecesBySquare.set(p.square, p);
+    }
+
+    // Group existing and new pieces by type/color
+    const groupKey = (p) => `${p.type}-${p.isWhite ? 'w' : 'b'}`;
+    const existingGroups = {};
+    const newGroups = {};
+    for (const p of piecesState) {
+      const k = groupKey(p);
+      (existingGroups[k] || (existingGroups[k] = [])).push(p);
+    }
+    for (const p of newPieces) {
+      const k = groupKey(p);
+      (newGroups[k] || (newGroups[k] = [])).push(p);
+    }
+
+    // Helper to compute distance between squares
+    const posFromSquare = (sq) => {
+      const fileIndex = 'abcdefgh'.indexOf(sq[0]);
+      const rankIndex = 8 - parseInt(sq[1], 10);
+      return [fileIndex - 3.5, rankIndex - 3.5];
+    };
+    const dist2 = (aSq, bSq) => {
+      const [ax, az] = posFromSquare(aSq);
+      const [bx, bz] = posFromSquare(bSq);
+      const dx = ax - bx;
+      const dz = az - bz;
+      return dx * dx + dz * dz;
+    };
+
+    const result = [];
+    const usedOldUids = new Set();
+
+    Object.keys(newGroups).forEach((k) => {
+      const newArr = newGroups[k];
+      const oldArr = existingGroups[k] || [];
+
+      const usedOld = new Set();
+      
+      // FIRST PASS: Match pieces that stayed on the same square (exact matches)
+      for (let i = 0; i < newArr.length; i++) {
+        const np = newArr[i];
+        for (let j = 0; j < oldArr.length; j++) {
+          if (usedOld.has(j)) continue;
+          const op = oldArr[j];
+          if (op.square === np.square) {
+            usedOld.add(j);
+            usedOldUids.add(op.uid);
+            result.push({ ...np, uid: op.uid });
+            newArr[i] = null; // Mark as matched
+            break;
+          }
+        }
+      }
+      
+      // SECOND PASS: Match remaining pieces by closest distance
+      for (const np of newArr) {
+        if (np === null) continue; // Already matched in first pass
+        
+        let bestIdx = -1;
+        let bestD = Infinity;
+        for (let i = 0; i < oldArr.length; i++) {
+          if (usedOld.has(i)) continue;
+          const op = oldArr[i];
+          const d = dist2(op.square, np.square);
+          if (d < bestD) {
+            bestD = d;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx !== -1) {
+          const op = oldArr[bestIdx];
+          usedOld.add(bestIdx);
+          usedOldUids.add(op.uid);
+          result.push({ ...np, uid: op.uid });
+        } else {
+          // New piece (e.g., promotion) -> assign unique uid with counter
+          uidCounterRef.current += 1;
+          const uid = `${k}-${np.square}-${uidCounterRef.current}`;
+          result.push({ ...np, uid });
+        }
+      }
+    });
+
+    setPiecesState(result);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState?.fen]);
+
+  // Play sounds for moves coming from the server (opponent moves).
+  // We rely on `gameState.lastMove` and `gameState.turn` to infer who moved.
+  const prevLastMoveRef = useRef(null);
+  useEffect(() => {
+    const lm = gameState?.lastMove;
+    if (!lm) return;
+    const lmKey = `${lm.from}-${lm.to}-${lm.san || ''}-${lm.captured || ''}`;
+    if (prevLastMoveRef.current === lmKey) return; // already handled
+    prevLastMoveRef.current = lmKey;
+
+    // Determine mover color: after the move, `gameState.turn` is the side to move.
+    const moverColor = gameState?.turn === 'w' ? 'b' : 'w';
+    const myColorCode = myColor === 'white' ? 'w' : 'b';
+
+    // If the mover is me, we already played the sound at the local gesture.
+    if (moverColor === myColorCode) {
+      // Clear local flag if set
+      if (localMoveSoundRef.current) localMoveSoundRef.current = false;
+      return;
+    }
+
+    // Opponent moved — choose capture or move sound
+    try {
+      if (lm.captured) soundManager.play('capture');
+      else soundManager.play('move');
+    } catch (e) {
+      // ignore playback errors
+    }
+  }, [gameState?.lastMove, gameState?.turn, myColor]);
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <Canvas camera={{ position: [8, 10, 8], fov: 40 }} shadows>
-        {isAscended && <color attach="background" args={['#0b1020']} />}
-        <ambientLight intensity={isAscended ? 0.4 : 0.3} />
+        {/* Use the ascension-style lighting by default: slightly dimmer, dramatic "night" environment */}
+        <color attach="background" args={["#0b1020"]} />
+        <ambientLight intensity={0.4} />
         <directionalLight
           position={[10, 15, 5]}
-          intensity={isAscended ? 1.2 : 0.8}
+          intensity={1.2}
           castShadow={settings.graphics.shadows}
         />
         <directionalLight
@@ -183,8 +462,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           intensity={0.4}
           color="#88c0d0"
         />
-        <pointLight position={[0, 5, 0]} intensity={isAscended ? 0.6 : 0.3} color="#d8dee9" />
-        <Environment preset={isAscended ? 'night' : 'studio'} />
+        <pointLight position={[0, 5, 0]} intensity={0.6} color="#d8dee9" />
+        <Environment preset={'night'} />
         <Board
           selectedSquare={selectedSquare}
           legalTargets={settings.gameplay.showLegalMoves ? legalTargets : []}
@@ -192,12 +471,64 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           pawnShields={pawnShields}
           onTileClick={handleTileClick}
         />
-        <Pieces fen={gameState?.fen} />
-        {isAscended && <AscensionRing />}
+        <group>
+          {piecesState.map((p) => (
+            <ChessPiece
+              key={p.uid}
+              type={p.type}
+              isWhite={p.isWhite}
+              targetPosition={p.targetPosition}
+              square={p.square}
+            />
+          ))}
+        </group>
+        {/* Ascension ring disabled - was causing visual artifacts */}
+        {/* {isAscended && <AscensionRing />} */}
+        
+        {/* Arcana Visual Effects */}
         {activeVisualArcana?.arcanaId === 'astral_rebirth' && activeVisualArcana.params?.square && (
           <RebirthBeam square={activeVisualArcana.params.square} />
         )}
-        <OrbitControls enablePan={false} maxPolarAngle={Math.PI / 2.2} />
+        {activeVisualArcana?.arcanaId === 'execution' && activeVisualArcana.params?.square && (
+          <ExecutionCutscene targetSquare={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'time_travel' && (
+          <TimeTravelCutscene />
+        )}
+        {activeVisualArcana?.arcanaId === 'mind_control' && activeVisualArcana.params?.square && (
+          <MindControlCutscene targetSquare={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'divine_intervention' && (
+          <DivineInterventionCutscene kingSquare={activeVisualArcana.params?.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'chain_lightning' && activeVisualArcana.params?.chained && (
+          <ChainLightningEffect squares={activeVisualArcana.params.chained} />
+        )}
+        {activeVisualArcana?.arcanaId === 'poison_touch' && activeVisualArcana.params?.square && (
+          <PoisonCloudEffect square={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'promotion_ritual' && activeVisualArcana.params?.square && (
+          <PromotionRitualEffect square={activeVisualArcana.params.square} />
+        )}
+        {activeVisualArcana?.arcanaId === 'metamorphosis' && activeVisualArcana.params?.square && (
+          <MetamorphosisEffect square={activeVisualArcana.params.square} />
+        )}
+        
+        {/* Persistent Effects */}
+        {gameState?.activeEffects?.cursedSquares?.map((c, i) => (
+          <CursedSquareEffect key={`cursed-${i}`} square={c.square} />
+        ))}
+        {gameState?.activeEffects?.sanctuaries?.map((s, i) => (
+          <SanctuaryEffect key={`sanctuary-${i}`} square={s.square} />
+        ))}
+        {pawnShields.w?.square && (
+          <ShieldGlowEffect square={pawnShields.w.square} />
+        )}
+        {pawnShields.b?.square && (
+          <ShieldGlowEffect square={pawnShields.b.square} />
+        )}
+        
+        <OrbitControls enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
       </Canvas>
 
       <div style={styles.hud}>
@@ -237,17 +568,161 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         <div style={styles.menuOverlay}>
           <div style={styles.menuPanel}>
             <h3>In-Game Menu</h3>
-            <button style={styles.menuButton} onClick={() => setShowMenu(false)}>Resume</button>
-            <button style={styles.menuButton} onClick={onBackToMenu}>Return to Main Menu</button>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <button style={styles.menuButton} onClick={() => setShowMenu(false)}>Resume</button>
+              <button style={styles.menuButton} onClick={onBackToMenu}>Return to Main Menu</button>
+            </div>
+
+            <div style={{ marginTop: 8 }}>
+              <h4 style={{ margin: '8px 0' }}>Settings</h4>
+
+              {/* Graphics Section (static) */}
+              <div style={styles.panelGroup}>
+                <div style={styles.panelHeader}>
+                  <div style={styles.panelHeaderTitle}>Graphics</div>
+                </div>
+                <div style={styles.panelContent}>
+                  <div style={styles.settingRow}>
+                    <label style={styles.settingLabel}>Quality</label>
+                    <select
+                      style={styles.select}
+                      value={settings?.graphics?.quality || 'medium'}
+                      onChange={(e) => onSettingsChange({ graphics: { ...settings.graphics, quality: e.target.value } })}
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                    </select>
+                  </div>
+
+                  <div style={styles.settingRow}>
+                    <label style={styles.settingLabel}>Post-processing</label>
+                    <button
+                      type="button"
+                      onClick={() => onSettingsChange({ graphics: { ...settings.graphics, postProcessing: !settings.graphics?.postProcessing } })}
+                      style={{ ...styles.toggleButton, background: settings.graphics?.postProcessing ? 'linear-gradient(135deg, #4c6fff, #8f94fb)' : 'transparent' }}
+                    >
+                      {settings.graphics?.postProcessing ? 'On' : 'Off'}
+                    </button>
+                  </div>
+
+                  <div style={styles.settingRow}>
+                    <label style={styles.settingLabel}>Shadows</label>
+                    <button
+                      type="button"
+                      onClick={() => onSettingsChange({ graphics: { ...settings.graphics, shadows: !settings.graphics?.shadows } })}
+                      style={{ ...styles.toggleButton, background: settings.graphics?.shadows ? 'linear-gradient(135deg, #4c6fff, #8f94fb)' : 'transparent' }}
+                    >
+                      {settings.graphics?.shadows ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Gameplay Panel (always open) */}
+              <div style={styles.panelGroup}>
+                <div style={styles.panelHeader}>
+                  <div style={styles.panelHeaderTitle}>Gameplay</div>
+                </div>
+                <div style={styles.panelContent}>
+                  <div style={styles.settingRow}>
+                    <label style={styles.settingLabel}>Show legal moves</label>
+                    <button
+                      type="button"
+                      onClick={() => onSettingsChange({ gameplay: { ...settings.gameplay, showLegalMoves: !settings.gameplay?.showLegalMoves } })}
+                      style={{ ...styles.toggleButton, background: settings.gameplay?.showLegalMoves ? 'linear-gradient(135deg, #4c6fff, #8f94fb)' : 'transparent' }}
+                    >
+                      {settings.gameplay?.showLegalMoves ? 'On' : 'Off'}
+                    </button>
+                  </div>
+
+                  <div style={styles.settingRow}>
+                    <label style={styles.settingLabel}>Highlight last move</label>
+                    <button
+                      type="button"
+                      onClick={() => onSettingsChange({ gameplay: { ...settings.gameplay, highlightLastMove: !settings.gameplay?.highlightLastMove } })}
+                      style={{ ...styles.toggleButton, background: settings.gameplay?.highlightLastMove ? 'linear-gradient(135deg, #4c6fff, #8f94fb)' : 'transparent' }}
+                    >
+                      {settings.gameplay?.highlightLastMove ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Audio Panel (always open) */}
+              <div style={styles.panelGroup}>
+                <div style={styles.panelHeader}>
+                  <div style={styles.panelHeaderTitle}>Audio</div>
+                </div>
+                <div style={styles.panelContent}>
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ display: 'block', marginBottom: 6 }}>Master Volume</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={settings?.audio?.master ?? 0.8}
+                      onChange={(e) => {
+                        const vol = Number(e.target.value);
+                        onSettingsChange({ audio: { ...settings.audio, master: vol } });
+                        try { soundManager.setMasterVolume(vol); } catch {}
+                      }}
+                      
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ display: 'block', marginBottom: 6 }}>SFX Volume</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={settings?.audio?.sfx ?? 0.8}
+                      onChange={(e) => {
+                        const vol = Number(e.target.value);
+                        onSettingsChange({ audio: { ...settings.audio, sfx: vol } });
+                        try { soundManager.setSfxVolume(vol); } catch {}
+                      }}
+                      
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 6 }}>Music Volume</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={settings?.audio?.music ?? 0.5}
+                      onChange={(e) => {
+                        const vol = Number(e.target.value);
+                        onSettingsChange({ audio: { ...settings.audio, music: vol } });
+                        try { soundManager.setMusicVolume(vol); } catch {}
+                      }}
+                      
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {activeVisualArcana && (
+      {activeVisualArcana && activeVisualArcana.arcanaId && (
         <div style={styles.arcanaOverlay}>
-          <div style={styles.arcanaText}>
-            Arcana Activated: {activeVisualArcana.arcanaId}
-          </div>
+          <ArcanaCard
+            arcana={{
+              id: activeVisualArcana.arcanaId,
+              name: activeVisualArcana.arcanaId.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+              rarity: 'rare',
+              ...activeVisualArcana
+            }}
+            size="medium"
+          />
         </div>
       )}
 
@@ -258,6 +733,41 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           type={cardReveal.type}
           mySocketId={mySocketId}
         />
+      )}
+
+      {gameEndOutcome && (
+        <GameEndOverlay
+          outcome={gameEndOutcome}
+          mySocketId={mySocketId}
+          rematchVote={rematchVote}
+          onRematchVote={() => {
+            setRematchVote('voted');
+            socket.emit('voteRematch');
+          }}
+          onReturnToMenu={onBackToMenu}
+        />
+      )}
+
+      {promotionDialog && (
+        <div style={styles.promotionOverlay}>
+          <div style={styles.promotionDialog}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#eceff4' }}>Choose Promotion</h3>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              {['q', 'r', 'b', 'n'].map(piece => (
+                <button
+                  key={piece}
+                  style={styles.promotionButton}
+                  onClick={() => handlePromotionChoice(piece)}
+                >
+                  {piece === 'q' && '♕ Queen'}
+                  {piece === 'r' && '♖ Rook'}
+                  {piece === 'b' && '♗ Bishop'}
+                  {piece === 'n' && '♘ Knight'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -332,238 +842,7 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
   return <group>{tiles}</group>;
 }
 
-function Pieces({ fen }) {
-  if (!fen) return null;
-  const [placement] = fen.split(' ');
-  const rows = placement.split('/');
-  const meshes = [];
-  for (let rank = 0; rank < 8; rank++) {
-    let file = 0;
-    for (const ch of rows[rank]) {
-      if (/[1-8]/.test(ch)) {
-        file += parseInt(ch, 10);
-      } else {
-        const isWhite = ch === ch.toUpperCase();
-        const pieceType = ch.toLowerCase();
-        const x = file - 3.5;
-        const z = rank - 3.5;
-        const fileChar = 'abcdefgh'[file];
-        const rankNum = 8 - rank;
-        const square = `${fileChar}${rankNum}`;
-        meshes.push(
-          <ChessPiece
-            key={square}
-            type={pieceType}
-            isWhite={isWhite}
-            targetPosition={[x, 0.15, z]}
-            square={square}
-          />
-        );
-        file += 1;
-      }
-    }
-  }
-  return <group>{meshes}</group>;
-}
 
-function ChessPiece({ type, isWhite, targetPosition, square }) {
-  const color = isWhite ? '#eceff4' : '#2e3440';
-  const emissive = isWhite ? '#d8dee9' : '#1a1d28';
-  const groupRef = useRef();
-  const currentPos = useRef(targetPosition.slice());
-  
-  // Smooth lerp animation
-  useFrame(() => {
-    if (groupRef.current) {
-      const lerpFactor = 0.15; // Adjust for speed (0.1 = slower, 0.3 = faster)
-      currentPos.current[0] += (targetPosition[0] - currentPos.current[0]) * lerpFactor;
-      currentPos.current[1] += (targetPosition[1] - currentPos.current[1]) * lerpFactor;
-      currentPos.current[2] += (targetPosition[2] - currentPos.current[2]) * lerpFactor;
-      groupRef.current.position.set(...currentPos.current);
-    }
-  });
-  
-  return (
-    <group ref={groupRef} position={targetPosition} castShadow>
-      {type === 'p' && <PawnGeometry color={color} emissive={emissive} />}
-      {type === 'r' && <RookGeometry color={color} emissive={emissive} />}
-      {type === 'n' && <KnightGeometry color={color} emissive={emissive} />}
-      {type === 'b' && <BishopGeometry color={color} emissive={emissive} />}
-      {type === 'q' && <QueenGeometry color={color} emissive={emissive} />}
-      {type === 'k' && <KingGeometry color={color} emissive={emissive} />}
-    </group>
-  );
-}
-
-function PawnGeometry({ color, emissive }) {
-  return (
-    <>
-      <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.25, 0.28, 0.15, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.3} roughness={0.6} />
-      </mesh>
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.2, 0.25, 0.3, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.3} roughness={0.6} />
-      </mesh>
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <sphereGeometry args={[0.15, 16, 12]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.3} roughness={0.6} />
-      </mesh>
-    </>
-  );
-}
-
-function RookGeometry({ color, emissive }) {
-  return (
-    <>
-      <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.28, 0.3, 0.15, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.4} roughness={0.5} />
-      </mesh>
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.22, 0.28, 0.3, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.4} roughness={0.5} />
-      </mesh>
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <cylinderGeometry args={[0.25, 0.22, 0.2, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.4} roughness={0.5} />
-      </mesh>
-      {/* Crenellations */}
-      <mesh position={[0.15, 0.55, 0]} castShadow>
-        <boxGeometry args={[0.1, 0.15, 0.1]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.4} roughness={0.5} />
-      </mesh>
-      <mesh position={[-0.15, 0.55, 0]} castShadow>
-        <boxGeometry args={[0.1, 0.15, 0.1]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.4} roughness={0.5} />
-      </mesh>
-      <mesh position={[0, 0.55, 0.15]} castShadow>
-        <boxGeometry args={[0.1, 0.15, 0.1]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.4} roughness={0.5} />
-      </mesh>
-      <mesh position={[0, 0.55, -0.15]} castShadow>
-        <boxGeometry args={[0.1, 0.15, 0.1]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.4} roughness={0.5} />
-      </mesh>
-    </>
-  );
-}
-
-function KnightGeometry({ color, emissive }) {
-  return (
-    <>
-      <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.27, 0.3, 0.15, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.3} roughness={0.6} />
-      </mesh>
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.22, 0.27, 0.2, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.3} roughness={0.6} />
-      </mesh>
-      {/* Horse head approximation */}
-      <mesh position={[0.1, 0.4, 0]} rotation={[0, 0, Math.PI / 6]} castShadow>
-        <boxGeometry args={[0.15, 0.4, 0.2]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.3} roughness={0.6} />
-      </mesh>
-      <mesh position={[0.15, 0.6, 0.05]} castShadow>
-        <boxGeometry args={[0.1, 0.15, 0.12]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.3} roughness={0.6} />
-      </mesh>
-    </>
-  );
-}
-
-function BishopGeometry({ color, emissive }) {
-  return (
-    <>
-      <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.27, 0.3, 0.15, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
-      </mesh>
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.18, 0.27, 0.3, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
-      </mesh>
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <cylinderGeometry args={[0.12, 0.18, 0.3, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
-      </mesh>
-      <mesh position={[0, 0.65, 0]} castShadow>
-        <sphereGeometry args={[0.12, 16, 12]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
-      </mesh>
-      {/* Bishop's slit */}
-      <mesh position={[0, 0.72, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <torusGeometry args={[0.04, 0.02, 8, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.5} roughness={0.4} />
-      </mesh>
-    </>
-  );
-}
-
-function QueenGeometry({ color, emissive }) {
-  return (
-    <>
-      <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.28, 0.32, 0.15, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.5} roughness={0.4} />
-      </mesh>
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.2, 0.28, 0.3, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.5} roughness={0.4} />
-      </mesh>
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <cylinderGeometry args={[0.24, 0.2, 0.2, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.5} roughness={0.4} />
-      </mesh>
-      {/* Crown points */}
-      {[0, 1, 2, 3, 4].map((i) => {
-        const angle = (i / 5) * Math.PI * 2;
-        const x = Math.cos(angle) * 0.18;
-        const z = Math.sin(angle) * 0.18;
-        return (
-          <mesh key={i} position={[x, 0.65, z]} castShadow>
-            <coneGeometry args={[0.06, 0.2, 8]} />
-            <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.6} roughness={0.3} />
-          </mesh>
-        );
-      })}
-      <mesh position={[0, 0.8, 0]} castShadow>
-        <sphereGeometry args={[0.08, 16, 12]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.6} roughness={0.3} />
-      </mesh>
-    </>
-  );
-}
-
-function KingGeometry({ color, emissive }) {
-  return (
-    <>
-      <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.28, 0.32, 0.15, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.5} roughness={0.4} />
-      </mesh>
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.2, 0.28, 0.3, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.5} roughness={0.4} />
-      </mesh>
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <cylinderGeometry args={[0.24, 0.2, 0.25, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.5} roughness={0.4} />
-      </mesh>
-      {/* Cross on top */}
-      <mesh position={[0, 0.7, 0]} castShadow>
-        <boxGeometry args={[0.08, 0.3, 0.08]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.6} roughness={0.3} />
-      </mesh>
-      <mesh position={[0, 0.78, 0]} castShadow>
-        <boxGeometry args={[0.2, 0.08, 0.08]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.6} roughness={0.3} />
-      </mesh>
-    </>
-  );
-}
 
 function AscensionRing() {
   const segments = 32;
@@ -626,76 +905,62 @@ function RebirthBeam({ square }) {
 }
 
 function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArcana, isAscended, isOpen, onToggle, onDrawCard, isDrawingCard }) {
-  // Don't show toggle button until ascended
+  // Don't show panel until ascended
   if (!isAscended) return null;
 
-  return (
-    <>
-      {/* Toggle button */}
-      <button
-        style={{
-          ...styles.arcanaToggle,
-          right: isOpen ? 284 : 12,
-        }}
-        onClick={onToggle}
-      >
-        {isOpen ? '→' : '← Arcana'}
-      </button>
+  // Filter out used arcana
+  const availableArcana = myArcana.filter(a => !usedArcanaIds.has(a.id));
+  const [hoveredId, setHoveredId] = React.useState(null);
 
-      {/* Sidebar */}
-      <div
-        style={{
-          ...styles.arcanaSidebar,
-          right: isOpen ? 12 : -272,
-          transition: 'right 0.3s ease',
-        }}
-      >
-        <div style={styles.arcanaHeader}>
-          Arcana
-          <button
-            style={styles.drawCardButton}
-            onClick={onDrawCard}
-            disabled={isDrawingCard}
-          >
-            {isDrawingCard ? 'Drawing...' : '+ Draw Card'}
-          </button>
-        </div>
-        <div style={styles.arcanaList}>
-          {myArcana.length === 0 && (
-            <div style={styles.arcanaEmpty}>No Arcana assigned.</div>
-          )}
-          {myArcana.map((a) => {
-            const used = usedArcanaIds.has(a.id);
-            const isSelected = selectedArcanaId === a.id;
-            return (
-              <div
-                key={a.id}
-                style={{
-                  ...styles.arcanaCard,
-                  opacity: used ? 0.55 : 1,
-                  borderColor: isSelected ? '#2f6fed' : 'rgba(255,255,255,0.08)',
-                }}
-                onClick={() => {
-                  if (used) return;
-                  onSelectArcana(isSelected ? null : a.id);
-                }}
-              >
-                <div style={styles.arcanaName}>{a.name}</div>
-                <div style={styles.arcanaMeta}>{a.rarity} · {a.category}</div>
-                <div style={styles.arcanaDesc}>{a.description}</div>
-                {used && <div style={styles.arcanaBadge}>USED</div>}
-                {!used && isSelected && <div style={styles.arcanaBadge}>READY</div>}
-              </div>
-            );
-          })}
-        </div>
-        <div style={styles.arcanaFooter}>
-          {selectedArcanaId
-            ? `Selected: ${myArcana.find(a => a.id === selectedArcanaId)?.name || selectedArcanaId}`
-            : 'Select an Arcana before your move to apply it.'}
-        </div>
+  return (
+    <div style={styles.arcanaBottomPanel}>
+      <div style={styles.arcanaBottomHeader}>
+        <span>Arcana</span>
+        <button
+          style={styles.drawCardButton}
+          onClick={onDrawCard}
+          disabled={isDrawingCard}
+        >
+          {isDrawingCard ? 'Drawing...' : '+ Draw'}
+        </button>
       </div>
-    </>
+      <div style={styles.arcanaCardRow}>
+        {availableArcana.length === 0 && (
+          <div style={styles.arcanaEmpty}>No Arcana available. Draw a card!</div>
+        )}
+        {availableArcana.map((a) => {
+          const isSelected = selectedArcanaId === a.id;
+          const isHovered = hoveredId === a.id;
+          return (
+            <div
+              key={a.id}
+              style={{ position: 'relative' }}
+              onMouseEnter={() => setHoveredId(a.id)}
+              onMouseLeave={() => setHoveredId(null)}
+            >
+              <ArcanaCard
+                arcana={a}
+                size="small"
+                isSelected={isSelected}
+                hoverInfo={a.description}
+                onClick={() => onSelectArcana(isSelected ? null : a.id)}
+              />
+              {isHovered && (
+                <div style={styles.arcanaTooltip}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>{a.name}</div>
+                  <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>{a.description}</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {selectedArcanaId && (
+        <div style={styles.arcanaSelectedIndicator}>
+          Selected: {availableArcana.find(a => a.id === selectedArcanaId)?.name || selectedArcanaId}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -710,13 +975,48 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId }) {
         <div style={styles.cardRevealHeader}>
           {playerText} {actionText} an Arcana!
         </div>
-        <div style={styles.cardRevealCard}>
-          <div style={{...styles.cardRevealRarity, color: getRarityColor(arcana.rarity)}}>
-            {arcana.rarity.toUpperCase()}
-          </div>
-          <div style={styles.cardRevealName}>{arcana.name}</div>
-          <div style={styles.cardRevealCategory}>{arcana.category}</div>
-          <div style={styles.cardRevealDesc}>{arcana.description}</div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <ArcanaCard arcana={arcana} size="large" />
+        </div>
+        <div style={styles.cardRevealDesc}>{arcana.description}</div>
+      </div>
+    </div>
+  );
+}
+
+function GameEndOverlay({ outcome, mySocketId, rematchVote, onRematchVote, onReturnToMenu }) {
+  const isWinner = outcome.winnerSocketId === mySocketId;
+  const title = isWinner ? '🏆 VICTORY!' : '💀 DEFEAT';
+  const message = outcome.type === 'disconnect' 
+    ? (isWinner ? 'Opponent disconnected' : 'You disconnected')
+    : outcome.type === 'forfeit'
+    ? (isWinner ? 'Opponent forfeited' : 'You forfeited')
+    : 'Game ended';
+  const color = isWinner ? '#a3be8c' : '#bf616a';
+
+  return (
+    <div style={styles.gameEndOverlay}>
+      <div style={styles.gameEndContainer}>
+        <div style={{ ...styles.gameEndTitle, color }}>{title}</div>
+        <div style={styles.gameEndMessage}>{message}</div>
+        <div style={styles.gameEndButtons}>
+          <button
+            style={{
+              ...styles.gameEndButton,
+              ...styles.gameEndButtonPrimary,
+              ...(rematchVote === 'voted' ? styles.gameEndButtonVoted : {}),
+            }}
+            onClick={onRematchVote}
+            disabled={rematchVote === 'voted'}
+          >
+            {rematchVote === 'voted' ? '✓ Voted for Rematch' : '🔄 Request Rematch'}
+          </button>
+          <button
+            style={{ ...styles.gameEndButton, ...styles.gameEndButtonSecondary }}
+            onClick={onReturnToMenu}
+          >
+            ← Return to Menu
+          </button>
         </div>
       </div>
     </div>
@@ -776,12 +1076,14 @@ const styles = {
   },
   menuPanel: {
     background: 'rgba(5, 6, 10, 0.95)',
-    padding: 20,
-    borderRadius: 10,
-    minWidth: 220,
+    padding: 24,
+    borderRadius: 12,
+    width: '80%',
+    maxWidth: 1000,
+    minHeight: 220,
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
+    gap: 12,
     color: 'white',
     fontFamily: 'system-ui, sans-serif',
   },
@@ -825,41 +1127,60 @@ const styles = {
   arcanaText: {
     color: '#eceff4',
   },
-  arcanaToggle: {
+  arcanaBottomPanel: {
     position: 'absolute',
-    top: 12,
-    padding: '8px 12px',
-    borderRadius: 6,
-    border: '1px solid rgba(136,192,208,0.4)',
-    background: 'rgba(5, 6, 10, 0.9)',
-    color: '#d0d6ea',
-    cursor: 'pointer',
-    fontFamily: 'system-ui, sans-serif',
-    fontSize: '0.85rem',
-    transition: 'right 0.3s ease',
-    zIndex: 10,
-  },
-  arcanaSidebar: {
-    position: 'absolute',
-    right: 12,
-    top: 12,
     bottom: 12,
-    width: 260,
-    background: 'rgba(5, 6, 10, 0.86)',
+    left: 12,
+    right: 12,
+    background: 'rgba(5, 6, 10, 0.92)',
     borderRadius: 10,
     padding: 12,
     display: 'flex',
     flexDirection: 'column',
+    gap: 8,
     fontFamily: 'system-ui, sans-serif',
     fontSize: '0.85rem',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
+    boxShadow: '0 -4px 20px rgba(0,0,0,0.6)',
+    maxHeight: '30vh',
   },
-  arcanaHeader: {
+  arcanaBottomHeader: {
     fontWeight: 600,
-    marginBottom: 8,
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingBottom: 8,
+    borderBottom: '1px solid rgba(136,192,208,0.2)',
+  },
+  arcanaCardRow: {
+    display: 'flex',
+    gap: 12,
+    justifyContent: 'center',
+    paddingBottom: 4,
+    alignItems: 'flex-end',
+  },
+  arcanaTooltip: {
+    position: 'absolute',
+    bottom: '100%',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    marginBottom: 8,
+    padding: 10,
+    background: 'rgba(11, 16, 32, 0.98)',
+    border: '1px solid rgba(136,192,208,0.4)',
+    borderRadius: 8,
+    minWidth: 200,
+    maxWidth: 280,
+    color: '#eceff4',
+    fontSize: '0.85rem',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+    zIndex: 100,
+    pointerEvents: 'none',
+  },
+  arcanaSelectedIndicator: {
+    fontSize: '0.8rem',
+    color: '#88c0d0',
+    textAlign: 'center',
+    paddingTop: 4,
   },
   drawCardButton: {
     padding: '4px 8px',
@@ -871,51 +1192,62 @@ const styles = {
     cursor: 'pointer',
     transition: 'all 0.2s',
   },
-  arcanaList: {
-    flex: 1,
-    overflowY: 'auto',
-    paddingRight: 4,
-  },
-  arcanaCard: {
-    borderRadius: 8,
-    border: '1px solid rgba(255,255,255,0.08)',
-    padding: 8,
-    marginBottom: 8,
-    cursor: 'pointer',
-    position: 'relative',
-    background: 'rgba(11,16,32,0.9)',
-  },
-  arcanaName: {
-    fontWeight: 600,
-    marginBottom: 2,
-  },
-  arcanaMeta: {
-    fontSize: '0.7rem',
-    opacity: 0.75,
-    marginBottom: 4,
-  },
-  arcanaDesc: {
-    fontSize: '0.8rem',
-    opacity: 0.9,
-  },
-  arcanaBadge: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    fontSize: '0.6rem',
-    padding: '2px 6px',
-    borderRadius: 999,
-    border: '1px solid rgba(255,255,255,0.4)',
-    textTransform: 'uppercase',
-  },
   arcanaEmpty: {
     opacity: 0.7,
     fontSize: '0.8rem',
+    padding: '20px',
+    textAlign: 'center',
   },
-  arcanaFooter: {
-    marginTop: 8,
-    fontSize: '0.75rem',
-    opacity: 0.8,
+  settingRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '6px 0',
+  },
+  settingLabel: {
+    marginRight: 12,
+    color: '#d8dee9',
+  },
+  toggleButton: {
+    padding: '6px 12px',
+    borderRadius: 999,
+    border: '1px solid #394867',
+    color: '#d0d6ea',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    minWidth: 64,
+  },
+  select: {
+    flex: 1,
+    padding: '6px 10px',
+    borderRadius: 8,
+    border: '1px solid #3b4252',
+    background: 'rgba(8,10,20,0.9)',
+    color: '#e5e9f0',
+    fontSize: '0.9rem',
+  },
+  panelGroup: {
+    marginBottom: 10,
+    borderRadius: 10,
+    overflow: 'hidden',
+    border: '1px solid rgba(255,255,255,0.03)',
+    background: 'rgba(8,10,20,0.6)',
+  },
+  panelHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px 12px',
+    cursor: 'default',
+    background: 'linear-gradient(90deg, rgba(255,255,255,0.02), transparent)',
+  },
+  panelHeaderTitle: {
+    color: '#eceff4',
+    fontWeight: 700,
+  },
+  panelContent: {
+    padding: '10px 12px',
+    background: 'rgba(5,6,10,0.4)',
   },
   cardRevealOverlay: {
     position: 'absolute',
@@ -975,5 +1307,133 @@ const styles = {
     fontSize: '1rem',
     color: '#d8dee9',
     lineHeight: 1.6,
+  },
+  gameEndOverlay: {
+    position: 'absolute',
+    inset: 0,
+    background: 'rgba(0, 0, 0, 0.92)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    animation: 'fadeIn 0.4s ease',
+    zIndex: 2000,
+  },
+  gameEndContainer: {
+    background: 'linear-gradient(135deg, rgba(27,35,56,0.98), rgba(11,16,32,0.98))',
+    borderRadius: 20,
+    padding: 48,
+    minWidth: 500,
+    boxShadow: '0 30px 80px rgba(0,0,0,0.9)',
+    border: '3px solid rgba(136,192,208,0.4)',
+    textAlign: 'center',
+    animation: 'slideUp 0.5s ease',
+  },
+  gameEndTitle: {
+    fontSize: '3.5rem',
+    fontWeight: 900,
+    marginBottom: 20,
+    textTransform: 'uppercase',
+    letterSpacing: '0.15em',
+    textShadow: '0 4px 12px rgba(0,0,0,0.6)',
+  },
+  gameEndMessage: {
+    fontSize: '1.3rem',
+    color: '#d8dee9',
+    marginBottom: 8,
+    opacity: 0.95,
+  },
+  gameEndSubtext: {
+    fontSize: '0.9rem',
+    color: '#88c0d0',
+    opacity: 0.8,
+    fontStyle: 'italic',
+  },
+  gameEndButtons: {
+    display: 'flex',
+    gap: 16,
+    marginTop: 32,
+    justifyContent: 'center',
+  },
+  gameEndButton: {
+    padding: '14px 32px',
+    borderRadius: 8,
+    fontSize: '1rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    border: 'none',
+    fontFamily: 'system-ui, sans-serif',
+  },
+  gameEndButtonPrimary: {
+    background: 'linear-gradient(135deg, #5e81ac, #88c0d0)',
+    color: '#eceff4',
+  },
+  gameEndButtonSecondary: {
+    background: 'rgba(136,192,208,0.15)',
+    color: '#d8dee9',
+    border: '2px solid rgba(136,192,208,0.3)',
+  },
+  gameEndButtonVoted: {
+    background: 'rgba(163,190,140,0.3)',
+    color: '#a3be8c',
+    border: '2px solid rgba(163,190,140,0.5)',
+    cursor: 'not-allowed',
+    opacity: 0.8,
+  },
+  promotionOverlay: {
+    position: 'absolute',
+    inset: 0,
+    background: 'rgba(0, 0, 0, 0.85)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1500,
+    animation: 'fadeIn 0.2s ease',
+  },
+  promotionDialog: {
+    background: 'linear-gradient(135deg, rgba(27,35,56,0.98), rgba(11,16,32,0.98))',
+    borderRadius: 16,
+    padding: 32,
+    border: '2px solid rgba(136,192,208,0.4)',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.8)',
+    textAlign: 'center',
+    animation: 'slideUp 0.3s ease',
+  },
+  promotionTitle: {
+    fontSize: '1.8rem',
+    fontWeight: 700,
+    color: '#eceff4',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+  },
+  promotionText: {
+    fontSize: '1rem',
+    color: '#d8dee9',
+    marginBottom: 24,
+  },
+  promotionChoices: {
+    display: 'flex',
+    gap: 16,
+  },
+  promotionButton: {
+    background: 'rgba(136,192,208,0.1)',
+    border: '2px solid rgba(136,192,208,0.3)',
+    borderRadius: 12,
+    padding: '20px 24px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+    color: '#eceff4',
+    fontSize: '0.9rem',
+    fontWeight: 600,
+    minWidth: 100,
+  },
+  promotionPiece: {
+    fontSize: '3rem',
+    filter: 'drop-shadow(0 2px 8px rgba(136,192,208,0.4))',
   },
 };

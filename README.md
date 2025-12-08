@@ -1,1 +1,1 @@
-# XXI-Chess
+# Arcana Chess

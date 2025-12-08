@@ -66,11 +66,27 @@ io.on('connection', (socket) => {
 
   socket.on('leaveLobby', (payload, ack) => {
     try {
-      lobbyManager.leaveLobby(socket.id);
+      const result = lobbyManager.leaveLobby(socket.id);
+      if (result) {
+        // Notify all players in the lobby that it's closed
+        io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player left' });
+      }
       safeAck(ack, { ok: true });
     } catch (err) {
       console.error('leaveLobby error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to leave lobby' });
+    }
+  });
+
+  socket.on('updateLobbySettings', (payload, ack) => {
+    try {
+      const lobby = lobbyManager.updateLobbySettings(socket.id, payload || {});
+      safeAck(ack, { ok: true, lobby });
+      // Broadcast updated lobby to all players
+      io.to(lobby.id).emit('lobbyUpdated', lobby);
+    } catch (err) {
+      console.error('updateLobbySettings error', err);
+      safeAck(ack, { ok: false, error: err.message || 'Failed to update settings' });
     }
   });
 
@@ -130,7 +146,10 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('Socket disconnected', socket.id);
-    lobbyManager.removeSocket(socket.id);
+    const result = lobbyManager.leaveLobby(socket.id);
+    if (result) {
+      io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player disconnected' });
+    }
     gameManager.handleDisconnect(socket.id);
   });
 });
@@ -150,5 +169,5 @@ if (process.env.NODE_ENV === 'production') {
 
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-  console.log(`XXI-Chess server running on port ${PORT}`);
+  console.log(`Arcana Chess server running on port ${PORT}`);
 });

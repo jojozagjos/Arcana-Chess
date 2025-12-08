@@ -81,28 +81,29 @@ export class LobbyManager {
 
   leaveLobby(socketId) {
     const lobbyId = this.socketToLobby.get(socketId);
-    if (!lobbyId) return;
+    if (!lobbyId) return null;
 
     const lobby = this.lobbies.get(lobbyId);
     if (!lobby) {
       this.socketToLobby.delete(socketId);
-      return;
+      return null;
     }
 
-    lobby.players = lobby.players.filter((id) => id !== socketId);
+    // Get all players before deletion
+    const allPlayers = [...lobby.players];
+    
+    // Remove this socket
     this.socketToLobby.delete(socketId);
+    
+    // Remove all other players from the lobby
+    allPlayers.forEach(playerId => {
+      this.socketToLobby.delete(playerId);
+    });
 
-    // If host leaves, assign new host if possible
-    if (lobby.hostId === socketId && lobby.players.length > 0) {
-      lobby.hostId = lobby.players[0];
-    }
+    // Always delete the lobby when anyone leaves
+    this.lobbies.delete(lobbyId);
 
-    // If no one left, delete lobby
-    if (lobby.players.length === 0) {
-      this.lobbies.delete(lobbyId);
-    } else {
-      this.lobbies.set(lobbyId, lobby);
-    }
+    return { lobbyId, allPlayers };
   }
 
   removeSocket(socketId) {
@@ -110,12 +111,33 @@ export class LobbyManager {
   }
 
   getPublicLobbies() {
-    return [...this.lobbies.values()].filter((lobby) => !lobby.isPrivate);
+    // Return all lobbies; client will show lock icon for private ones
+    return [...this.lobbies.values()];
   }
 
   getLobbyForSocket(socketId) {
     const lobbyId = this.socketToLobby.get(socketId);
     if (!lobbyId) return null;
     return this.lobbies.get(lobbyId) || null;
+  }
+
+  updateLobbySettings(socketId, settings) {
+    const lobby = this.getLobbyForSocket(socketId);
+    if (!lobby) {
+      throw new Error('Not in a lobby');
+    }
+
+    // Only host can update settings
+    if (lobby.hostId !== socketId) {
+      throw new Error('Only the host can update lobby settings');
+    }
+
+    // Update allowed settings
+    if (settings.isPrivate !== undefined) lobby.isPrivate = settings.isPrivate;
+    if (settings.gameMode !== undefined) lobby.gameMode = settings.gameMode;
+    if (settings.timeControl !== undefined) lobby.timeControl = settings.timeControl;
+
+    this.lobbies.set(lobby.id, lobby);
+    return lobby;
   }
 }
