@@ -63,9 +63,15 @@ function copyRecursive(source, destination) {
 }
 
 if (!src) {
-  console.warn('Warning: No client build directory found. Attempted the following paths:');
-  for (const p of candidates) console.warn(' -', p);
-  console.warn('Skipping copy. If you built the client into a different folder, set an environment variable `CLIENT_BUILD_DIR` or update this script.');
+  // Check if the destination already has the build output (vite.config.js might use outDir: '../server/public')
+  const indexExists = fs.existsSync(path.join(dest, 'index.html'));
+  if (indexExists) {
+    console.log('Client build already present in server/public (built directly to destination). Copy not needed.');
+  } else {
+    console.warn('Warning: No client build directory found. Attempted the following paths:');
+    for (const p of candidates) console.warn(' -', p);
+    console.warn('Skipping copy. If you built the client into a different folder, set an environment variable `CLIENT_BUILD_DIR` or update this script.');
+  }
 } else {
   console.log('Copying client build from', src, 'to', dest);
   copyRecursive(src, dest);

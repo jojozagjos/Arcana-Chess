@@ -26,5 +26,12 @@ export default defineConfig({
     // Build into the server's public directory for production
     outDir: '../server/public',
     emptyOutDir: true,
+    // Increase warning limit to avoid spurious warnings for big effect files
+    chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        // Rely on Vite's automatic code-splitting for dynamic imports.
+      },
+    },
   },
 });

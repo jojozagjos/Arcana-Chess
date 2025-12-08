@@ -6,36 +6,8 @@ import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
-import {
-  ExecutionCutscene,
-  TimeTravelCutscene,
-  MindControlCutscene,
-  DivineInterventionCutscene,
-  CursedSquareEffect,
-  SanctuaryEffect,
-  ChainLightningEffect,
-  PoisonCloudEffect,
-  ShieldGlowEffect,
-  PromotionRitualEffect,
-  MetamorphosisEffect,
-  IronFortressEffect,
-  BishopsBlessingEffect,
-  TimeFreezeEffect,
-  SpectralMarchEffect,
-  KnightOfStormsEffect,
-  QueensGambitEffect,
-  RoyalSwapEffect,
-  DoubleStrikeEffect,
-  SharpshooterEffect,
-  BerserkerRageEffect,
-  NecromancyEffect,
-  MirrorImageEffect,
-  FogOfWarEffect,
-  ChaosTheoryEffect,
-  SacrificeEffect,
-  CastleBreakerEffect,
-  TemporalEchoEffect,
-} from './ArcanaEffects.jsx';
+// Arcana visual effects are loaded on-demand to reduce initial bundle size.
+// We dynamically import `ArcanaEffects.jsx` when an arcana visual or persistent effect is active.
 
 // Helper function to determine what type of target an arcana card needs
 function getTargetTypeForArcana(arcanaId) {
@@ -77,6 +49,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [rematchVote, setRematchVote] = useState(null); // 'voted' when player votes for rematch
   const [targetingMode, setTargetingMode] = useState(null); // { arcanaId, targetType: 'pawn'|'piece'|'square'|'enemyPiece', params: {} }
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null); // { square } when showing piece type choice
+  const [effectsModule, setEffectsModule] = useState(null);
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -130,6 +103,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const t = setTimeout(() => setActiveVisualArcana(null), 1500);
     return () => clearTimeout(t);
   }, [lastArcanaEvent]);
+
+  // Load arcana visual effects module on demand when visuals or persistent effects are present
+  useEffect(() => {
+    const needsVisuals = !!(lastArcanaEvent || (gameState && gameState.activeEffects));
+    if (!effectsModule && needsVisuals) {
+      import('./ArcanaEffects.jsx').then((m) => setEffectsModule(m)).catch(() => {});
+    }
+  }, [lastArcanaEvent, gameState, effectsModule]);
 
   // Listen for arcana drawn events
   useEffect(() => {
@@ -579,105 +560,108 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         {/* Ascension ring disabled - was causing visual artifacts */}
         {/* {isAscended && <AscensionRing />} */}
         
-        {/* Arcana Visual Effects */}
-        {activeVisualArcana?.arcanaId === 'astral_rebirth' && activeVisualArcana.params?.square && (
-          <RebirthBeam square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'execution' && activeVisualArcana.params?.square && (
-          <ExecutionCutscene targetSquare={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'time_travel' && (
-          <TimeTravelCutscene />
-        )}
-        {activeVisualArcana?.arcanaId === 'mind_control' && activeVisualArcana.params?.square && (
-          <MindControlCutscene targetSquare={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'divine_intervention' && (
-          <DivineInterventionCutscene kingSquare={activeVisualArcana.params?.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'chain_lightning' && activeVisualArcana.params?.chained && (
-          <ChainLightningEffect squares={activeVisualArcana.params.chained} />
-        )}
-        {activeVisualArcana?.arcanaId === 'poison_touch' && activeVisualArcana.params?.square && (
-          <PoisonCloudEffect square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'promotion_ritual' && activeVisualArcana.params?.square && (
-          <PromotionRitualEffect square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'metamorphosis' && activeVisualArcana.params?.square && (
-          <MetamorphosisEffect square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'iron_fortress' && activeVisualArcana.params?.square && (
-          <IronFortressEffect kingSquare={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'bishops_blessing' && activeVisualArcana.params?.square && (
-          <BishopsBlessingEffect bishopSquare={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'time_freeze' && (
-          <TimeFreezeEffect />
-        )}
-        {activeVisualArcana?.arcanaId === 'spectral_march' && activeVisualArcana.params?.from && activeVisualArcana.params?.to && (
-          <SpectralMarchEffect fromSquare={activeVisualArcana.params.from} toSquare={activeVisualArcana.params.to} />
-        )}
-        {activeVisualArcana?.arcanaId === 'knight_of_storms' && activeVisualArcana.params?.to && (
-          <KnightOfStormsEffect square={activeVisualArcana.params.to} />
-        )}
-        {activeVisualArcana?.arcanaId === 'queens_gambit' && activeVisualArcana.params?.square && (
-          <QueensGambitEffect square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'royal_swap' && activeVisualArcana.params?.kingFrom && activeVisualArcana.params?.kingTo && (
-          <RoyalSwapEffect kingFrom={activeVisualArcana.params.kingFrom} kingTo={activeVisualArcana.params.kingTo} />
-        )}
-        {activeVisualArcana?.arcanaId === 'double_strike' && activeVisualArcana.params?.square && (
-          <DoubleStrikeEffect square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'sharpshooter' && activeVisualArcana.params?.from && activeVisualArcana.params?.to && (
-          <SharpshooterEffect fromSquare={activeVisualArcana.params.from} toSquare={activeVisualArcana.params.to} />
-        )}
-        {activeVisualArcana?.arcanaId === 'berserker_rage' && activeVisualArcana.params?.square && (
-          <BerserkerRageEffect square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'necromancy' && activeVisualArcana.params?.revived && (
-          <NecromancyEffect squares={activeVisualArcana.params.revived} />
-        )}
-        {activeVisualArcana?.arcanaId === 'mirror_image' && activeVisualArcana.params?.square && (
-          <MirrorImageEffect square={activeVisualArcana.params.square} />
-        )}
-        {activeVisualArcana?.arcanaId === 'fog_of_war' && (
-          <FogOfWarEffect />
-        )}
-        {activeVisualArcana?.arcanaId === 'chaos_theory' && (
-          <ChaosTheoryEffect />
-        )}
-        {activeVisualArcana?.arcanaId === 'sacrifice' && activeVisualArcana.params?.sacrificed && (
-          <SacrificeEffect square={activeVisualArcana.params.sacrificed} />
-        )}
-        {activeVisualArcana?.arcanaId === 'castle_breaker' && activeVisualArcana.params?.destroyed && (
-          <CastleBreakerEffect square={activeVisualArcana.params.destroyed} />
-        )}
-        {activeVisualArcana?.arcanaId === 'temporal_echo' && activeVisualArcana.params?.square && (
-          <TemporalEchoEffect square={activeVisualArcana.params.square} />
-        )}
-        
-        {/* Persistent Effects */}
-        {gameState?.activeEffects?.cursedSquares?.map((c, i) => (
-          <CursedSquareEffect key={`cursed-${i}`} square={c.square} />
-        ))}
-        {gameState?.activeEffects?.sanctuaries?.map((s, i) => (
-          <SanctuaryEffect key={`sanctuary-${i}`} square={s.square} />
-        ))}
-        {gameState?.activeEffects?.mirrorImages?.map((m, i) => (
-          <MirrorImageEffect key={`mirror-${i}`} square={m.square} />
-        ))}
-        {(gameState?.activeEffects?.fogOfWar?.w || gameState?.activeEffects?.fogOfWar?.b) && (
-          <FogOfWarEffect />
-        )}
-        {pawnShields.w?.square && (
-          <ShieldGlowEffect square={pawnShields.w.square} />
-        )}
-        {pawnShields.b?.square && (
-          <ShieldGlowEffect square={pawnShields.b.square} />
-        )}
+        {/* Arcana Visual Effects (loaded on demand) */}
+        {(() => {
+          const Effects = effectsModule;
+          return (
+            <>
+              {activeVisualArcana?.arcanaId === 'astral_rebirth' && activeVisualArcana.params?.square && Effects?.RebirthBeam && (
+                <Effects.RebirthBeam square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'execution' && activeVisualArcana.params?.square && Effects?.ExecutionCutscene && (
+                <Effects.ExecutionCutscene targetSquare={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'time_travel' && Effects?.TimeTravelCutscene && (
+                <Effects.TimeTravelCutscene />
+              )}
+              {activeVisualArcana?.arcanaId === 'mind_control' && activeVisualArcana.params?.square && Effects?.MindControlCutscene && (
+                <Effects.MindControlCutscene targetSquare={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'divine_intervention' && Effects?.DivineInterventionCutscene && (
+                <Effects.DivineInterventionCutscene kingSquare={activeVisualArcana.params?.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'chain_lightning' && activeVisualArcana.params?.chained && Effects?.ChainLightningEffect && (
+                <Effects.ChainLightningEffect squares={activeVisualArcana.params.chained} />
+              )}
+              {activeVisualArcana?.arcanaId === 'poison_touch' && activeVisualArcana.params?.square && Effects?.PoisonCloudEffect && (
+                <Effects.PoisonCloudEffect square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'promotion_ritual' && activeVisualArcana.params?.square && Effects?.PromotionRitualEffect && (
+                <Effects.PromotionRitualEffect square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'metamorphosis' && activeVisualArcana.params?.square && Effects?.MetamorphosisEffect && (
+                <Effects.MetamorphosisEffect square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'iron_fortress' && activeVisualArcana.params?.square && Effects?.IronFortressEffect && (
+                <Effects.IronFortressEffect kingSquare={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'bishops_blessing' && activeVisualArcana.params?.square && Effects?.BishopsBlessingEffect && (
+                <Effects.BishopsBlessingEffect bishopSquare={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'time_freeze' && Effects?.TimeFreezeEffect && (
+                <Effects.TimeFreezeEffect />
+              )}
+              {activeVisualArcana?.arcanaId === 'spectral_march' && activeVisualArcana.params?.from && activeVisualArcana.params?.to && Effects?.SpectralMarchEffect && (
+                <Effects.SpectralMarchEffect fromSquare={activeVisualArcana.params.from} toSquare={activeVisualArcana.params.to} />
+              )}
+              {activeVisualArcana?.arcanaId === 'knight_of_storms' && activeVisualArcana.params?.to && Effects?.KnightOfStormsEffect && (
+                <Effects.KnightOfStormsEffect square={activeVisualArcana.params.to} />
+              )}
+              {activeVisualArcana?.arcanaId === 'queens_gambit' && activeVisualArcana.params?.square && Effects?.QueensGambitEffect && (
+                <Effects.QueensGambitEffect square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'royal_swap' && activeVisualArcana.params?.kingFrom && activeVisualArcana.params?.kingTo && Effects?.RoyalSwapEffect && (
+                <Effects.RoyalSwapEffect kingFrom={activeVisualArcana.params.kingFrom} kingTo={activeVisualArcana.params.kingTo} />
+              )}
+              {activeVisualArcana?.arcanaId === 'double_strike' && activeVisualArcana.params?.square && Effects?.DoubleStrikeEffect && (
+                <Effects.DoubleStrikeEffect square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'sharpshooter' && activeVisualArcana.params?.from && activeVisualArcana.params?.to && Effects?.SharpshooterEffect && (
+                <Effects.SharpshooterEffect fromSquare={activeVisualArcana.params.from} toSquare={activeVisualArcana.params.to} />
+              )}
+              {activeVisualArcana?.arcanaId === 'berserker_rage' && activeVisualArcana.params?.square && Effects?.BerserkerRageEffect && (
+                <Effects.BerserkerRageEffect square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'necromancy' && activeVisualArcana.params?.revived && Effects?.NecromancyEffect && (
+                <Effects.NecromancyEffect squares={activeVisualArcana.params.revived} />
+              )}
+              {activeVisualArcana?.arcanaId === 'mirror_image' && activeVisualArcana.params?.square && Effects?.MirrorImageEffect && (
+                <Effects.MirrorImageEffect square={activeVisualArcana.params.square} />
+              )}
+              {activeVisualArcana?.arcanaId === 'fog_of_war' && Effects?.FogOfWarEffect && (
+                <Effects.FogOfWarEffect />
+              )}
+              {activeVisualArcana?.arcanaId === 'chaos_theory' && Effects?.ChaosTheoryEffect && (
+                <Effects.ChaosTheoryEffect />
+              )}
+              {activeVisualArcana?.arcanaId === 'sacrifice' && activeVisualArcana.params?.sacrificed && Effects?.SacrificeEffect && (
+                <Effects.SacrificeEffect square={activeVisualArcana.params.sacrificed} />
+              )}
+              {activeVisualArcana?.arcanaId === 'castle_breaker' && activeVisualArcana.params?.destroyed && Effects?.CastleBreakerEffect && (
+                <Effects.CastleBreakerEffect square={activeVisualArcana.params.destroyed} />
+              )}
+              {activeVisualArcana?.arcanaId === 'temporal_echo' && activeVisualArcana.params?.square && Effects?.TemporalEchoEffect && (
+                <Effects.TemporalEchoEffect square={activeVisualArcana.params.square} />
+              )}
+
+              {/* Persistent Effects */}
+              {gameState?.activeEffects?.cursedSquares?.map((c, i) => (
+                Effects?.CursedSquareEffect ? <Effects.CursedSquareEffect key={`cursed-${i}`} square={c.square} /> : null
+              ))}
+              {gameState?.activeEffects?.sanctuaries?.map((s, i) => (
+                Effects?.SanctuaryEffect ? <Effects.SanctuaryEffect key={`sanctuary-${i}`} square={s.square} /> : null
+              ))}
+              {gameState?.activeEffects?.mirrorImages?.map((m, i) => (
+                Effects?.MirrorImageEffect ? <Effects.MirrorImageEffect key={`mirror-${i}`} square={m.square} /> : null
+              ))}
+              {(gameState?.activeEffects?.fogOfWar?.w || gameState?.activeEffects?.fogOfWar?.b) && (
+                Effects?.FogOfWarEffect ? <Effects.FogOfWarEffect /> : null
+              )}
+              {pawnShields.w?.square && (Effects?.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null)}
+              {pawnShields.b?.square && (Effects?.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null)}
+            </>
+          );
+        })()}
         
         <OrbitControls enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
       </Canvas>
