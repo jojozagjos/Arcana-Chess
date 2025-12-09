@@ -1,4 +1,6 @@
 // Simple sound manager for Arcana Chess
+import { ARCANA_DEFINITIONS } from './arcanaDefinitions.js';
+
 class SoundManager {
   constructor() {
     this.sounds = {};
@@ -28,8 +30,22 @@ class SoundManager {
     }
   }
 
+  // Register arcana sounds using ARCANA_DEFINITIONS
+  // This will generate namespaced keys like 'arcana:shield_pawn' -> '/sounds/arcana/shield_pawn.mp3'
+  registerArcanaSounds(basePath = '/sounds/arcana') {
+    const map = {};
+    for (const arc of ARCANA_DEFINITIONS) {
+      const key = `arcana:${arc.id}`;
+      // Prefer mp3, fall back to ogg could be supported by client if present
+      map[key] = `${basePath}/${arc.id}.mp3`;
+    }
+    this.preload(map);
+  }
+
   play(soundName) {
     if (!this.enabled) return;
+    // Skip silently if soundName is null/undefined (intentionally silent)
+    if (!soundName) return;
     const sound = this.sounds[soundName];
     if (!sound) {
       console.warn(`Sound "${soundName}" not found`);
@@ -92,11 +108,15 @@ export const soundManager = new SoundManager();
 
 // Preload sounds (assuming placeholder files are in public/sounds/)
 soundManager.preload({
-  move: '/sounds/move.mp3',
-  capture: '/sounds/capture.mp3',
-  ascension: '/sounds/ascension.mp3',
-  cardDraw: '/sounds/card-draw.mp3',
-  cardUse: '/sounds/card-use.mp3',
-  check: '/sounds/check.mp3',
-  victory: '/sounds/victory.mp3',
+  // UI/Gameplay sounds (keep small and grouped under /sounds/ui)
+  move: '/sounds/ui/move.mp3',
+  capture: '/sounds/ui/capture.mp3',
+  ascension: '/sounds/ui/ascension.mp3',
+  cardDraw: '/sounds/ui/card-draw.mp3',
+  cardUse: '/sounds/ui/card-use.mp3',
+  check: '/sounds/ui/check.mp3',
+  victory: '/sounds/ui/victory.mp3',
 });
+
+// Register arcana-specific sounds under /sounds/arcana/*.mp3
+soundManager.registerArcanaSounds('/sounds/arcana');

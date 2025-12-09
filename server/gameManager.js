@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { ARCANA_DEFINITIONS } from './arcana.js';
+import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
 
 function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor }) {
   const chess = new Chess();
@@ -147,9 +147,16 @@ export class GameManager {
   }
 
   serialiseGameState(gameState) {
+    // Convert used indices to used IDs for client display
     const usedArcanaPlain = {};
-    for (const [socketId, set] of Object.entries(gameState.usedArcanaIdsByPlayer || {})) {
-      usedArcanaPlain[socketId] = Array.from(set);
+    for (const [socketId, usedIndices] of Object.entries(gameState.usedArcanaIdsByPlayer || {})) {
+      const playerArcana = gameState.arcanaByPlayer[socketId] || [];
+      // If it's an array of indices, convert to IDs; if it's a Set (old format), keep as-is for backward compatibility
+      if (Array.isArray(usedIndices)) {
+        usedArcanaPlain[socketId] = usedIndices.map(idx => playerArcana[idx]?.id).filter(Boolean);
+      } else {
+        usedArcanaPlain[socketId] = Array.from(usedIndices);
+      }
     }
 
     return {
@@ -281,12 +288,50 @@ export class GameManager {
         }
       }
 
+      // Check if any used card should end the turn
+      const turnEndingCards = [
+        'execution', 'castle_breaker', 'astral_rebirth', 'necromancy',
+        'time_travel', 'chaos_theory', 'sacrifice', 'mind_control',
+        'royal_swap', 'promotion_ritual', 'metamorphosis'
+      ];
+      
+      const shouldEndTurn = arcanaUsed.some(use => turnEndingCards.includes(use.arcanaId));
+      
+      if (shouldEndTurn) {
+        // Pass turn by swapping active color
+        const fen = chess.fen();
+        const fenParts = fen.split(' ');
+        fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+        chess.load(fenParts.join(' '));
+        
+        // Update serialized state
+        const updatedSerialised = this.serialiseGameState(gameState);
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            this.io.to(pid).emit('gameUpdated', updatedSerialised);
+          }
+        }
+        
+        return { ok: true, appliedArcana, turnEnded: true };
+      }
+
       return { ok: true, appliedArcana };
     }
 
     // Regular move handling
     const chess = gameState.chess;
     const moverColor = chess.turn();
+
+    // Reset lastDrawnBy when it's this player's turn to move (not draw)
+    // This ensures draw validation only prevents consecutive draws, not draws after opponent's move
+    if (gameState.lastDrawnBy && gameState.playerColors[socket.id] === (moverColor === 'w' ? 'white' : 'black')) {
+      const lastDrawerColor = gameState.playerColors[gameState.lastDrawnBy];
+      const lastDrawerColorChar = lastDrawerColor === 'white' ? 'w' : 'b';
+      if (lastDrawerColorChar !== moverColor) {
+        // Opponent drew last, so reset
+        gameState.lastDrawnBy = null;
+      }
+    }
 
     // Work with verbose moves so we can inspect captures and types
     const legalMoves = chess.moves({ verbose: true });
@@ -356,6 +401,21 @@ export class GameManager {
     if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
 
     const result = chess.move(candidate);
+
+    // Check if a king was captured (should end game immediately)
+    const kingCaptured = result.captured === 'k';
+    if (kingCaptured) {
+      gameState.status = 'finished';
+      const outcome = { type: 'king-captured', winner: result.color === 'w' ? 'white' : 'black' };
+      const serialised = this.serialiseGameState(gameState);
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          this.io.to(pid).emit('gameUpdated', serialised);
+          this.io.to(pid).emit('gameEnded', outcome);
+        }
+      }
+      return { gameState: serialised, appliedArcana: [] };
+    }
 
     // Update shield position if the shielded piece moved
     const myShield = gameState.pawnShields[moverColor];
@@ -516,15 +576,19 @@ export class GameManager {
   applyArcana(socketId, gameState, arcanaUsed, moveResult) {
     if (!Array.isArray(arcanaUsed) || arcanaUsed.length === 0) return [];
     const available = gameState.arcanaByPlayer[socketId] || [];
-    gameState.usedArcanaIdsByPlayer[socketId] ||= new Set();
+    gameState.usedArcanaIdsByPlayer[socketId] ||= [];
 
     const chess = gameState.chess;
     const appliedDefs = [];
 
     for (const use of arcanaUsed) {
-      const def = available.find((a) => a.id === use.arcanaId);
-      if (!def) continue;
-      if (gameState.usedArcanaIdsByPlayer[socketId].has(def.id)) continue;
+      // Find first unused card of this type
+      const defIndex = available.findIndex((a, idx) => 
+        a.id === use.arcanaId && !gameState.usedArcanaIdsByPlayer[socketId].includes(idx)
+      );
+      
+      if (defIndex === -1) continue;
+      const def = available[defIndex];
 
       // Get mover color from moveResult if available, otherwise from current turn
       const moverColor = moveResult?.color || chess.turn();
@@ -816,8 +880,8 @@ export class GameManager {
         }
       }
 
-      // Mark as used
-      gameState.usedArcanaIdsByPlayer[socketId].add(def.id);
+      // Mark as used (by index, not by ID)
+      gameState.usedArcanaIdsByPlayer[socketId].push(defIndex);
       appliedDefs.push({ def, params });
 
       // Notify both players
@@ -832,6 +896,8 @@ export class GameManager {
             arcanaId: def.id,
             owner: socketId,
             params,
+            soundKey: def.soundKey,
+            visual: def.visual,
           });
         }
       }
@@ -943,7 +1009,7 @@ export class GameManager {
     const destPiece = chess.get(to);
     if (destPiece && destPiece.color === color) return null;
 
-    return { from, to, piece: 'r', captured: destPiece?.type, color };
+    return { from, to, piece: 'r', captured: destPiece?.type, color: color };
   }
 
   validatePhantomStep(chess, from, to, piece) {

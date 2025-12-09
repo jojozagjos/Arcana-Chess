@@ -164,14 +164,22 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       soundManager.play('ascension');
     };
 
+    const handleArcanaTriggered = (payload) => {
+      // Play sound effect for arcana activation (soundManager handles null gracefully)
+      soundManager.play(payload.soundKey);
+      // Visual effects are already handled by ArcanaEffects component
+    };
+
     socket.on('arcanaDrawn', handleArcanaDrawn);
     socket.on('arcanaUsed', handleArcanaUsed);
     socket.on('ascended', handleAscended);
+    socket.on('arcanaTriggered', handleArcanaTriggered);
 
     return () => {
       socket.off('arcanaDrawn', handleArcanaDrawn);
       socket.off('arcanaUsed', handleArcanaUsed);
       socket.off('ascended', handleAscended);
+      socket.off('arcanaTriggered', handleArcanaTriggered);
     };
   }, []);
 
@@ -181,7 +189,12 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     // Check if it's the player's turn
     const myColorCode = myColor === 'white' ? 'w' : 'b';
     const currentTurn = chess.turn();
-    if (currentTurn !== myColorCode) return;
+    if (currentTurn !== myColorCode) {
+      // Clear selection if clicking when it's not your turn
+      setSelectedSquare(null);
+      setLegalTargets([]);
+      return;
+    }
 
     const fileChar = 'abcdefgh'[fileIndex];
     const rankNum = 8 - rankIndex;
@@ -719,6 +732,18 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               return;
             }
             
+            // Check if it's the player's turn before allowing card selection
+            const myColorCode = myColor === 'white' ? 'w' : 'b';
+            const currentTurn = chess?.turn();
+            if (currentTurn !== myColorCode) {
+              setPendingMoveError('You can only use cards on your turn');
+              return;
+            }
+            
+            // Clear piece selection when using a card
+            setSelectedSquare(null);
+            setLegalTargets([]);
+            
             // Determine if this card needs targeting
             const targetType = getTargetTypeForArcana(arcanaId);
             if (targetType) {
@@ -744,6 +769,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           onToggle={() => setArcanaSidebarOpen(!arcanaSidebarOpen)}
           onDrawCard={() => {
             setIsDrawingCard(true);
+            setSelectedSquare(null);
+            setLegalTargets([]);
             socket.emit('playerAction', { actionType: 'drawArcana' }, (res) => {
               setIsDrawingCard(false);
               if (!res || !res.ok) {

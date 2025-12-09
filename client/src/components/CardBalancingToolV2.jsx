@@ -1,0 +1,1203 @@
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { Chess } from 'chess.js';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, Environment } from '@react-three/drei';
+import { socket } from '../game/socket.js';
+import { soundManager } from '../game/soundManager.js';
+import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
+import { ArcanaCard } from './ArcanaCard.jsx';
+import { ChessPiece } from './ChessPiece.jsx';
+import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
+import * as THREE from 'three';
+
+// Helper to convert square notation to 3D position
+function squareToPosition(square) {
+  const file = square.charCodeAt(0) - 97;
+  const rank = 8 - parseInt(square[1]);
+  const x = file - 3.5;
+  const z = rank - 3.5;
+  return [x, 0, z];
+}
+
+const TEST_SCENARIOS = {
+  default: { name: 'Starting Position', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
+  midgame: { name: 'Midgame', fen: 'r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 4 5' },
+  endgame: { name: 'Endgame', fen: '4k3/8/8/8/8/8/4P3/4K2R w K - 0 1' },
+  pawnPromotion: { name: 'Pawn Promotion Test', fen: '4k3/4P3/8/8/8/8/8/4K3 w - - 0 1' },
+  checkScenario: { name: 'King in Check', fen: 'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3' },
+  crowdedBoard: { name: 'Crowded Center', fen: 'rnbqkbnr/pppppppp/8/8/3PP3/3NN3/PPP2PPP/R1BQKB1R b KQkq - 0 1' },
+  shieldTest: { name: 'Shield Test (White Pawn e2)', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
+};
+
+// Shield visual effect component (from ArcanaEffects.jsx)
+function ShieldGlowEffect({ square }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  
+  return (
+    <group position={[x, 0, z]}>
+      {/* Glowing shield around piece */}
+      <mesh position={[0, 0.5, 0]}>
+        <cylinderGeometry args={[0.45, 0.45, 0.8, 16, 1, true]} />
+        <meshStandardMaterial
+          emissive="#4c566a"
+          emissiveIntensity={1.5}
+          color="#4c566a"
+          transparent
+          opacity={0.4}
+          side={2}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// Sacrifice effect - piece sinks with purple fire
+function SacrificeEffect({ square, onComplete }) {
+  const groupRef = useRef();
+  const [progress, setProgress] = useState(0);
+
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 0.8;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+
+    if (groupRef.current) {
+      groupRef.current.position.y = -progress * 1.5;
+      groupRef.current.rotation.y = progress * Math.PI * 2;
+    }
+  });
+
+  const file = square.charCodeAt(0) - 97;
+  const rank = 8 - parseInt(square[1]);
+  const x = file - 3.5;
+  const z = rank - 3.5;
+
+  return (
+    <group position={[x, 0, z]} ref={groupRef}>
+      {/* Purple fire particles */}
+      {[...Array(8)].map((_, i) => {
+        const angle = (i / 8) * Math.PI * 2;
+        const radius = 0.3 + Math.sin(progress * Math.PI) * 0.2;
+        return (
+          <mesh key={i} position={[Math.cos(angle) * radius, progress * 0.5, Math.sin(angle) * radius]}>
+            <sphereGeometry args={[0.08, 8, 8]} />
+            <meshStandardMaterial
+              color="#a855f7"
+              emissive="#c084fc"
+              emissiveIntensity={2}
+              transparent
+              opacity={1 - progress}
+            />
+          </mesh>
+        );
+      })}
+      <pointLight position={[0, 0.5, 0]} intensity={3 * (1 - progress)} color="#a855f7" distance={3} />
+    </group>
+  );
+}
+
+// Ghost piece for Temporal Echo
+function GhostPiece({ type, isWhite, fromSquare, toSquare, delay = 0 }) {
+  const groupRef = useRef();
+  const [progress, setProgress] = useState(0);
+
+  useFrame((state, delta) => {
+    if (progress < 1) {
+      setProgress(prev => Math.min(prev + delta * 0.3, 1));
+    }
+    if (groupRef.current && progress > delay) {
+      const t = (progress - delay) / (1 - delay);
+      groupRef.current.position.y = Math.sin(t * Math.PI) * 0.5;
+    }
+  });
+
+  const fromFile = fromSquare.charCodeAt(0) - 97;
+  const fromRank = 8 - parseInt(fromSquare[1]);
+  const toFile = toSquare.charCodeAt(0) - 97;
+  const toRank = 8 - parseInt(toSquare[1]);
+
+  const t = Math.max(0, (progress - delay) / (1 - delay));
+  const x = (fromFile - 3.5) + ((toFile - fromFile) * t);
+  const z = (fromRank - 3.5) + ((toRank - fromRank) * t);
+
+  return (
+    <group position={[x, 0.15, z]} ref={groupRef}>
+      <ChessPiece
+        type={type}
+        isWhite={isWhite}
+        targetPosition={[0, 0, 0]}
+      />
+      <mesh>
+        <boxGeometry args={[0.6, 0.6, 0.6]} />
+        <meshStandardMaterial
+          color={isWhite ? '#d8dee9' : '#2e3440'}
+          transparent
+          opacity={0.3 * (1 - t)}
+          emissive={isWhite ? '#88c0d0' : '#5e81ac'}
+          emissiveIntensity={0.5}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// Camera movement controller for cutscenes
+function CameraController({ targetPosition, onComplete, active }) {
+  const { camera } = useThree();
+  const startPos = useRef(null);
+  const progress = useRef(0);
+
+  useFrame((state, delta) => {
+    if (!active) return;
+
+    if (!startPos.current) {
+      startPos.current = camera.position.clone();
+    }
+
+    progress.current += delta * 0.5;
+
+    if (progress.current >= 1) {
+      camera.position.copy(targetPosition);
+      if (onComplete) onComplete();
+      return;
+    }
+
+    const t = progress.current;
+    const easeT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+    camera.position.lerpVectors(startPos.current, targetPosition, easeT);
+    camera.lookAt(0, 0, 0);
+  });
+
+  return null;
+}
+
+// Grayscale post-processing effect
+function GrayscaleEffect({ intensity }) {
+  const { gl, scene, camera } = useThree();
+  // Simple grayscale by manipulating scene fog color
+  useEffect(() => {
+    if (intensity > 0) {
+      scene.fog = new THREE.Fog(0x808080, 10, 50);
+    } else {
+      scene.fog = null;
+    }
+    return () => {
+      scene.fog = null;
+    };
+  }, [intensity, scene]);
+
+  return null;
+}
+
+export function CardBalancingToolV2({ onBack }) {
+  const [selectedCardId, setSelectedCardId] = useState(null);
+  const [scenario, setScenario] = useState('default');
+  const [fen, setFen] = useState(TEST_SCENARIOS.default.fen);
+  const [chess, setChess] = useState(new Chess());
+  const [playerColor, setPlayerColor] = useState('white');
+  const [selectedSquare, setSelectedSquare] = useState(null);
+  const [targetSquare, setTargetSquare] = useState(null);
+  const [targetingMode, setTargetingMode] = useState(false);
+  const [customParams, setCustomParams] = useState({});
+  const [logMessages, setLogMessages] = useState([]);
+  const [effectsModule, setEffectsModule] = useState(null);
+  
+  // Card state tracking
+  const [pawnShields, setPawnShields] = useState({ w: null, b: null });
+  const [shieldTurnCounter, setShieldTurnCounter] = useState({ w: 0, b: 0 }); // Tracks turns for shield expiration
+  const [activeEffects, setActiveEffects] = useState({});
+  const [visualEffects, setVisualEffects] = useState([]);
+  const [cutsceneActive, setCutsceneActive] = useState(false);
+  const [cameraTarget, setCameraTarget] = useState(null);
+  const [grayscaleIntensity, setGrayscaleIntensity] = useState(0);
+  
+  // Move history for testing
+  const [moveHistory, setMoveHistory] = useState([]);
+  const [legalTargets, setLegalTargets] = useState([]);
+  
+  // Multiplayer test
+  const [multiplayerMode, setMultiplayerMode] = useState(false);
+  const [player2Perspective, setPlayer2Perspective] = useState(false);
+  
+  // Card validation checklist
+  const [validationChecklist, setValidationChecklist] = useState({
+    logic: false,
+    visuals: false,
+    sound: false,
+    cutscene: false,
+    server: false,
+  });
+  
+  // Server validation state
+  const [serverTestActive, setServerTestActive] = useState(false);
+  const [serverTestResult, setServerTestResult] = useState(null);
+
+  const selectedCard = useMemo(() => {
+    return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
+  }, [selectedCardId]);
+
+  // Sort cards by rarity (Common -> Legendary)
+  const sortedCards = useMemo(() => {
+    const rarityOrder = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5 };
+    return [...ARCANA_DEFINITIONS].sort((a, b) => {
+      const orderDiff = rarityOrder[a.rarity] - rarityOrder[b.rarity];
+      if (orderDiff !== 0) return orderDiff;
+      return a.name.localeCompare(b.name);
+    });
+  }, []);
+
+  useEffect(() => {
+    try {
+      const c = new Chess(fen);
+      setChess(c);
+    } catch (err) {
+      addLog(`Invalid FEN: ${err.message}`, 'error');
+    }
+  }, [fen]);
+
+  // Load effects module
+  useEffect(() => {
+    import('./ArcanaEffects.jsx').then(m => setEffectsModule(m)).catch(() => {});
+  }, []);
+
+  const addLog = (message, type = 'info') => {
+    setLogMessages(prev => [...prev, { message, type, timestamp: Date.now() }].slice(-30));
+  };
+
+  const changeScenario = (scenarioKey) => {
+    setScenario(scenarioKey);
+    setFen(TEST_SCENARIOS[scenarioKey].fen);
+    resetTest();
+    addLog(`Loaded scenario: ${TEST_SCENARIOS[scenarioKey].name}`, 'info');
+  };
+
+  const resetTest = () => {
+    setSelectedSquare(null);
+    setTargetSquare(null);
+    setTargetingMode(false);
+    setCustomParams({});
+    setPawnShields({ w: null, b: null });
+    setShieldTurnCounter({ w: 0, b: 0 });
+    setActiveEffects({});
+    setVisualEffects([]);
+    setMoveHistory([]);
+    setLegalTargets([]);
+    setCutsceneActive(false);
+    setGrayscaleIntensity(0);
+    setValidationChecklist({ logic: false, visuals: false, sound: false, cutscene: false, server: false });
+    setServerTestActive(false);
+    setServerTestResult(null);
+    addLog('Test reset', 'info');
+  };
+
+  // Server validation: creates a test game, applies arcana, verifies behavior
+  const testWithServer = async () => {
+    if (!selectedCard) {
+      addLog('Select a card first to test with server', 'warning');
+      return;
+    }
+
+    setServerTestActive(true);
+    addLog(`Testing ${selectedCard.name} with server...`, 'info');
+
+    try {
+      // Create a test game
+      const testGameId = `test-${Date.now()}`;
+      const testPayload = {
+        arcanaId: selectedCard.id,
+        fen: chess.fen(),
+        params: targetSquare ? { targetSquare } : {},
+      };
+
+      // Send test request to server
+      socket.emit('balancingToolTest', testPayload, (response) => {
+        setServerTestActive(false);
+        
+        if (response.success) {
+          addLog(`✓ Server validation passed: ${selectedCard.name}`, 'success');
+          setServerTestResult({ success: true, data: response });
+          setValidationChecklist(prev => ({ ...prev, server: true }));
+        } else {
+          addLog(`✗ Server validation failed: ${response.error}`, 'error');
+          setServerTestResult({ success: false, error: response.error });
+        }
+      });
+
+      // Timeout after 5 seconds
+      setTimeout(() => {
+        if (serverTestActive) {
+          setServerTestActive(false);
+          addLog('Server test timed out', 'error');
+          setServerTestResult({ success: false, error: 'Timeout' });
+        }
+      }, 5000);
+
+    } catch (err) {
+      setServerTestActive(false);
+      addLog(`Server test error: ${err.message}`, 'error');
+      setServerTestResult({ success: false, error: err.message });
+    }
+  };
+
+  const testCard = () => {
+    if (!selectedCard) return;
+
+    // Play card draw sound first (when you select/activate the card)
+    try {
+      soundManager.play('cardDraw');
+    } catch (err) {
+      addLog(`Sound error: ${err.message}`, 'warning');
+    }
+
+    // Check if card needs a target
+    if (needsTargetSquare(selectedCard.id)) {
+      setTargetingMode(true);
+      setTargetSquare(null);
+      addLog(`Click on a piece to target for ${selectedCard.name}`, 'info');
+    } else {
+      // Apply immediately for cards that don't need targets
+      const colorChar = playerColor === 'white' ? 'w' : 'b';
+      applyCardEffect(selectedCard, {}, colorChar);
+    }
+  };
+
+  const applyCardEffect = (card, params, colorChar) => {
+    const testChess = new Chess(chess.fen());
+
+    switch (card.id) {
+      case 'shield_pawn':
+        if (params.targetSquare) {
+          const piece = testChess.get(params.targetSquare);
+          if (piece && piece.type === 'p' && piece.color === colorChar) {
+            // Play shield sound effect when shield appears
+            try {
+              // Arcana sounds are registered under the 'arcana:<id>' namespace
+              soundManager.play('arcana:shield_pawn');
+              setValidationChecklist(prev => ({ ...prev, sound: true }));
+            } catch (err) {}
+            
+            setPawnShields(prev => ({ ...prev, [colorChar]: { square: params.targetSquare } }));
+            setShieldTurnCounter(prev => ({ ...prev, [colorChar]: 1 })); // Shield lasts 1 opponent turn
+            addLog(`Shield applied to pawn at ${params.targetSquare} - protected for 1 enemy turn`, 'success');
+            setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true }));
+          } else {
+            addLog('Shield Pawn requires targeting your own pawn', 'error');
+          }
+        } else {
+          addLog('Click a square to target your pawn for shield', 'warning');
+        }
+        break;
+
+      case 'sacrifice':
+        if (params.targetSquare) {
+          const piece = testChess.get(params.targetSquare);
+          if (piece && piece.color === colorChar) {
+            // Play sacrifice sound when effect starts
+            try {
+              soundManager.play('capture'); // TODO: Add specific 'sacrifice' sound with whoosh/void effect
+              setValidationChecklist(prev => ({ ...prev, sound: true }));
+            } catch (err) {}
+            
+            // Show sacrifice animation
+            setVisualEffects(prev => [...prev, { type: 'sacrifice', square: params.targetSquare, id: Date.now() }]);
+            setTimeout(() => {
+              testChess.remove(params.targetSquare);
+              setChess(testChess);
+              addLog(`Sacrificed ${piece.type} at ${params.targetSquare}, gained 2 cards`, 'success');
+              setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true }));
+            }, 2000);
+          }
+        }
+        break;
+
+      case 'temporal_echo':
+        if (moveHistory.length > 0) {
+          const lastMove = moveHistory[moveHistory.length - 1];
+          
+          // Play temporal/time sound effect
+          try {
+            soundManager.play('cardUse'); // TODO: Add specific 'timeEcho' sound with reverb
+            setValidationChecklist(prev => ({ ...prev, sound: true }));
+          } catch (err) {}
+          
+          setCutsceneActive(true);
+          setVisualEffects(prev => [...prev, {
+            type: 'ghost',
+            from: lastMove.from,
+            to: lastMove.to,
+            piece: lastMove.piece,
+            isWhite: lastMove.color === 'w',
+            id: Date.now(),
+          }]);
+          addLog(`Temporal Echo showing last move: ${lastMove.from} → ${lastMove.to}`, 'success');
+          setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true, cutscene: true }));
+          setTimeout(() => setCutsceneActive(false), 3000);
+        }
+        break;
+
+      case 'time_travel':
+        // Play time travel sound as camera moves
+        try {
+          soundManager.play('cardUse'); // TODO: Add specific 'timeTravel' sound with slow-motion effect
+          setValidationChecklist(prev => ({ ...prev, sound: true }));
+        } catch (err) {}
+        
+        // Camera moves to top
+        setCameraTarget(new THREE.Vector3(0, 20, 0));
+        setCutsceneActive(true);
+        setGrayscaleIntensity(1);
+        
+        setTimeout(() => {
+          // Undo 2 moves
+          const newChess = new Chess(chess.fen());
+          if (moveHistory.length >= 2) {
+            const restoreFen = moveHistory[moveHistory.length - 3]?.fen || TEST_SCENARIOS[scenario].fen;
+            newChess.load(restoreFen);
+            setChess(newChess);
+            setFen(restoreFen);
+            addLog('Time Travel: Undid last 2 moves', 'success');
+          }
+          setGrayscaleIntensity(0);
+          setCameraTarget(null);
+          setCutsceneActive(false);
+          setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true, cutscene: true }));
+        }, 3000);
+        break;
+
+      case 'execution':
+        if (params.targetSquare) {
+          const target = testChess.get(params.targetSquare);
+          if (target && target.color !== colorChar && target.type !== 'k') {
+            // Play execution sound
+            try {
+              soundManager.play('capture'); // TODO: Add specific 'execution' sound
+              setValidationChecklist(prev => ({ ...prev, sound: true }));
+            } catch (err) {}
+            
+            testChess.remove(params.targetSquare);
+            setChess(testChess);
+            addLog(`Executed ${target.type} at ${params.targetSquare}`, 'success');
+            setValidationChecklist(prev => ({ ...prev, logic: true }));
+          }
+        }
+        break;
+
+      case 'metamorphosis':
+        if (params.targetSquare && params.newType) {
+          const piece = testChess.get(params.targetSquare);
+          if (piece && piece.color === colorChar) {
+            // Play transformation sound
+            try {
+              soundManager.play('cardUse'); // TODO: Add specific 'transform' sound with magic sparkle
+              setValidationChecklist(prev => ({ ...prev, sound: true }));
+            } catch (err) {}
+            
+            testChess.remove(params.targetSquare);
+            testChess.put({ type: params.newType, color: colorChar }, params.targetSquare);
+            setChess(testChess);
+            addLog(`Metamorphosis: ${piece.type} → ${params.newType} at ${params.targetSquare}`, 'success');
+            setValidationChecklist(prev => ({ ...prev, logic: true }));
+          }
+        }
+        break;
+
+      default:
+        addLog(`${card.name} - logic not yet implemented in test tool`, 'warning');
+    }
+  };
+
+  const handleSquareClick = (fileIndex, rankIndex) => {
+    const fileChar = 'abcdefgh'[fileIndex];
+    const rankNum = 8 - rankIndex;
+    const square = `${fileChar}${rankNum}`;
+
+    // If we're in targeting mode for a card test, set target square and apply card
+    if (targetingMode && selectedCard) {
+      setTargetSquare(square);
+      setTargetingMode(false);
+      addLog(`Targeting ${square} for ${selectedCard.name}`, 'info');
+      
+      const colorChar = playerColor === 'white' ? 'w' : 'b';
+      const params = { ...customParams, targetSquare: square };
+      applyCardEffect(selectedCard, params, colorChar);
+      return;
+    }
+
+    // Otherwise, handle piece movement
+    if (!selectedSquare) {
+      setSelectedSquare(square);
+      const piece = chess.get(square);
+      if (piece) {
+        const moves = chess.moves({ square, verbose: true });
+        setLegalTargets(moves.map(m => m.to));
+        addLog(`Selected square: ${square} (${moves.length} legal moves)`, 'info');
+      } else {
+        addLog(`Selected square: ${square} (empty)`, 'info');
+      }
+    } else if (legalTargets.includes(square)) {
+      // Make a move
+      try {
+        const move = chess.move({ from: selectedSquare, to: square });
+        const capturedPiece = move.captured;
+        
+        // Check if trying to capture a shielded pawn
+        const opponentColor = move.color === 'w' ? 'b' : 'w';
+        const opponentShield = pawnShields[opponentColor];
+        if (capturedPiece === 'p' && opponentShield?.square === square && shieldTurnCounter[opponentColor] > 0) {
+          addLog(`Cannot capture shielded pawn at ${square}!`, 'error');
+          chess.undo();
+          return;
+        }
+        
+        soundManager.play(capturedPiece ? 'capture' : 'move');
+        setMoveHistory(prev => [...prev, { ...move, fen: chess.fen() }]);
+        setChess(new Chess(chess.fen()));
+        setFen(chess.fen());
+        addLog(`Move: ${move.san}`, 'success');
+        
+        // Check if shield should follow pawn when it moves
+        const myColorChar = move.color;
+        const myShield = pawnShields[myColorChar];
+        if (myShield && myShield.square === selectedSquare && move.piece === 'p') {
+          setPawnShields(prev => ({ ...prev, [myColorChar]: { square } }));
+          addLog(`Shield followed pawn to ${square}`, 'info');
+        }
+        
+        // Decrement shield turn counter for opponent after move
+        if (shieldTurnCounter[opponentColor] > 0) {
+          const newCounter = shieldTurnCounter[opponentColor] - 1;
+          setShieldTurnCounter(prev => ({ ...prev, [opponentColor]: newCounter }));
+          if (newCounter === 0) {
+            setPawnShields(prev => ({ ...prev, [opponentColor]: null }));
+            addLog(`${opponentColor === 'w' ? 'White' : 'Black'} shield expired`, 'info');
+          }
+        }
+        
+        setSelectedSquare(null);
+        setLegalTargets([]);
+      } catch (err) {
+        addLog(`Invalid move: ${err.message}`, 'error');
+        setSelectedSquare(null);
+        setLegalTargets([]);
+      }
+    } else {
+      // Clicking a different square - select it instead
+      setSelectedSquare(square);
+      setLegalTargets([]);
+      const piece = chess.get(square);
+      if (piece) {
+        const moves = chess.moves({ square, verbose: true });
+        setLegalTargets(moves.map(m => m.to));
+        addLog(`Selected square: ${square} (${moves.length} legal moves)`, 'info');
+      } else {
+        addLog(`Selected square: ${square} (empty)`, 'info');
+      }
+    }
+  };
+
+  const parseFenPieces = (fenStr) => {
+    if (!fenStr) return [];
+    const [placement] = fenStr.split(' ');
+    const rows = placement.split('/');
+    const pieces = [];
+    for (let rank = 0; rank < 8; rank++) {
+      let file = 0;
+      for (const ch of rows[rank]) {
+        if (/[1-8]/.test(ch)) {
+          file += parseInt(ch, 10);
+        } else {
+          const isWhite = ch === ch.toUpperCase();
+          const type = ch.toLowerCase();
+          const x = file - 3.5;
+          const z = rank - 3.5;
+          const fileChar = 'abcdefgh'[file];
+          const rankNum = 8 - rank;
+          const square = `${fileChar}${rankNum}`;
+          pieces.push({ type, isWhite, square, targetPosition: [x, 0.15, z], uid: `${square}-${type}` });
+          file += 1;
+        }
+      }
+    }
+    return pieces;
+  };
+
+  const pieces = parseFenPieces(fen);
+
+  return (
+    <div style={styles.container}>
+      <div style={styles.header}>
+        <button style={styles.backButton} onClick={onBack}>← Back</button>
+        <h2 style={styles.title}>Card Balancing & Testing Tool V2</h2>
+        <button
+          style={{ ...styles.button, background: multiplayerMode ? '#4c6fff' : '#333' }}
+          onClick={() => setMultiplayerMode(!multiplayerMode)}
+        >
+          {multiplayerMode ? 'Exit' : 'Enter'} Multiplayer Test
+        </button>
+      </div>
+
+      <div style={styles.mainContent}>
+        {/* Left: Card Browser */}
+        <div style={styles.leftPanel}>
+          <h3 style={styles.panelTitle}>Cards (Common → Legendary)</h3>
+          <div style={styles.cardList}>
+            {sortedCards.map(card => (
+              <div
+                key={card.id}
+                style={{
+                  ...styles.cardListItem,
+                  background: selectedCardId === card.id ? '#4c6fff' : '#2a2a2a',
+                  borderLeft: `3px solid ${getRarityColor(card.rarity)}`,
+                }}
+                onClick={() => {
+                  setSelectedCardId(card.id);
+                  resetTest();
+                  addLog(`Selected: ${card.name}`, 'info');
+                }}
+              >
+                <div style={styles.cardListName}>{card.name}</div>
+                <div style={{ ...styles.cardListRarity, color: getRarityColor(card.rarity) }}>
+                  {card.rarity}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Center: 3D Board */}
+        <div style={styles.centerPanel}>
+          <div style={styles.scenarioBar}>
+            <select style={styles.select} value={scenario} onChange={(e) => changeScenario(e.target.value)}>
+              {Object.entries(TEST_SCENARIOS).map(([key, s]) => (
+                <option key={key} value={key}>{s.name}</option>
+              ))}
+            </select>
+            <select style={styles.select} value={playerColor} onChange={(e) => setPlayerColor(e.target.value)}>
+              <option value="white">Play as White</option>
+              <option value="black">Play as Black</option>
+            </select>
+            {multiplayerMode && (
+              <button
+                style={styles.button}
+                onClick={() => setPlayer2Perspective(!player2Perspective)}
+              >
+                View: {player2Perspective ? 'Player 2' : 'Player 1'}
+              </button>
+            )}
+          </div>
+
+          <div style={styles.boardContainer}>
+            <Canvas
+              camera={{ position: playerColor === 'white' ? [8, 10, 8] : [-8, 10, -8], fov: 40 }}
+              shadows
+            >
+              <color attach="background" args={["#0b1020"]} />
+              <ambientLight intensity={0.4} />
+              <directionalLight position={[10, 15, 5]} intensity={1.2} castShadow />
+              <directionalLight position={[-5, 8, -5]} intensity={0.4} color="#88c0d0" />
+              <pointLight position={[0, 5, 0]} intensity={0.6} color="#d8dee9" />
+              <Environment preset="night" />
+              <OrbitControls enablePan={false} minDistance={8} maxDistance={20} />
+
+              {/* Board squares */}
+              <group>
+                {Array.from({ length: 64 }).map((_, i) => {
+                  const file = i % 8;
+                  const rank = Math.floor(i / 8);
+                  const isLight = (file + rank) % 2 === 0;
+                  const x = file - 3.5;
+                  const z = rank - 3.5;
+                  const square = String.fromCharCode(97 + file) + (8 - rank);
+                  const isSelected = selectedSquare === square;
+                  const isTarget = targetSquare === square;
+                  const isLegal = legalTargets.includes(square);
+
+                  return (
+                    <mesh
+                      key={i}
+                      position={[x, 0, z]}
+                      rotation={[-Math.PI / 2, 0, 0]}
+                      onClick={() => handleSquareClick(file, rank)}
+                    >
+                      <planeGeometry args={[1, 1]} />
+                      <meshStandardMaterial
+                        color={
+                          targetingMode ? '#00ddff' :
+                          isSelected ? '#ffff00' :
+                          isTarget ? '#ff8800' :
+                          isLegal ? '#88ff88' :
+                          isLight ? '#f0d9b5' : '#b58863'
+                        }
+                        opacity={targetingMode ? 0.8 : 0.9}
+                        transparent
+                      />
+                    </mesh>
+                  );
+                })}
+              </group>
+
+              {/* Pieces */}
+              {pieces.map(p => (
+                <ChessPiece
+                  key={p.uid}
+                  type={p.type}
+                  isWhite={p.isWhite}
+                  targetPosition={p.targetPosition}
+                  square={p.square}
+                />
+              ))}
+
+              {/* Pawn Shields */}
+              {pawnShields.w?.square && <ShieldGlowEffect square={pawnShields.w.square} />}
+              {pawnShields.b?.square && <ShieldGlowEffect square={pawnShields.b.square} />}
+
+              {/* Visual Effects */}
+              {visualEffects.map(effect => {
+                if (effect.type === 'sacrifice') {
+                  return (
+                    <SacrificeEffect
+                      key={effect.id}
+                      square={effect.square}
+                      onComplete={() => setVisualEffects(prev => prev.filter(e => e.id !== effect.id))}
+                    />
+                  );
+                }
+                if (effect.type === 'ghost') {
+                  return (
+                    <GhostPiece
+                      key={effect.id}
+                      type={effect.piece}
+                      isWhite={effect.isWhite}
+                      fromSquare={effect.from}
+                      toSquare={effect.to}
+                    />
+                  );
+                }
+                return null;
+              })}
+
+              {/* Camera controller for cutscenes */}
+              {cameraTarget && (
+                <CameraController
+                  targetPosition={cameraTarget}
+                  active={cutsceneActive}
+                  onComplete={() => setCameraTarget(null)}
+                />
+              )}
+
+              {/* Grayscale effect */}
+              {grayscaleIntensity > 0 && <GrayscaleEffect intensity={grayscaleIntensity} />}
+            </Canvas>
+          </div>
+
+          <div style={styles.testControls}>
+            <button
+              style={{ ...styles.button, background: selectedCard ? '#4c6fff' : '#555' }}
+              onClick={testCard}
+              disabled={!selectedCard || targetingMode}
+            >
+              {targetingMode ? 'Targeting...' : 'Test Card'}
+            </button>
+            <button
+              style={{ ...styles.button, background: serverTestActive ? '#ff8800' : '#2a7a2a' }}
+              onClick={testWithServer}
+              disabled={!selectedCard || serverTestActive}
+            >
+              {serverTestActive ? 'Testing...' : 'Test with Server'}
+            </button>
+            <button style={styles.button} onClick={resetTest}>Reset</button>
+            {targetingMode && <span style={{ ...styles.infoText, color: '#00ddff', fontWeight: 'bold' }}>Click on a piece to target</span>}
+            {!targetingMode && selectedSquare && <span style={styles.infoText}>Selected: {selectedSquare}</span>}
+            {!targetingMode && targetSquare && <span style={styles.infoText}>Target: {targetSquare}</span>}
+            
+            {/* Server test result */}
+            {serverTestResult && (
+              <span style={{ ...styles.infoText, color: serverTestResult.success ? '#00ff00' : '#ff0000', fontWeight: 'bold' }}>
+                {serverTestResult.success ? '✓ Server OK' : `✗ ${serverTestResult.error}`}
+              </span>
+            )}
+            
+            {/* Active Shield Status */}
+            {(pawnShields.w?.square || pawnShields.b?.square) && (
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontSize: 12 }}>
+                {pawnShields.w?.square && (
+                  <span style={{ color: '#60a5fa', fontWeight: 'bold' }}>
+                    ⚔ White Shield: {pawnShields.w.square} ({shieldTurnCounter.w} turn{shieldTurnCounter.w !== 1 ? 's' : ''})
+                  </span>
+                )}
+                {pawnShields.b?.square && (
+                  <span style={{ color: '#c084fc', fontWeight: 'bold' }}>
+                    ⚔ Black Shield: {pawnShields.b.square} ({shieldTurnCounter.b} turn{shieldTurnCounter.b !== 1 ? 's' : ''})
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Details & Checklist */}
+        <div style={styles.rightPanel}>
+          {selectedCard ? (
+            <>
+              <div style={styles.cardPreview}>
+                <ArcanaCard arcana={selectedCard} size="medium" />
+              </div>
+
+              {/* Card Description */}
+              <div style={styles.descriptionSection}>
+                <h4 style={styles.sectionTitle}>Description</h4>
+                <p style={styles.descriptionText}>{selectedCard.description}</p>
+                
+                {/* Special instructions for Shield Pawn */}
+                {selectedCard.id === 'shield_pawn' && (
+                  <div style={{ marginTop: 8, padding: 8, background: 'rgba(76,101,255,0.1)', borderRadius: 4, fontSize: 12 }}>
+                    <strong style={{ color: '#4c6fff' }}>How Shield Works:</strong>
+                    <ul style={{ margin: '4px 0', paddingLeft: 20, lineHeight: '1.6' }}>
+                      <li>Click your pawn → Test Card</li>
+                      <li>Shield protects pawn for <strong>1 enemy turn</strong></li>
+                      <li>Shield follows pawn when it moves</li>
+                      <li>Cannot be captured while shielded</li>
+                      <li>Expires after opponent's turn</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Validation Checklist */}
+              <div style={styles.checklistSection}>
+                <h4 style={styles.sectionTitle}>Card Status</h4>
+                <div style={styles.checklistItem}>
+                  <span style={validationChecklist.logic ? styles.checkTrue : styles.checkFalse}>
+                    {validationChecklist.logic ? '✓' : '✗'}
+                  </span>
+                  <span>Logic Working</span>
+                </div>
+                <div style={styles.checklistItem}>
+                  <span style={validationChecklist.visuals ? styles.checkTrue : styles.checkFalse}>
+                    {validationChecklist.visuals ? '✓' : '✗'}
+                  </span>
+                  <span>Visuals Working</span>
+                </div>
+                <div style={styles.checklistItem}>
+                  <span style={validationChecklist.sound ? styles.checkTrue : styles.checkFalse}>
+                    {validationChecklist.sound ? '✓' : '✗'}
+                  </span>
+                  <span>Sound Working</span>
+                </div>
+                {selectedCard?.visual?.cutscene && (
+                  <div style={styles.checklistItem}>
+                    <span style={validationChecklist.cutscene ? styles.checkTrue : styles.checkFalse}>
+                      {validationChecklist.cutscene ? '✓' : '✗'}
+                    </span>
+                    <span>Cutscene Working</span>
+                  </div>
+                )}
+                <div style={styles.checklistItem}>
+                  <span style={validationChecklist.server ? styles.checkTrue : styles.checkFalse}>
+                    {validationChecklist.server ? '✓' : '✗'}
+                  </span>
+                  <span>Server Validated</span>
+                </div>
+              </div>
+
+              {/* Parameters */}
+              {needsTargetSquare(selectedCard.id) && (
+                <div style={styles.paramSection}>
+                  <h4 style={styles.sectionTitle}>Parameters</h4>
+                  <div style={styles.paramRow}>
+                    <label>Target: {targetSquare || 'Click board'}</label>
+                  </div>
+                </div>
+              )}
+              {needsNewType(selectedCard.id) && (
+                <div style={styles.paramRow}>
+                  <label>Transform to:</label>
+                  <select
+                    style={styles.select}
+                    value={customParams.newType || 'q'}
+                    onChange={(e) => setCustomParams({ ...customParams, newType: e.target.value })}
+                  >
+                    <option value="q">Queen</option>
+                    <option value="r">Rook</option>
+                    <option value="b">Bishop</option>
+                    <option value="n">Knight</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Event Log */}
+              <div style={styles.logSection}>
+                <h4 style={styles.sectionTitle}>Event Log</h4>
+                <div style={styles.logContainer}>
+                  {logMessages.slice().reverse().map((log, idx) => (
+                    <div key={idx} style={{ ...styles.logItem, color: getLogColor(log.type) }}>
+                      <span style={styles.logTime}>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                      <span>{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div style={styles.placeholder}>
+              <p>Select a card to begin testing</p>
+              <p style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
+                Cards are sorted: Common → Legendary
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Helper functions
+function needsTargetSquare(cardId) {
+  return ['execution', 'royal_swap', 'metamorphosis', 'mirror_image', 'sacrifice',
+    'cursed_square', 'sanctuary', 'mind_control', 'promotion_ritual', 'shield_pawn'].includes(cardId);
+}
+
+function needsNewType(cardId) {
+  return cardId === 'metamorphosis';
+}
+
+function getRarityColor(rarity) {
+  const colors = {
+    common: '#aaa',
+    uncommon: '#4ade80',
+    rare: '#60a5fa',
+    epic: '#c084fc',
+    legendary: '#fbbf24',
+  };
+  return colors[rarity] || '#fff';
+}
+
+function getLogColor(type) {
+  const colors = {
+    info: '#aaa',
+    success: '#22c55e',
+    warning: '#f59e0b',
+    error: '#ef4444',
+    test: '#60a5fa',
+  };
+  return colors[type] || '#aaa';
+}
+
+const styles = {
+  container: {
+    width: '100vw',
+    height: '100vh',
+    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+    color: '#fff',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '12px 20px',
+    background: 'rgba(0,0,0,0.3)',
+    borderBottom: '1px solid rgba(255,255,255,0.1)',
+  },
+  backButton: {
+    padding: '8px 16px',
+    background: '#333',
+    border: 'none',
+    borderRadius: 4,
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: 14,
+  },
+  title: {
+    margin: 0,
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  button: {
+    padding: '8px 16px',
+    background: '#4c6fff',
+    border: 'none',
+    borderRadius: 4,
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: 14,
+  },
+  mainContent: {
+    display: 'flex',
+    flex: 1,
+    overflow: 'hidden',
+    gap: 12,
+    padding: 12,
+  },
+  leftPanel: {
+    width: 280,
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: 8,
+    padding: 12,
+    overflowY: 'auto',
+  },
+  panelTitle: {
+    margin: '0 0 12px 0',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  cardList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  cardListItem: {
+    padding: '8px 12px',
+    borderRadius: 6,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardListName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  cardListRarity: {
+    fontSize: 11,
+    textTransform: 'capitalize',
+  },
+  centerPanel: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  },
+  scenarioBar: {
+    display: 'flex',
+    gap: 12,
+    alignItems: 'center',
+    background: 'rgba(0,0,0,0.3)',
+    padding: 12,
+    borderRadius: 8,
+  },
+  select: {
+    padding: '6px 12px',
+    background: '#2a2a2a',
+    border: '1px solid #444',
+    borderRadius: 4,
+    color: '#fff',
+    fontSize: 14,
+  },
+  boardContainer: {
+    flex: 1,
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  testControls: {
+    display: 'flex',
+    gap: 12,
+    alignItems: 'center',
+    background: 'rgba(0,0,0,0.3)',
+    padding: 12,
+    borderRadius: 8,
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#4ade80',
+  },
+  rightPanel: {
+    width: 320,
+    background: 'rgba(0,0,0,0.3)',
+    borderRadius: 8,
+    padding: 12,
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  },
+  cardPreview: {
+    display: 'flex',
+    justifyContent: 'center',
+  },
+  descriptionSection: {
+    background: 'rgba(0,0,0,0.3)',
+    padding: 12,
+    borderRadius: 6,
+  },
+  descriptionText: {
+    margin: 0,
+    fontSize: 13,
+    lineHeight: '1.5',
+    color: '#aaa',
+  },
+  checklistSection: {
+    background: 'rgba(0,0,0,0.3)',
+    padding: 12,
+    borderRadius: 6,
+  },
+  sectionTitle: {
+    margin: '0 0 8px 0',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  checklistItem: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    padding: '4px 0',
+    fontSize: 13,
+  },
+  checkTrue: {
+    color: '#22c55e',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  checkFalse: {
+    color: '#666',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  paramSection: {
+    background: 'rgba(0,0,0,0.3)',
+    padding: 12,
+    borderRadius: 6,
+  },
+  paramRow: {
+    marginBottom: 8,
+    fontSize: 13,
+  },
+  logSection: {
+    background: 'rgba(0,0,0,0.3)',
+    padding: 12,
+    borderRadius: 6,
+    flex: 1,
+  },
+  logContainer: {
+    maxHeight: 200,
+    overflowY: 'auto',
+    fontSize: 12,
+  },
+  logItem: {
+    padding: '4px 0',
+    display: 'flex',
+    gap: 8,
+  },
+  logTime: {
+    opacity: 0.5,
+    fontSize: 11,
+  },
+  placeholder: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    color: '#666',
+  },
+};

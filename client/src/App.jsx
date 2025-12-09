@@ -4,6 +4,7 @@ import { GameScene } from './components/GameScene.jsx';
 import { Tutorial } from './components/Tutorial.jsx';
 import { Settings } from './components/Settings.jsx';
 import { ArcanaCompendium } from './components/ArcanaCompendium.jsx';
+import { CardBalancingToolV2 } from './components/CardBalancingToolV2.jsx';
 import { socket } from './game/socket.js';
 
 export function App() {
@@ -12,6 +13,7 @@ export function App() {
   const [ascendedInfo, setAscendedInfo] = useState(null);
   const [lastArcanaEvent, setLastArcanaEvent] = useState(null);
   const [gameEndOutcome, setGameEndOutcome] = useState(null);
+  const [devMode, setDevMode] = useState(false);
   const [globalSettings, setGlobalSettings] = useState({
     audio: { master: 0.8, music: 0.5, sfx: 0.8 },
     graphics: { quality: 'medium', postProcessing: true, shadows: true },
@@ -103,6 +105,9 @@ export function App() {
           onTutorial={() => setScreen('tutorial')}
           onViewArcana={() => setScreen('arcana')}
           onSettings={() => setScreen('settings')}
+          onCardBalancing={() => setScreen('card-balancing')}
+          devMode={devMode}
+          onToggleDevMode={() => setDevMode(!devMode)}
         />
       )}
       {screen === 'host-game' && (
@@ -129,6 +134,9 @@ export function App() {
       )}
       {screen === 'arcana' && (
         <ArcanaCompendium onBack={() => setScreen('main-menu')} />
+      )}
+      {screen === 'card-balancing' && (
+        <CardBalancingToolV2 onBack={() => setScreen('main-menu')} />
       )}
       {screen === 'game' && (
         <GameScene

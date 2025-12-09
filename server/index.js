@@ -6,7 +6,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { LobbyManager } from './lobbyManager.js';
 import { GameManager } from './gameManager.js';
-import { ARCANA_DEFINITIONS } from './arcana.js';
+import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
+import { Chess } from 'chess.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +29,88 @@ app.use(express.json());
 app.get('/api/arcana', (req, res) => {
   res.json(ARCANA_DEFINITIONS);
 });
+
+// Card testing endpoint for balancing tool
+app.post('/api/test-card', (req, res) => {
+  try {
+    const { cardId, fen, params, playerColor } = req.body;
+    
+    // Import Chess for testing
+    import('chess.js').then(({ Chess }) => {
+      const chess = new Chess(fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+      const colorChar = playerColor === 'white' ? 'w' : 'b';
+      
+      // Get piece positions before
+      const beforeState = {
+        fen: chess.fen(),
+        pieces: getAllPiecesFromChess(chess),
+      };
+      
+      // Simulate card effect (simplified server-side test)
+      const card = ARCANA_DEFINITIONS.find(c => c.id === cardId);
+      if (!card) {
+        return res.json({ ok: false, error: 'Card not found' });
+      }
+      
+      // Apply basic transformations based on card type
+      applyTestCardEffect(chess, card, params, colorChar);
+      
+      // Get piece positions after
+      const afterState = {
+        fen: chess.fen(),
+        pieces: getAllPiecesFromChess(chess),
+      };
+      
+      res.json({
+        ok: true,
+        card,
+        beforeState,
+        afterState,
+        params,
+      });
+    }).catch(err => {
+      res.json({ ok: false, error: err.message });
+    });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+function getAllPiecesFromChess(chess) {
+  const pieces = [];
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const square = String.fromCharCode(97 + file) + (8 - rank);
+      const piece = chess.get(square);
+      if (piece) pieces.push({ square, ...piece });
+    }
+  }
+  return pieces;
+}
+
+function applyTestCardEffect(chess, card, params, colorChar) {
+  // Simplified card effect application for testing
+  switch (card.id) {
+    case 'execution':
+      if (params.targetSquare) {
+        const target = chess.get(params.targetSquare);
+        if (target && target.color !== colorChar && target.type !== 'k') {
+          chess.remove(params.targetSquare);
+        }
+      }
+      break;
+    case 'promotion_ritual':
+      if (params.targetSquare) {
+        const pawn = chess.get(params.targetSquare);
+        if (pawn && pawn.type === 'p' && pawn.color === colorChar) {
+          chess.remove(params.targetSquare);
+          chess.put({ type: 'q', color: colorChar }, params.targetSquare);
+        }
+      }
+      break;
+    // Add more card effects as needed
+  }
+}
 
 const lobbyManager = new LobbyManager();
 const gameManager = new GameManager(io, lobbyManager);
@@ -142,6 +225,58 @@ io.on('connection', (socket) => {
 
   socket.on('getArcanaList', (payload, ack) => {
     safeAck(ack, { ok: true, arcana: ARCANA_DEFINITIONS });
+  });
+
+  // Card Balancing Tool: Test arcana application with server
+  socket.on('balancingToolTest', (payload, ack) => {
+    try {
+      const { arcanaId, fen, params } = payload;
+      const arcana = ARCANA_DEFINITIONS.find(a => a.id === arcanaId);
+      
+      if (!arcana) {
+        return safeAck(ack, { success: false, error: 'Arcana not found' });
+      }
+
+      // Create a mock game state for testing
+      const testGameState = {
+        id: 'test-game',
+        chess: new Chess(fen),
+        playerIds: [socket.id],
+        arcanaByPlayer: { [socket.id]: [arcana] },
+        usedArcanaIdsByPlayer: { [socket.id]: [] },
+        pawnShields: { w: null, b: null },
+        activeEffects: {
+          ironFortress: {},
+          bishopsBlessing: {},
+          timeFrozen: {},
+          spectralMarch: {},
+          queensGambit: {},
+          phantomStep: {},
+          pawnRush: {},
+          doubleStrike: {},
+          poisonTouch: {},
+          sharpshooter: {},
+        },
+      };
+
+      // Test applying the arcana
+      const use = { arcanaId, params };
+      const result = gameManager.applyArcana(socket.id, testGameState, [use], null);
+
+      if (result && result.length > 0) {
+        safeAck(ack, {
+          success: true,
+          appliedArcana: result,
+          newFen: testGameState.chess.fen(),
+          pawnShields: testGameState.pawnShields,
+        });
+      } else {
+        safeAck(ack, { success: false, error: 'Arcana did not apply' });
+      }
+    } catch (err) {
+      console.error('Balancing tool test error:', err);
+      safeAck(ack, { success: false, error: err.message });
+    }
   });
 
   socket.on('disconnect', () => {

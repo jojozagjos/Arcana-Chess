@@ -8,7 +8,10 @@ export function MainMenu({
   onTutorial,
   onViewArcana,
   onSettings,
+  onCardBalancing,
   onBack,
+  devMode = false,
+  onToggleDevMode,
 }) {
   if (mode === 'root') {
     return (
@@ -37,6 +40,29 @@ export function MainMenu({
               Settings
             </button>
           </div>
+
+          {devMode && (
+            <div style={{ ...styles.secondaryRow, marginTop: 12 }}>
+              <button
+                style={{ ...styles.secondaryButton, background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
+                onClick={onCardBalancing}
+              >
+                🛠️ Card Balancing Tool
+              </button>
+            </div>
+          )}
+
+          {onToggleDevMode && (
+            <div style={styles.devModeToggle}>
+              <button
+                style={styles.devButton}
+                onClick={onToggleDevMode}
+                title="Toggle developer mode"
+              >
+                {devMode ? '🔧 Dev Mode: ON' : 'Dev Mode'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -876,5 +902,20 @@ const styles = {
     justifyContent: 'space-between',
     padding: '6px 0',
     fontSize: '0.9rem',
+  },
+  devModeToggle: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+  },
+  devButton: {
+    padding: '6px 12px',
+    background: 'rgba(0,0,0,0.3)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 4,
+    color: '#888',
+    cursor: 'pointer',
+    fontSize: 11,
+    transition: 'all 0.2s',
   },
 };
