@@ -35,41 +35,36 @@ app.post('/api/test-card', (req, res) => {
   try {
     const { cardId, fen, params, playerColor } = req.body;
     
-    // Import Chess for testing
-    import('chess.js').then(({ Chess }) => {
-      const chess = new Chess(fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-      const colorChar = playerColor === 'white' ? 'w' : 'b';
-      
-      // Get piece positions before
-      const beforeState = {
-        fen: chess.fen(),
-        pieces: getAllPiecesFromChess(chess),
-      };
-      
-      // Simulate card effect (simplified server-side test)
-      const card = ARCANA_DEFINITIONS.find(c => c.id === cardId);
-      if (!card) {
-        return res.json({ ok: false, error: 'Card not found' });
-      }
-      
-      // Apply basic transformations based on card type
-      applyTestCardEffect(chess, card, params, colorChar);
-      
-      // Get piece positions after
-      const afterState = {
-        fen: chess.fen(),
-        pieces: getAllPiecesFromChess(chess),
-      };
-      
-      res.json({
-        ok: true,
-        card,
-        beforeState,
-        afterState,
-        params,
-      });
-    }).catch(err => {
-      res.json({ ok: false, error: err.message });
+    const chess = new Chess(fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+    const colorChar = playerColor === 'white' ? 'w' : 'b';
+    
+    // Get piece positions before
+    const beforeState = {
+      fen: chess.fen(),
+      pieces: getAllPiecesFromChess(chess),
+    };
+    
+    // Simulate card effect (simplified server-side test)
+    const card = ARCANA_DEFINITIONS.find(c => c.id === cardId);
+    if (!card) {
+      return res.json({ ok: false, error: 'Card not found' });
+    }
+    
+    // Apply basic transformations based on card type
+    applyTestCardEffect(chess, card, params, colorChar);
+    
+    // Get piece positions after
+    const afterState = {
+      fen: chess.fen(),
+      pieces: getAllPiecesFromChess(chess),
+    };
+    
+    res.json({
+      ok: true,
+      card,
+      beforeState,
+      afterState,
+      params,
     });
   } catch (err) {
     res.json({ ok: false, error: err.message });

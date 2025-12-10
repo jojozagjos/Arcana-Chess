@@ -48,11 +48,11 @@ class SoundManager {
     if (!soundName) return;
     const sound = this.sounds[soundName];
     if (!sound) {
-      console.warn(`Sound "${soundName}" not found`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`Sound "${soundName}" not found`);
+      }
       return;
     }
-    // Debug: log play attempts to help troubleshoot
-    if (typeof console !== 'undefined' && console.debug) console.debug(`Playing sound: ${soundName} (ready=${!!sound._ready})`);
 
     // Clone and play to allow overlapping sounds
     const clone = sound.cloneNode(true);
@@ -64,7 +64,9 @@ class SoundManager {
     if (p && p.catch) {
       p.catch(err => {
         // Commonly occurs when play is attempted before user gesture or browser policies
-        console.warn('Sound play failed for', soundName, err?.message || err);
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('Sound play failed for', soundName, err?.message || err);
+        }
       });
     }
   }
