@@ -289,7 +289,9 @@ io.on('connection', (socket) => {
   });
 });
 
-// Static file serving for production builds
+// Static file serving
+// In development: serve consolidated public/ for assets (sounds, cards)
+// In production: serve built client from server/public
 if (process.env.NODE_ENV === 'production') {
   const publicPath = path.join(__dirname, 'public');
   app.use(express.static(publicPath));
@@ -300,6 +302,10 @@ if (process.env.NODE_ENV === 'production') {
     }
     res.sendFile(path.join(publicPath, 'index.html'));
   });
+} else {
+  // Development: serve consolidated public folder
+  const publicPath = path.join(__dirname, '..', 'public');
+  app.use(express.static(publicPath));
 }
 
 const PORT = process.env.PORT || 4000;

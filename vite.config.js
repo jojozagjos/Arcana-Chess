@@ -1,9 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
+import path from 'path';
 
 export default defineConfig({
   // Where your React app source lives
   root: 'client',
+  
+  // Point to consolidated public folder at repo root
+  publicDir: path.resolve(__dirname, 'public'),
 
   plugins: [react()],
 
