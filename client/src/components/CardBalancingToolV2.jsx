@@ -8,16 +8,12 @@ import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
+import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget } from '../game/arcana/arcanaSimulation.js';
+import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
+import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from '../game/arcana/sharedHelpers.jsx';
+import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
+import { getRarityColor, getLogColor } from '../game/arcanaHelpers.js';
 import * as THREE from 'three';
-
-// Helper to convert square notation to 3D position
-function squareToPosition(square) {
-  const file = square.charCodeAt(0) - 97;
-  const rank = 8 - parseInt(square[1]);
-  const x = file - 3.5;
-  const z = rank - 3.5;
-  return [x, 0, z];
-}
 
 const TEST_SCENARIOS = {
   default: { name: 'Starting Position', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
@@ -28,171 +24,6 @@ const TEST_SCENARIOS = {
   crowdedBoard: { name: 'Crowded Center', fen: 'rnbqkbnr/pppppppp/8/8/3PP3/3NN3/PPP2PPP/R1BQKB1R b KQkq - 0 1' },
   shieldTest: { name: 'Shield Test (White Pawn e2)', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
 };
-
-// Shield visual effect component (from ArcanaEffects.jsx)
-function ShieldGlowEffect({ square }) {
-  if (!square) return null;
-  
-  const [x, , z] = squareToPosition(square);
-  
-  return (
-    <group position={[x, 0, z]}>
-      {/* Glowing shield around piece */}
-      <mesh position={[0, 0.5, 0]}>
-        <cylinderGeometry args={[0.45, 0.45, 0.8, 16, 1, true]} />
-        <meshStandardMaterial
-          emissive="#4c566a"
-          emissiveIntensity={1.5}
-          color="#4c566a"
-          transparent
-          opacity={0.4}
-          side={2}
-        />
-      </mesh>
-    </group>
-  );
-}
-
-// Sacrifice effect - piece sinks with purple fire
-function SacrificeEffect({ square, onComplete }) {
-  const groupRef = useRef();
-  const [progress, setProgress] = useState(0);
-
-  useFrame((state, delta) => {
-    setProgress(prev => {
-      const next = prev + delta * 0.8;
-      if (next >= 1 && onComplete) onComplete();
-      return Math.min(next, 1);
-    });
-
-    if (groupRef.current) {
-      groupRef.current.position.y = -progress * 1.5;
-      groupRef.current.rotation.y = progress * Math.PI * 2;
-    }
-  });
-
-  const file = square.charCodeAt(0) - 97;
-  const rank = 8 - parseInt(square[1]);
-  const x = file - 3.5;
-  const z = rank - 3.5;
-
-  return (
-    <group position={[x, 0, z]} ref={groupRef}>
-      {/* Purple fire particles */}
-      {[...Array(8)].map((_, i) => {
-        const angle = (i / 8) * Math.PI * 2;
-        const radius = 0.3 + Math.sin(progress * Math.PI) * 0.2;
-        return (
-          <mesh key={i} position={[Math.cos(angle) * radius, progress * 0.5, Math.sin(angle) * radius]}>
-            <sphereGeometry args={[0.08, 8, 8]} />
-            <meshStandardMaterial
-              color="#a855f7"
-              emissive="#c084fc"
-              emissiveIntensity={2}
-              transparent
-              opacity={1 - progress}
-            />
-          </mesh>
-        );
-      })}
-      <pointLight position={[0, 0.5, 0]} intensity={3 * (1 - progress)} color="#a855f7" distance={3} />
-    </group>
-  );
-}
-
-// Ghost piece for Temporal Echo
-function GhostPiece({ type, isWhite, fromSquare, toSquare, delay = 0 }) {
-  const groupRef = useRef();
-  const [progress, setProgress] = useState(0);
-
-  useFrame((state, delta) => {
-    if (progress < 1) {
-      setProgress(prev => Math.min(prev + delta * 0.3, 1));
-    }
-    if (groupRef.current && progress > delay) {
-      const t = (progress - delay) / (1 - delay);
-      groupRef.current.position.y = Math.sin(t * Math.PI) * 0.5;
-    }
-  });
-
-  const fromFile = fromSquare.charCodeAt(0) - 97;
-  const fromRank = 8 - parseInt(fromSquare[1]);
-  const toFile = toSquare.charCodeAt(0) - 97;
-  const toRank = 8 - parseInt(toSquare[1]);
-
-  const t = Math.max(0, (progress - delay) / (1 - delay));
-  const x = (fromFile - 3.5) + ((toFile - fromFile) * t);
-  const z = (fromRank - 3.5) + ((toRank - fromRank) * t);
-
-  return (
-    <group position={[x, 0.15, z]} ref={groupRef}>
-      <ChessPiece
-        type={type}
-        isWhite={isWhite}
-        targetPosition={[0, 0, 0]}
-      />
-      <mesh>
-        <boxGeometry args={[0.6, 0.6, 0.6]} />
-        <meshStandardMaterial
-          color={isWhite ? '#d8dee9' : '#2e3440'}
-          transparent
-          opacity={0.3 * (1 - t)}
-          emissive={isWhite ? '#88c0d0' : '#5e81ac'}
-          emissiveIntensity={0.5}
-        />
-      </mesh>
-    </group>
-  );
-}
-
-// Camera movement controller for cutscenes
-function CameraController({ targetPosition, onComplete, active }) {
-  const { camera } = useThree();
-  const startPos = useRef(null);
-  const progress = useRef(0);
-
-  useFrame((state, delta) => {
-    if (!active) return;
-
-    if (!startPos.current) {
-      startPos.current = camera.position.clone();
-    }
-
-    progress.current += delta * 0.5;
-
-    if (progress.current >= 1) {
-      camera.position.copy(targetPosition);
-      if (onComplete) onComplete();
-      return;
-    }
-
-    const t = progress.current;
-    const easeT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-
-    camera.position.lerpVectors(startPos.current, targetPosition, easeT);
-    camera.lookAt(0, 0, 0);
-  });
-
-  return null;
-}
-
-// Grayscale post-processing effect
-function GrayscaleEffect({ intensity }) {
-  const { gl, scene, camera } = useThree();
-  // Simple grayscale by manipulating scene fog color
-  useEffect(() => {
-    if (intensity > 0) {
-      scene.fog = new THREE.Fog(0x808080, 10, 50);
-    } else {
-      scene.fog = null;
-    }
-    return () => {
-      scene.fog = null;
-    };
-  }, [intensity, scene]);
-
-  return null;
-}
 
 export function CardBalancingToolV2({ onBack }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -236,6 +67,9 @@ export function CardBalancingToolV2({ onBack }) {
   // Server validation state
   const [serverTestActive, setServerTestActive] = useState(false);
   const [serverTestResult, setServerTestResult] = useState(null);
+  
+  // Active visual arcana (for rendering cutscenes/effects)
+  const [activeVisualArcana, setActiveVisualArcana] = useState(null);
 
   const selectedCard = useMemo(() => {
     return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
@@ -260,9 +94,9 @@ export function CardBalancingToolV2({ onBack }) {
     }
   }, [fen]);
 
-  // Load effects module
+  // Load effects module (shared with GameScene)
   useEffect(() => {
-    import('./ArcanaEffects.jsx').then(m => setEffectsModule(m)).catch(() => {});
+    import('../game/arcana/arcanaVisuals.jsx').then(m => setEffectsModule(m)).catch(() => {});
   }, []);
 
   const addLog = (message, type = 'info') => {
@@ -289,6 +123,7 @@ export function CardBalancingToolV2({ onBack }) {
     setLegalTargets([]);
     setCutsceneActive(false);
     setGrayscaleIntensity(0);
+    setActiveVisualArcana(null);
     setValidationChecklist({ logic: false, visuals: false, sound: false, cutscene: false, server: false });
     setServerTestActive(false);
     setServerTestResult(null);
@@ -368,147 +203,107 @@ export function CardBalancingToolV2({ onBack }) {
 
   const applyCardEffect = (card, params, colorChar) => {
     const testChess = new Chess(chess.fen());
+    const testGameState = { 
+      pawnShields, 
+      shieldTurnCounter, 
+      moveHistory,
+      activeEffects: activeEffects || {}
+    };
 
-    switch (card.id) {
-      case 'shield_pawn':
-        if (params.targetSquare) {
-          const piece = testChess.get(params.targetSquare);
-          if (piece && piece.type === 'p' && piece.color === colorChar) {
-            // Play shield sound effect when shield appears
-            try {
-              // Arcana sounds are registered under the 'arcana:<id>' namespace
-              soundManager.play('arcana:shield_pawn');
-              setValidationChecklist(prev => ({ ...prev, sound: true }));
-            } catch (err) {}
-            
-            setPawnShields(prev => ({ ...prev, [colorChar]: { square: params.targetSquare } }));
-            setShieldTurnCounter(prev => ({ ...prev, [colorChar]: 1 })); // Shield lasts 1 opponent turn
-            addLog(`Shield applied to pawn at ${params.targetSquare} - protected for 1 enemy turn`, 'success');
-            setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true }));
-          } else {
-            addLog('Shield Pawn requires targeting your own pawn', 'error');
-          }
-        } else {
-          addLog('Click a square to target your pawn for shield', 'warning');
-        }
-        break;
+    // Use shared simulation logic
+    const result = simulateArcanaEffect(testChess, card.id, params, colorChar, testGameState);
 
-      case 'sacrifice':
-        if (params.targetSquare) {
-          const piece = testChess.get(params.targetSquare);
-          if (piece && piece.color === colorChar) {
-            // Play sacrifice sound when effect starts
-            try {
-              soundManager.play('capture'); // TODO: Add specific 'sacrifice' sound with whoosh/void effect
-              setValidationChecklist(prev => ({ ...prev, sound: true }));
-            } catch (err) {}
-            
-            // Show sacrifice animation
-            setVisualEffects(prev => [...prev, { type: 'sacrifice', square: params.targetSquare, id: Date.now() }]);
-            setTimeout(() => {
-              testChess.remove(params.targetSquare);
-              setChess(testChess);
-              addLog(`Sacrificed ${piece.type} at ${params.targetSquare}, gained 2 cards`, 'success');
-              setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true }));
-            }, 2000);
-          }
-        }
-        break;
-
-      case 'temporal_echo':
-        if (moveHistory.length > 0) {
-          const lastMove = moveHistory[moveHistory.length - 1];
-          
-          // Play temporal/time sound effect
-          try {
-            soundManager.play('cardUse'); // TODO: Add specific 'timeEcho' sound with reverb
-            setValidationChecklist(prev => ({ ...prev, sound: true }));
-          } catch (err) {}
-          
-          setCutsceneActive(true);
-          setVisualEffects(prev => [...prev, {
-            type: 'ghost',
-            from: lastMove.from,
-            to: lastMove.to,
-            piece: lastMove.piece,
-            isWhite: lastMove.color === 'w',
-            id: Date.now(),
-          }]);
-          addLog(`Temporal Echo showing last move: ${lastMove.from} → ${lastMove.to}`, 'success');
-          setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true, cutscene: true }));
-          setTimeout(() => setCutsceneActive(false), 3000);
-        }
-        break;
-
-      case 'time_travel':
-        // Play time travel sound as camera moves
-        try {
-          soundManager.play('cardUse'); // TODO: Add specific 'timeTravel' sound with slow-motion effect
-          setValidationChecklist(prev => ({ ...prev, sound: true }));
-        } catch (err) {}
-        
-        // Camera moves to top
-        setCameraTarget(new THREE.Vector3(0, 20, 0));
-        setCutsceneActive(true);
-        setGrayscaleIntensity(1);
-        
-        setTimeout(() => {
-          // Undo 2 moves
-          const newChess = new Chess(chess.fen());
-          if (moveHistory.length >= 2) {
-            const restoreFen = moveHistory[moveHistory.length - 3]?.fen || TEST_SCENARIOS[scenario].fen;
-            newChess.load(restoreFen);
-            setChess(newChess);
-            setFen(restoreFen);
-            addLog('Time Travel: Undid last 2 moves', 'success');
-          }
-          setGrayscaleIntensity(0);
-          setCameraTarget(null);
-          setCutsceneActive(false);
-          setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true, cutscene: true }));
-        }, 3000);
-        break;
-
-      case 'execution':
-        if (params.targetSquare) {
-          const target = testChess.get(params.targetSquare);
-          if (target && target.color !== colorChar && target.type !== 'k') {
-            // Play execution sound
-            try {
-              soundManager.play('capture'); // TODO: Add specific 'execution' sound
-              setValidationChecklist(prev => ({ ...prev, sound: true }));
-            } catch (err) {}
-            
-            testChess.remove(params.targetSquare);
-            setChess(testChess);
-            addLog(`Executed ${target.type} at ${params.targetSquare}`, 'success');
-            setValidationChecklist(prev => ({ ...prev, logic: true }));
-          }
-        }
-        break;
-
-      case 'metamorphosis':
-        if (params.targetSquare && params.newType) {
-          const piece = testChess.get(params.targetSquare);
-          if (piece && piece.color === colorChar) {
-            // Play transformation sound
-            try {
-              soundManager.play('cardUse'); // TODO: Add specific 'transform' sound with magic sparkle
-              setValidationChecklist(prev => ({ ...prev, sound: true }));
-            } catch (err) {}
-            
-            testChess.remove(params.targetSquare);
-            testChess.put({ type: params.newType, color: colorChar }, params.targetSquare);
-            setChess(testChess);
-            addLog(`Metamorphosis: ${piece.type} → ${params.newType} at ${params.targetSquare}`, 'success');
-            setValidationChecklist(prev => ({ ...prev, logic: true }));
-          }
-        }
-        break;
-
-      default:
-        addLog(`${card.name} - logic not yet implemented in test tool`, 'warning');
+    // Play sound if specified
+    if (result.soundEffect) {
+      try {
+        soundManager.play(result.soundEffect);
+        setValidationChecklist(prev => ({ ...prev, sound: true }));
+      } catch (err) {
+        addLog(`Sound error: ${err.message}`, 'warning');
+      }
     }
+
+    // Trigger visual effect via activeVisualArcana (same as in-game)
+    if (result.visualEffect) {
+      setValidationChecklist(prev => ({ ...prev, visuals: true }));
+      
+      // Set the active visual arcana to trigger the shared renderer
+      setActiveVisualArcana({
+        arcanaId: card.id,
+        params: params
+      });
+
+      // Clear visual after animation duration (use shared timing)
+      const duration = getArcanaEffectDuration(card.id);
+      setTimeout(() => {
+        setActiveVisualArcana(null);
+      }, duration || 3000);
+      
+      // Handle shield (persistent effect)
+      if (result.visualEffect === 'shield') {
+        setPawnShields(prev => ({ ...prev, [colorChar]: { square: params.targetSquare } }));
+        setShieldTurnCounter(prev => ({ ...prev, [colorChar]: 1 }));
+      }
+    }
+
+    // Special handling for specific cards
+    if (card.id === 'shield_pawn' && result.success) {
+      setPawnShields(prev => ({ ...prev, [colorChar]: { square: params.targetSquare } }));
+      setShieldTurnCounter(prev => ({ ...prev, [colorChar]: 1 }));
+      addLog(`${result.message} - protected for 1 enemy turn`, 'success');
+      setValidationChecklist(prev => ({ ...prev, logic: true }));
+      setChess(testChess);
+      return;
+    }
+
+    if (card.id === 'temporal_echo') {
+      if (moveHistory.length > 0) {
+        const lastMove = moveHistory[moveHistory.length - 1];
+        setCutsceneActive(true);
+        setVisualEffects(prev => [...prev, {
+          type: 'ghost',
+          from: lastMove.from,
+          to: lastMove.to,
+          piece: lastMove.piece,
+          isWhite: lastMove.color === 'w',
+          id: Date.now(),
+        }]);
+        addLog(`Temporal Echo showing last move: ${lastMove.from} → ${lastMove.to}`, 'success');
+        setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true, cutscene: true }));
+        setTimeout(() => setCutsceneActive(false), getArcanaEffectDuration('temporal_echo'));
+        return;
+      }
+    }
+
+    if (card.id === 'time_travel') {
+      setCameraTarget(new THREE.Vector3(0, 20, 0));
+      setCutsceneActive(true);
+      setGrayscaleIntensity(1);
+      
+      setTimeout(() => {
+        const newChess = new Chess(chess.fen());
+        if (moveHistory.length >= 2) {
+          const restoreFen = moveHistory[moveHistory.length - 3]?.fen || TEST_SCENARIOS[scenario].fen;
+          newChess.load(restoreFen);
+          setChess(newChess);
+          setFen(restoreFen);
+          addLog('Time Travel: Undid last 2 moves', 'success');
+        }
+        setGrayscaleIntensity(0);
+        setCameraTarget(null);
+        setCutsceneActive(false);
+        setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true, cutscene: true }));
+      }, getArcanaEffectDuration('time_travel'));
+      return;
+    }
+
+    // Update chess state and log result
+    if (result.success) {
+      setChess(testChess);
+      setValidationChecklist(prev => ({ ...prev, logic: true }));
+    }
+    
+    addLog(result.message, result.success ? 'success' : 'error');
   };
 
   const handleSquareClick = (fileIndex, rankIndex) => {
@@ -752,21 +547,16 @@ export function CardBalancingToolV2({ onBack }) {
                 />
               ))}
 
-              {/* Pawn Shields */}
-              {pawnShields.w?.square && <ShieldGlowEffect square={pawnShields.w.square} />}
-              {pawnShields.b?.square && <ShieldGlowEffect square={pawnShields.b.square} />}
+              {/* Arcana Visual Effects - Shared component (same as GameScene) */}
+              <ArcanaVisualHost 
+                effectsModule={effectsModule}
+                activeVisualArcana={activeVisualArcana}
+                gameState={{ activeEffects, pawnShields }}
+                pawnShields={pawnShields}
+              />
 
-              {/* Visual Effects */}
+              {/* Legacy Visual Effects (kept for backward compatibility) */}
               {visualEffects.map(effect => {
-                if (effect.type === 'sacrifice') {
-                  return (
-                    <SacrificeEffect
-                      key={effect.id}
-                      square={effect.square}
-                      onComplete={() => setVisualEffects(prev => prev.filter(e => e.id !== effect.id))}
-                    />
-                  );
-                }
                 if (effect.type === 'ghost') {
                   return (
                     <GhostPiece
@@ -957,36 +747,9 @@ export function CardBalancingToolV2({ onBack }) {
   );
 }
 
-// Helper functions
-function needsTargetSquare(cardId) {
-  return ['execution', 'royal_swap', 'metamorphosis', 'mirror_image', 'sacrifice',
-    'cursed_square', 'sanctuary', 'mind_control', 'promotion_ritual', 'shield_pawn'].includes(cardId);
-}
-
+// Helper functions (needsTargetSquare is now imported from arcanaSimulation.js)
 function needsNewType(cardId) {
   return cardId === 'metamorphosis';
-}
-
-function getRarityColor(rarity) {
-  const colors = {
-    common: '#aaa',
-    uncommon: '#4ade80',
-    rare: '#60a5fa',
-    epic: '#c084fc',
-    legendary: '#fbbf24',
-  };
-  return colors[rarity] || '#fff';
-}
-
-function getLogColor(type) {
-  const colors = {
-    info: '#aaa',
-    success: '#22c55e',
-    warning: '#f59e0b',
-    error: '#ef4444',
-    test: '#60a5fa',
-  };
-  return colors[type] || '#aaa';
 }
 
 const styles = {

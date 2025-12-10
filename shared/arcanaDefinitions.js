@@ -14,7 +14,7 @@ export const ARCANA_DEFINITIONS = [
   {
     id: 'squire_support',
     name: 'Squire Support',
-    rarity: 'common',
+    rarity: 'uncommon',
     category: 'defense',
     description: 'Choose a piece. If it would be captured on the opponent\'s next move, it instead survives with the attacker bouncing back one square.',
     visual: { particles: true, animation: true, cutscene: false },
@@ -354,7 +354,7 @@ export const ARCANA_DEFINITIONS = [
   {
     id: 'antidote',
     name: 'Antidote',
-    rarity: 'uncommon',
+    rarity: 'common',
     category: 'utility',
     description: 'Heal a poisoned piece, removing poison effects and restoring it to full health.',
     visual: { particles: true, animation: true, cutscene: false },
