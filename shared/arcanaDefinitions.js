@@ -9,15 +9,8 @@ export const ARCANA_DEFINITIONS = [
     visual: { particles: false, animation: false, cutscene: false },
     soundKey: 'arcana:shield_pawn',
   },
-  {
-    id: 'pawn_wall',
-    name: 'Pawn Wall',
-    rarity: 'common',
-    category: 'defense',
-    description: 'Choose one of your pawns. Pieces directly behind it in the same column cannot be captured this turn.',
-    visual: { particles: false, animation: false, cutscene: false },
-    soundKey: 'arcana:pawn_wall',
-  },
+    /* 'pawn_wall' removed: functionality replaced by 'pawn_guard' which now
+      shields only the first friendly piece immediately behind a pawn for 1 turn */
   {
     id: 'squire_support',
     name: 'Squire Support',
@@ -32,7 +25,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Pawn Guard',
     rarity: 'common',
     category: 'defense',
-    description: 'Select a pawn. Any piece directly behind it becomes shielded and cannot be captured this turn.',
+    description: 'Select a pawn. The first friendly piece immediately behind it in the same column is shielded for 1 turn (only that piece is protected).',
     visual: { particles: false, animation: true, cutscene: false },
     soundKey: 'arcana:pawn_guard',
   },
