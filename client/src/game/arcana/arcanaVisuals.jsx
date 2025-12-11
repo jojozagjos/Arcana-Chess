@@ -586,3 +586,319 @@ export function TimeFreezeEffect({ onComplete }) {
     </group>
   );
 }
+
+// ===== COMMON CARD VISUALS =====
+
+export function PawnGuardEffect({ square, protectedSquare }) {
+  if (!protectedSquare) return null;
+  
+  const [x, , z] = squareToPosition(protectedSquare);
+  
+  return (
+    <group position={[x, 0, z]}>
+      {/* Subtle protective aura */}
+      <mesh position={[0, 0.5, 0]}>
+        <cylinderGeometry args={[0.35, 0.35, 0.6, 16, 1, true]} />
+        <meshStandardMaterial
+          emissive="#5e81ac"
+          emissiveIntensity={1.2}
+          color="#5e81ac"
+          transparent
+          opacity={0.3}
+          side={2}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+export function SoftPushEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 2;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group position={[x, 0, z]}>
+      {/* Gentle wave pushing forward */}
+      <mesh position={[0, 0.1, progress * 0.5]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.2, 0.4 + progress * 0.3, 16]} />
+        <meshStandardMaterial
+          emissive="#a3be8c"
+          emissiveIntensity={1.5 * (1 - progress)}
+          color="#a3be8c"
+          transparent
+          opacity={0.6 * (1 - progress)}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+export function FocusFireEffect({ onComplete }) {
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.5;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group>
+      {/* Targeting reticles appearing */}
+      {[...Array(8)].map((_, i) => {
+        const angle = (i / 8) * Math.PI * 2;
+        const radius = 3 * (1 - progress);
+        return (
+          <mesh
+            key={i}
+            position={[Math.cos(angle) * radius, 2, Math.sin(angle) * radius]}
+            rotation={[-Math.PI / 2, 0, angle]}
+          >
+            <ringGeometry args={[0.15, 0.25, 8]} />
+            <meshStandardMaterial
+              emissive="#bf616a"
+              emissiveIntensity={2 * (1 - progress)}
+              color="#bf616a"
+              transparent
+              opacity={1 - progress}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+export function LineOfSightEffect({ square, legalMoves, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.2;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group>
+      {/* Beam from piece highlighting moves */}
+      <mesh position={[x, 1.5, z]}>
+        <sphereGeometry args={[0.15 + progress * 0.1, 16, 16]} />
+        <meshStandardMaterial
+          emissive="#ebcb8b"
+          emissiveIntensity={3 * (1 - progress)}
+          color="#ebcb8b"
+          transparent
+          opacity={0.8 * (1 - progress)}
+        />
+      </mesh>
+      <pointLight position={[x, 1.5, z]} intensity={2 * (1 - progress)} color="#ebcb8b" distance={4} />
+    </group>
+  );
+}
+
+export function ArcaneCycleEffect({ onComplete }) {
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.5;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group position={[0, 2, 0]}>
+      {/* Cards spinning in circle */}
+      {[...Array(6)].map((_, i) => {
+        const angle = (i / 6) * Math.PI * 2 + progress * Math.PI * 2;
+        const radius = 1.5;
+        return (
+          <mesh
+            key={i}
+            position={[Math.cos(angle) * radius, 0, Math.sin(angle) * radius]}
+            rotation={[0, angle, 0]}
+          >
+            <planeGeometry args={[0.3, 0.4]} />
+            <meshStandardMaterial
+              emissive="#b48ead"
+              emissiveIntensity={2 * (1 - progress)}
+              color="#b48ead"
+              transparent
+              opacity={0.7 * (1 - progress)}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+export function QuietThoughtEffect({ kingSquare, threats, onComplete }) {
+  if (!kingSquare) return null;
+  
+  const [x, , z] = squareToPosition(kingSquare);
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group>
+      {/* Ripples from king revealing threats */}
+      {[...Array(4)].map((_, i) => {
+        const delay = i * 0.2;
+        const localProgress = Math.max(0, Math.min(1, (progress - delay) / 0.8));
+        const radius = localProgress * 3;
+        
+        return (
+          <mesh
+            key={i}
+            position={[x, 0.05, z]}
+            rotation={[-Math.PI / 2, 0, 0]}
+          >
+            <ringGeometry args={[radius, radius + 0.2, 32]} />
+            <meshStandardMaterial
+              emissive="#d08770"
+              emissiveIntensity={1.5 * (1 - localProgress)}
+              color="#d08770"
+              transparent
+              opacity={0.5 * (1 - localProgress)}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+export function MapFragmentsEffect({ predictedSquares, onComplete }) {
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.2;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  if (!predictedSquares || predictedSquares.length === 0) return null;
+  
+  return (
+    <group>
+      {predictedSquares.map((square, i) => {
+        const [x, , z] = squareToPosition(square);
+        const delay = i * 0.15;
+        const localProgress = Math.max(0, Math.min(1, (progress - delay) / 0.85));
+        
+        return (
+          <group key={square}>
+            <mesh position={[x, 0.05, z]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[0.3, 0.45, 6]} />
+              <meshStandardMaterial
+                emissive="#bf616a"
+                emissiveIntensity={2 * (1 - localProgress)}
+                color="#bf616a"
+                transparent
+                opacity={0.7 * (1 - localProgress)}
+              />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+export function PeekCardEffect({ onComplete }) {
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.3;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group position={[0, 2, -3]}>
+      {/* Card revealing */}
+      <mesh rotation={[progress * Math.PI, 0, 0]}>
+        <planeGeometry args={[0.6, 0.8]} />
+        <meshStandardMaterial
+          emissive="#8fbcbb"
+          emissiveIntensity={2 * (1 - progress)}
+          color="#8fbcbb"
+          transparent
+          opacity={0.8 * (1 - progress)}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+export function AntidoteEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.5;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group position={[x, 0, z]}>
+      {/* Healing particles rising */}
+      {[...Array(12)].map((_, i) => {
+        const angle = (i / 12) * Math.PI * 2;
+        const radius = 0.3 * (1 - progress * 0.5);
+        const height = progress * 1.5;
+        
+        return (
+          <mesh
+            key={i}
+            position={[Math.cos(angle) * radius, height, Math.sin(angle) * radius]}
+          >
+            <sphereGeometry args={[0.04, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#a3be8c"
+              emissiveIntensity={2 * (1 - progress)}
+              color="#a3be8c"
+              transparent
+              opacity={1 - progress}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}

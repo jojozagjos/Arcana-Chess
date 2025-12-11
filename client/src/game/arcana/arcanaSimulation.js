@@ -358,16 +358,109 @@ export function simulateArcanaEffect(chess, arcanaId, params, colorChar, gameSta
         break;
 
       case 'pawn_guard':
+        if (params.targetSquare) {
+          const pawn = chess.get(params.targetSquare);
+          if (pawn && pawn.type === 'p' && pawn.color === colorChar) {
+            // Find piece behind pawn
+            const file = params.targetSquare[0];
+            const rank = parseInt(params.targetSquare[1]);
+            const behindRank = colorChar === 'w' ? rank - 1 : rank + 1;
+            const behindSquare = `${file}${behindRank}`;
+            const behindPiece = chess.get(behindSquare);
+            
+            if (behindPiece && behindPiece.color === colorChar) {
+              result.success = true;
+              result.message = `Protected ${behindPiece.type} at ${behindSquare} behind pawn`;
+              result.visualEffect = 'shield';
+              result.soundEffect = 'arcana:pawn_guard';
+            } else {
+              result.message = 'No friendly piece behind this pawn';
+            }
+          } else {
+            result.message = 'Must target your own pawn';
+          }
+        }
+        break;
+
+      case 'soft_push':
+        if (params.targetSquare) {
+          const piece = chess.get(params.targetSquare);
+          if (piece && piece.color === colorChar) {
+            result.success = true;
+            result.message = `Gently pushed ${piece.type} toward center`;
+            result.visualEffect = 'push';
+            result.soundEffect = 'arcana:soft_push';
+          } else {
+            result.message = 'Must target your own piece';
+          }
+        }
+        break;
+
+      case 'focus_fire':
         result.success = true;
-        result.message = 'Shield piece behind pawn for 1 turn';
-        result.visualEffect = 'shield';
-        result.soundEffect = 'arcana:shield_pawn';
+        result.message = 'Next capture draws an extra common card';
+        result.visualEffect = 'focus';
+        result.soundEffect = 'arcana:focus_fire';
+        break;
+
+      case 'line_of_sight':
+        if (params.targetSquare) {
+          const piece = chess.get(params.targetSquare);
+          if (piece && piece.color === colorChar) {
+            const moves = chess.moves({ square: params.targetSquare, verbose: true });
+            result.success = true;
+            result.message = `Highlighted ${moves.length} legal moves for ${piece.type}`;
+            result.visualEffect = 'highlight';
+            result.soundEffect = 'arcana:line_of_sight';
+          } else {
+            result.message = 'Must target your own piece';
+          }
+        }
+        break;
+
+      case 'arcane_cycle':
+        result.success = true;
+        result.message = 'Cycled arcana: drew new common card';
+        result.visualEffect = 'cycle';
+        result.soundEffect = 'arcana:arcane_cycle';
+        break;
+
+      case 'quiet_thought':
+        result.success = true;
+        result.message = 'Revealed indirect threats to king';
+        result.visualEffect = 'reveal';
+        result.soundEffect = 'arcana:quiet_thought';
+        break;
+
+      case 'map_fragments':
+        result.success = true;
+        result.message = 'Predicted 3 enemy move targets';
+        result.visualEffect = 'predict';
+        result.soundEffect = 'arcana:map_fragments';
+        break;
+
+      case 'peek_card':
+        result.success = true;
+        result.message = 'Peeked at opponent\'s card';
+        result.visualEffect = 'peek';
+        result.soundEffect = 'arcana:peek_card';
+        break;
+
+      case 'antidote':
+        if (params.targetSquare) {
+          result.success = true;
+          result.message = `Cleansed poison at ${params.targetSquare}`;
+          result.visualEffect = 'cleanse';
+          result.soundEffect = 'arcana:antidote';
+        } else {
+          result.message = 'Must target a poisoned piece';
+        }
         break;
 
       case 'squire_support':
         result.success = true;
-        result.message = 'Pawns adjacent to knights gain extra movement';
-        result.soundEffect = 'cardUse';
+        result.message = 'Piece gains bounce-back protection';
+        result.soundEffect = 'arcana:squire_support';
         break;
 
       default:
@@ -388,6 +481,10 @@ export function simulateArcanaEffect(chess, arcanaId, params, colorChar, gameSta
 export function needsTargetSquare(arcanaId) {
   const targetingCards = [
     'shield_pawn',
+    'pawn_guard',
+    'soft_push',
+    'line_of_sight',
+    'antidote',
     'promotion_ritual',
     'royal_swap',
     'metamorphosis',
@@ -411,6 +508,10 @@ export function needsTargetSquare(arcanaId) {
 export function getTargetTypeForArcana(arcanaId) {
   const targetingMap = {
     'shield_pawn': 'pawn',
+    'pawn_guard': 'pawn',
+    'soft_push': 'piece',
+    'line_of_sight': 'piece',
+    'antidote': 'piece',
     'promotion_ritual': 'pawn',
     'royal_swap': 'piece',
     'metamorphosis': 'piece',

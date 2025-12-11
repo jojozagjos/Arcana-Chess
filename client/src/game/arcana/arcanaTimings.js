@@ -41,6 +41,17 @@ export const ARCANA_TIMINGS = {
   pawn_guard: 0, // Persistent
   shield_pawn: 0, // Persistent
   
+  // Common card effects
+  soft_push: 1500,
+  focus_fire: 1800,
+  line_of_sight: 2000,
+  arcane_cycle: 2000,
+  quiet_thought: 2200,
+  map_fragments: 2000,
+  peek_card: 1800,
+  antidote: 1500,
+  vision: 1500,
+  
   // Animation easing constants
   EASE_IN_OUT: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2,
   EASE_IN: (t) => t * t,

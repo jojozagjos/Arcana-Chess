@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { LobbyManager } from './lobbyManager.js';
 import { GameManager } from './gameManager.js';
+import { applyArcana } from './arcana/arcanaHandlers.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
 import { Chess } from 'chess.js';
 
@@ -109,6 +110,11 @@ function applyTestCardEffect(chess, card, params, colorChar) {
 
 const lobbyManager = new LobbyManager();
 const gameManager = new GameManager(io, lobbyManager);
+// Backwards-compatible wrapper: some callers expect `gameManager.applyArcana`
+// Attach a method that delegates to the centralized `applyArcana` handler.
+gameManager.applyArcana = (socketId, gameState, arcanaUsed, moveResult) => {
+  return applyArcana(socketId, gameState, arcanaUsed, moveResult, io);
+};
 
 io.on('connection', (socket) => {
   console.log('Socket connected', socket.id);
@@ -254,9 +260,9 @@ io.on('connection', (socket) => {
         },
       };
 
-      // Test applying the arcana
+      // Test applying the arcana (use server arcana handler directly)
       const use = { arcanaId, params };
-      const result = gameManager.applyArcana(socket.id, testGameState, [use], null);
+      const result = applyArcana(socket.id, testGameState, [use], null, io);
 
       if (result && result.length > 0) {
         safeAck(ack, {

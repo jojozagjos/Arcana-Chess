@@ -83,6 +83,8 @@ function applyArcanaEffect(arcanaId, context) {
     // === DEFENSE CARDS ===
     case 'shield_pawn':
       return applyShieldPawn(context);
+    case 'pawn_guard':
+      return applyPawnGuard(context);
     case 'iron_fortress':
       return applyIronFortress(context);
     case 'bishops_blessing':
@@ -95,6 +97,8 @@ function applyArcanaEffect(arcanaId, context) {
       return applySanctuary(context);
       
     // === MOVEMENT CARDS ===
+    case 'soft_push':
+      return applySoftPush(context);
     case 'spectral_march':
       return applySpectralMarch(context);
     case 'knight_of_storms':
@@ -111,6 +115,8 @@ function applyArcanaEffect(arcanaId, context) {
       return applyTemporalEcho(context);
       
     // === OFFENSE CARDS ===
+    case 'focus_fire':
+      return applyFocusFire(context);
     case 'double_strike':
       return applyDoubleStrike(context);
     case 'poison_touch':
@@ -143,6 +149,18 @@ function applyArcanaEffect(arcanaId, context) {
     // === UTILITY ===
     case 'vision':
       return applyVision(context);
+    case 'line_of_sight':
+      return applyLineOfSight(context);
+    case 'arcane_cycle':
+      return applyArcaneCycle(context);
+    case 'quiet_thought':
+      return applyQuietThought(context);
+    case 'map_fragments':
+      return applyMapFragments(context);
+    case 'peek_card':
+      return applyPeekCard(context);
+    case 'antidote':
+      return applyAntidote(context);
     case 'fog_of_war':
       return applyFogOfWar(context);
     case 'cursed_square':
@@ -177,6 +195,31 @@ function applyShieldPawn({ chess, gameState, moverColor, moveResult, params }) {
     gameState.pawnShields[shieldColor] = { square: shieldSquare };
     return { params: { square: shieldSquare, color: shieldColor } };
   }
+  return null;
+}
+
+function applyPawnGuard({ chess, gameState, moverColor, params }) {
+  const targetSquare = params?.targetSquare;
+  if (!targetSquare) return null;
+  
+  const pawn = chess.get(targetSquare);
+  if (!pawn || pawn.type !== 'p' || pawn.color !== moverColor) return null;
+  
+  // Find piece immediately behind the pawn in same column
+  const file = targetSquare[0];
+  const rank = parseInt(targetSquare[1]);
+  const behindRank = moverColor === 'w' ? rank - 1 : rank + 1;
+  
+  if (behindRank < 1 || behindRank > 8) return null;
+  
+  const behindSquare = `${file}${behindRank}`;
+  const behindPiece = chess.get(behindSquare);
+  
+  if (behindPiece && behindPiece.color === moverColor) {
+    gameState.pawnShields[moverColor] = { square: behindSquare };
+    return { params: { pawnSquare: targetSquare, protectedSquare: behindSquare, color: moverColor } };
+  }
+  
   return null;
 }
 
@@ -442,8 +485,118 @@ function applySacrifice({ chess, gameState, socketId, moverColor, params }) {
 
 // ============ UTILITY CARDS ============
 
-function applyVision({ moverColor }) {
+function applyVision({ chess, moverColor }) {
+  const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  const opponentMoves = chess.moves({ verbose: true }).filter(m => {
+    const piece = chess.get(m.from);
+    return piece && piece.color === opponentColor;
+  });
+  return { params: { color: moverColor, revealedMoves: opponentMoves.length } };
+}
+
+function applyLineOfSight({ chess, moverColor, params }) {
+  const targetSquare = params?.targetSquare;
+  if (!targetSquare) return null;
+  
+  const piece = chess.get(targetSquare);
+  if (!piece || piece.color !== moverColor) return null;
+  
+  const moves = chess.moves({ square: targetSquare, verbose: true });
+  return { params: { square: targetSquare, legalMoves: moves.map(m => m.to) } };
+}
+
+function applyArcaneCycle({ gameState, socketId }) {
+  // Draw a new common arcana
+  const newCard = pickWeightedArcana();
+  gameState.arcanaByPlayer[socketId].push(newCard);
+  return { params: { drewCard: newCard.id } };
+}
+
+function applyQuietThought({ chess, moverColor }) {
+  const kingSquare = findKing(chess, moverColor);
+  if (!kingSquare) return null;
+  
+  // Find squares that threaten the king
+  const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  const threats = [];
+  const allMoves = chess.moves({ verbose: true });
+  
+  for (const move of allMoves) {
+    const piece = chess.get(move.from);
+    if (piece && piece.color === opponentColor) {
+      // Check if this piece threatens king square
+      const pieceMoves = chess.moves({ square: move.from, verbose: true });
+      if (pieceMoves.some(m => m.to === kingSquare)) {
+        threats.push(move.from);
+      }
+    }
+  }
+  
+  return { params: { kingSquare, threats } };
+}
+
+function applyMapFragments({ chess, moverColor }) {
+  const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  const opponentMoves = chess.moves({ verbose: true }).filter(m => {
+    const piece = chess.get(m.from);
+    return piece && piece.color === opponentColor;
+  });
+  
+  // Highlight 3 likely target squares based on captures or center control
+  const likelySquares = opponentMoves
+    .filter(m => m.captured || ['e4', 'e5', 'd4', 'd5'].includes(m.to))
+    .map(m => m.to)
+    .slice(0, 3);
+  
+  return { params: { predictedSquares: likelySquares } };
+}
+
+function applyPeekCard({ gameState, socketId }) {
+  // Reveal one opponent card
+  const opponentId = gameState.playerIds.find(id => id !== socketId);
+  if (!opponentId) return null;
+  
+  const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
+  if (opponentCards.length === 0) return null;
+  
+  const randomCard = opponentCards[Math.floor(Math.random() * opponentCards.length)];
+  return { params: { revealedCard: randomCard.id, opponentId } };
+}
+
+function applyAntidote({ gameState, params }) {
+  const targetSquare = params?.targetSquare;
+  if (!targetSquare) return null;
+  
+  // Remove poison effects from target piece
+  if (gameState.activeEffects?.poisoned) {
+    gameState.activeEffects.poisoned = gameState.activeEffects.poisoned.filter(
+      sq => sq !== targetSquare
+    );
+  }
+  
+  return { params: { cleansedSquare: targetSquare } };
+}
+
+function applyFocusFire({ gameState, moverColor }) {
+  // Mark that next capture draws an extra card
+  if (!gameState.activeEffects.focusFire) {
+    gameState.activeEffects.focusFire = {};
+  }
+  gameState.activeEffects.focusFire[moverColor] = true;
   return { params: { color: moverColor } };
+}
+
+function applySoftPush({ chess, moverColor, params }) {
+  const targetSquare = params?.targetSquare;
+  const direction = params?.direction; // 'forward', 'center', etc.
+  
+  if (!targetSquare) return null;
+  
+  const piece = chess.get(targetSquare);
+  if (!piece || piece.color !== moverColor) return null;
+  
+  // Calculate center-ward move (simplified - just return for now, actual move logic in validation)
+  return { params: { square: targetSquare, direction: 'center' } };
 }
 
 function applyFogOfWar({ gameState, moverColor }) {
