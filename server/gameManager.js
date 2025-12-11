@@ -46,6 +46,8 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
+      poisonedPieces: [],  // [{ square, turnsLeft: 3, poisonedBy }]
+      squireSupport: [],   // [{ square, turnsLeft: 1 }]
       queensGambit: { w: 0, b: 0 }, // extra moves remaining
       queensGambitUsed: { w: false, b: false }, // track if extra move was used this turn
       divineIntervention: { w: false, b: false },
@@ -411,6 +413,27 @@ export class GameManager {
       gameState.activeEffects.bishopsBlessing[moverColor] = result.to;
     }
 
+    // Squire Support: protected piece bounces back when captured (along with attacker)
+    if (result.captured && gameState.activeEffects.squireSupport && gameState.activeEffects.squireSupport.length > 0) {
+      const protectedSquare = gameState.activeEffects.squireSupport.find(s => s.square === result.to);
+      if (protectedSquare) {
+        // Both pieces bounce back to their original squares
+        const capturedPiece = { type: result.captured, color: opponentColor };
+        const attackingPiece = { type: result.piece, color: moverColor };
+        
+        // After chess.move(), the attacker is at result.to and the defender is gone
+        // We need to move the attacker back to result.from and restore the defender to result.to
+        chess.remove(result.to);    // Remove attacker from target square
+        
+        // Place them back on original squares
+        chess.put(attackingPiece, result.from);  // Attacker back to source
+        chess.put(capturedPiece, result.to);     // Captured piece back to target
+        
+        result.squireBounce = { from: result.from, to: result.to };
+        result.captured = null;  // No actual capture occurred
+      }
+    }
+
     // Check cursed squares - destroy piece that lands there (but not kings)
     for (const cursed of gameState.activeEffects.cursedSquares || []) {
       if (cursed.square === result.to) {
@@ -439,11 +462,21 @@ export class GameManager {
         at: result.to,
       });
 
-      // Poison Touch: destroy adjacent enemy pieces after capture
+      // Poison Touch: poison a random adjacent enemy piece (3-turn delayed death)
       if (gameState.activeEffects.poisonTouch[moverColor]) {
-        const poisoned = this.applyChainLightning(chess, result.to, moverColor, 8); // All adjacent
+        const { applyPoisonAfterCapture } = await import('./arcana/arcanaHandlers.js');
+        const poisoned = applyPoisonAfterCapture(chess, result.to, moverColor, gameState);
         if (poisoned.length > 0) {
           result.poisoned = poisoned;
+          // Emit poison event to clients for visual effects
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('piecePoisoned', {
+                squares: poisoned,
+                turnsLeft: 3
+              });
+            }
+          }
         }
       }
 
@@ -709,6 +742,29 @@ export class GameManager {
       m.turnsLeft--;
       return m.turnsLeft > 0;
     });
+    
+    // Decrement squire support
+    effects.squireSupport = (effects.squireSupport || []).filter(s => {
+      s.turnsLeft--;
+      return s.turnsLeft > 0;
+    });
+    
+    // Decrement poisoned pieces and kill those at 0 turns
+    const chess = gameState.chess;
+    if (effects.poisonedPieces) {
+      effects.poisonedPieces = effects.poisonedPieces.filter(p => {
+        p.turnsLeft--;
+        if (p.turnsLeft === 0) {
+          // Kill the poisoned piece
+          const piece = chess.get(p.square);
+          if (piece && piece.type !== 'k') {
+            chess.remove(p.square);
+          }
+          return false; // Remove from array
+        }
+        return true; // Keep counting down
+      });
+    }
     
     // Clear one-turn effects
     effects.ironFortress = { w: false, b: false };

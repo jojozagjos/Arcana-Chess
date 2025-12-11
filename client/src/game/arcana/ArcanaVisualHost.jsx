@@ -45,9 +45,6 @@ export function ArcanaVisualHost({
       {activeVisualArcana?.arcanaId === 'metamorphosis' && activeVisualArcana.params?.square && Effects?.MetamorphosisEffect && (
         <Effects.MetamorphosisEffect {...normalizeProps('metamorphosis', activeVisualArcana.params)} />
       )}
-      {activeVisualArcana?.arcanaId === 'iron_fortress' && activeVisualArcana.params?.square && Effects?.IronFortressEffect && (
-        <Effects.IronFortressEffect {...normalizeProps('iron_fortress', activeVisualArcana.params)} />
-      )}
       {activeVisualArcana?.arcanaId === 'bishops_blessing' && activeVisualArcana.params?.square && Effects?.BishopsBlessingEffect && (
         <Effects.BishopsBlessingEffect {...normalizeProps('bishops_blessing', activeVisualArcana.params)} />
       )}
@@ -110,6 +107,11 @@ export function ArcanaVisualHost({
       {(gameState?.activeEffects?.fogOfWar?.w || gameState?.activeEffects?.fogOfWar?.b) && (
         Effects?.FogOfWarEffect ? <Effects.FogOfWarEffect /> : null
       )}
+      
+      {/* Poisoned Pieces - Show green glow and skulls */}
+      {gameState?.activeEffects?.poisonedPieces?.map((p, i) => (
+        Effects?.PoisonedPieceEffect ? <Effects.PoisonedPieceEffect key={`poison-${i}`} square={p.square} turnsLeft={p.turnsLeft} /> : null
+      ))}
       
       {/* Pawn Shields */}
       {pawnShields.w?.square && (Effects?.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null)}

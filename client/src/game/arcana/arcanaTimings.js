@@ -19,7 +19,6 @@ export const ARCANA_TIMINGS = {
   poison_touch: 2000,
   promotion_ritual: 2500,
   metamorphosis: 2500,
-  iron_fortress: 0, // Persistent
   bishops_blessing: 0, // Persistent
   time_freeze: 2000,
   spectral_march: 2000,
@@ -51,6 +50,13 @@ export const ARCANA_TIMINGS = {
   peek_card: 1800,
   antidote: 1500,
   vision: 1500,
+  
+  // Uncommon card effects
+  squire_support: 0, // Persistent until used
+  spectral_march: 1800,
+  phantom_step: 1500,
+  fog_of_war: 2500,
+  en_passant_master: 0, // Instant
   
   // Animation easing constants
   EASE_IN_OUT: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2,

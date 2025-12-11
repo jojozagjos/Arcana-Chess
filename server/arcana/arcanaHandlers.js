@@ -85,8 +85,8 @@ function applyArcanaEffect(arcanaId, context) {
       return applyShieldPawn(context);
     case 'pawn_guard':
       return applyPawnGuard(context);
-    case 'iron_fortress':
-      return applyIronFortress(context);
+    case 'squire_support':
+      return applySquireSupport(context);
     case 'bishops_blessing':
       return applyBishopsBlessing(context);
     case 'time_freeze':
@@ -205,19 +205,30 @@ function applyPawnGuard({ chess, gameState, moverColor, params }) {
   const pawn = chess.get(targetSquare);
   if (!pawn || pawn.type !== 'p' || pawn.color !== moverColor) return null;
   
-  // Find piece immediately behind the pawn in same column
+  // Find first friendly piece behind the pawn in same column
   const file = targetSquare[0];
   const rank = parseInt(targetSquare[1]);
-  const behindRank = moverColor === 'w' ? rank - 1 : rank + 1;
+  const direction = moverColor === 'w' ? -1 : 1; // White pawns move up, behind is down
   
-  if (behindRank < 1 || behindRank > 8) return null;
+  let foundPiece = null;
+  let foundSquare = null;
   
-  const behindSquare = `${file}${behindRank}`;
-  const behindPiece = chess.get(behindSquare);
+  // Search from directly behind the pawn to the back rank
+  for (let r = rank + direction; moverColor === 'w' ? r >= 1 : r <= 8; r += direction) {
+    const checkSquare = `${file}${r}`;
+    const piece = chess.get(checkSquare);
+    if (piece) {
+      if (piece.color === moverColor) {
+        foundPiece = piece;
+        foundSquare = checkSquare;
+      }
+      break; // Stop at first piece found (friendly or enemy)
+    }
+  }
   
-  if (behindPiece && behindPiece.color === moverColor) {
-    gameState.pawnShields[moverColor] = { square: behindSquare };
-    return { params: { pawnSquare: targetSquare, protectedSquare: behindSquare, color: moverColor } };
+  if (foundPiece && foundSquare) {
+    gameState.pawnShields[moverColor] = { square: foundSquare };
+    return { params: { pawnSquare: targetSquare, protectedSquare: foundSquare, color: moverColor } };
   }
   
   return null;
@@ -357,12 +368,35 @@ function applyDoubleStrike({ gameState, moverColor }) {
   return null;
 }
 
-function applyPoisonTouch({ gameState, moverColor }) {
+function applyPoisonTouch({ gameState, moverColor, moveResult }) {
+  // Enable poison on next capture
   if (moverColor) {
     gameState.activeEffects.poisonTouch[moverColor] = true;
     return { params: { color: moverColor } };
   }
   return null;
+}
+
+// Helper to poison an adjacent piece after capture
+export function applyPoisonAfterCapture(chess, captureSquare, moverColor, gameState) {
+  const adjacentSquares = getAdjacentSquares(captureSquare);
+  const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  
+  const validTargets = adjacentSquares.filter(sq => {
+    const piece = chess.get(sq);
+    return piece && piece.color === opponentColor;
+  });
+  
+  if (validTargets.length > 0) {
+    const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)];
+    gameState.activeEffects.poisonedPieces.push({
+      square: randomTarget,
+      turnsLeft: 3,
+      poisonedBy: moverColor
+    });
+    return [randomTarget];
+  }
+  return [];
 }
 
 function applySharpshooter({ gameState, moverColor }) {
@@ -567,14 +601,32 @@ function applyAntidote({ gameState, params }) {
   const targetSquare = params?.targetSquare;
   if (!targetSquare) return null;
   
-  // Remove poison effects from target piece
-  if (gameState.activeEffects?.poisoned) {
-    gameState.activeEffects.poisoned = gameState.activeEffects.poisoned.filter(
-      sq => sq !== targetSquare
-    );
+  // Check if target is actually poisoned
+  const poisonIndex = gameState.activeEffects.poisonedPieces.findIndex(
+    p => p.square === targetSquare
+  );
+  
+  if (poisonIndex === -1) {
+    return null; // Not poisoned, card can't be used
   }
   
+  // Remove poison from target piece
+  gameState.activeEffects.poisonedPieces.splice(poisonIndex, 1);
+  
   return { params: { cleansedSquare: targetSquare } };
+}
+
+function applySquireSupport({ gameState, params }) {
+  const targetSquare = params?.targetSquare;
+  if (!targetSquare) return null;
+  
+  // Add piece to squire support list for 1 turn
+  gameState.activeEffects.squireSupport.push({
+    square: targetSquare,
+    turnsLeft: 1
+  });
+  
+  return { params: { protectedSquare: targetSquare } };
 }
 
 function applyFocusFire({ gameState, moverColor }) {
@@ -588,15 +640,45 @@ function applyFocusFire({ gameState, moverColor }) {
 
 function applySoftPush({ chess, moverColor, params }) {
   const targetSquare = params?.targetSquare;
-  const direction = params?.direction; // 'forward', 'center', etc.
-  
   if (!targetSquare) return null;
   
   const piece = chess.get(targetSquare);
   if (!piece || piece.color !== moverColor) return null;
   
-  // Calculate center-ward move (simplified - just return for now, actual move logic in validation)
-  return { params: { square: targetSquare, direction: 'center' } };
+  // Calculate push direction toward center (d4/d5/e4/e5 are center squares)
+  const file = targetSquare.charCodeAt(0) - 97; // 0-7
+  const rank = parseInt(targetSquare[1]); // 1-8
+  
+  // Center is between files d(3) and e(4), ranks 4 and 5
+  let targetFile = file;
+  let targetRank = rank;
+  
+  // Horizontal: push toward files d(3) or e(4)
+  if (file < 3) targetFile = file + 1; // Move toward d
+  else if (file > 4) targetFile = file - 1; // Move toward e
+  
+  // Vertical: push toward ranks 4 or 5
+  if (rank < 4) targetRank = rank + 1; // Move toward 4
+  else if (rank > 5) targetRank = rank - 1; // Move toward 5
+  
+  const destSquare = String.fromCharCode(97 + targetFile) + targetRank;
+  const destPiece = chess.get(destSquare);
+  
+  // Cannot push to same square (already at center)
+  if (destSquare === targetSquare) {
+    return null;
+  }
+  
+  // Cannot push to occupied square
+  if (destPiece) {
+    return null;
+  }
+  
+  // Execute the push move on the board
+  chess.remove(targetSquare);
+  chess.put(piece, destSquare);
+  
+  return { params: { square: targetSquare, destSquare, piece: piece.type } };
 }
 
 function applyFogOfWar({ gameState, moverColor }) {

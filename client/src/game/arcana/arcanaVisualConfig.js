@@ -123,11 +123,6 @@ export const ARCANA_VISUAL_CONFIG = {
   },
   
   // Persistent board effects
-  iron_fortress: {
-    component: 'IronFortressEffect',
-    propMapping: { square: 'kingSquare' },
-    type: 'persistent',
-  },
   bishops_blessing: {
     component: 'BishopsBlessingEffect',
     propMapping: { bishopSquare: 'square' },

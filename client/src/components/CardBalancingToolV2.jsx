@@ -69,6 +69,10 @@ export function CardBalancingToolV2({ onBack }) {
   
   // Active visual arcana (for rendering cutscenes/effects)
   const [activeVisualArcana, setActiveVisualArcana] = useState(null);
+  
+  // Highlighted squares for Line of Sight, Vision, Map Fragments, etc
+  const [highlightedSquares, setHighlightedSquares] = useState([]);
+  const [highlightColor, setHighlightColor] = useState('#88c0d0');
 
   const selectedCard = useMemo(() => {
     return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
@@ -123,6 +127,8 @@ export function CardBalancingToolV2({ onBack }) {
     setCutsceneActive(false);
     setGrayscaleIntensity(0);
     setActiveVisualArcana(null);
+    setHighlightedSquares([]);
+    setHighlightColor('#88c0d0');
     setValidationChecklist({ logic: false, visuals: false, sound: false, cutscene: false, server: false });
     setServerTestActive(false);
     setServerTestResult(null);
@@ -220,6 +226,13 @@ export function CardBalancingToolV2({ onBack }) {
       } catch (err) {
         addLog(`Sound error: ${err.message}`, 'warning');
       }
+    }
+
+    // Handle highlighted squares for Line of Sight, Vision, Map Fragments, etc
+    if (result.highlightSquares && result.highlightSquares.length > 0) {
+      setHighlightedSquares(result.highlightSquares);
+      setHighlightColor(result.highlightColor || '#88c0d0');
+      // Highlights persist until the next action or turn change
     }
 
     // Trigger visual effect via activeVisualArcana (same as in-game)
@@ -510,6 +523,7 @@ export function CardBalancingToolV2({ onBack }) {
                   const isSelected = selectedSquare === square;
                   const isTarget = targetSquare === square;
                   const isLegal = legalTargets.includes(square);
+                  const isHighlighted = highlightedSquares.includes(square);
 
                   return (
                     <mesh
@@ -525,6 +539,7 @@ export function CardBalancingToolV2({ onBack }) {
                           isSelected ? '#ffff00' :
                           isTarget ? '#ff8800' :
                           isLegal ? '#88ff88' :
+                          isHighlighted ? highlightColor :
                           isLight ? '#f0d9b5' : '#b58863'
                         }
                         opacity={targetingMode ? 0.8 : 0.9}
@@ -641,20 +656,6 @@ export function CardBalancingToolV2({ onBack }) {
               <div style={styles.descriptionSection}>
                 <h4 style={styles.sectionTitle}>Description</h4>
                 <p style={styles.descriptionText}>{selectedCard.description}</p>
-                
-                {/* Special instructions for Shield Pawn */}
-                {selectedCard.id === 'shield_pawn' && (
-                  <div style={{ marginTop: 8, padding: 8, background: 'rgba(76,101,255,0.1)', borderRadius: 4, fontSize: 12 }}>
-                    <strong style={{ color: '#4c6fff' }}>How Shield Works:</strong>
-                    <ul style={{ margin: '4px 0', paddingLeft: 20, lineHeight: '1.6' }}>
-                      <li>Click your pawn → Test Card</li>
-                      <li>Shield protects pawn for <strong>1 enemy turn</strong></li>
-                      <li>Shield follows pawn when it moves</li>
-                      <li>Cannot be captured while shielded</li>
-                      <li>Expires after opponent's turn</li>
-                    </ul>
-                  </div>
-                )}
               </div>
 
               {/* Validation Checklist */}

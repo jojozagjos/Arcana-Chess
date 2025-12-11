@@ -8,7 +8,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select a pawn to grant temporary protection: it cannot be captured for one enemy turn.',
     visual: { particles: false, animation: false, cutscene: false },
     visualLifecycle: { mode: 'untilTurnEnd', autoClearOnServerTurnEnd: true },
-    soundKey: 'arcana:shield_pawn',
+    soundKey: 'arcana:shield',
   },
     /* 'pawn_wall' removed: functionality replaced by 'pawn_guard' which now
       shields only the first friendly piece immediately behind a pawn for 1 turn */
@@ -28,7 +28,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Select a pawn. The first friendly piece immediately behind it in the same column is shielded for 1 turn (only that piece is protected).',
     visual: { particles: false, animation: true, cutscene: false },
-    soundKey: 'arcana:pawn_guard',
+    soundKey: 'arcana:shield',
   },
 
   // DEFENSIVE ARCANA - RARE+
@@ -162,7 +162,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Poison Touch',
     rarity: 'uncommon',
     category: 'offense',
-    description: 'Next piece you capture also removes an adjacent enemy piece.',
+    description: 'When you capture a piece, poison a random adjacent enemy piece. Poisoned pieces die after 3 turns if not healed with Antidote.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:poison_touch',
   },
@@ -357,7 +357,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Antidote',
     rarity: 'common',
     category: 'utility',
-    description: 'Heal a poisoned piece, removing poison effects and restoring it to full health.',
+    description: 'Select a poisoned piece to cleanse it and prevent its death. Can only target pieces with active poison.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:antidote',
   },

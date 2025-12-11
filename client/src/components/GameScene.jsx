@@ -7,7 +7,7 @@ import { soundManager } from '../game/soundManager.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
-import { getTargetTypeForArcana } from '../game/arcana/arcanaSimulation.js';
+import { getTargetTypeForArcana, simulateArcanaEffect } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
@@ -32,6 +32,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null); // { square } when showing piece type choice
   const [effectsModule, setEffectsModule] = useState(null);
   const [visionMoves, setVisionMoves] = useState([]); // Opponent legal moves when vision is active
+  const [highlightedSquares, setHighlightedSquares] = useState([]); // For Line of Sight, Map Fragments, etc
+  const [highlightColor, setHighlightColor] = useState('#88c0d0'); // Default cyan color for highlights
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -110,6 +112,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       setArcanaSidebarOpen(true); // Auto-open when ascension happens
     }
   }, [ascendedInfo]);
+
+  // Clear highlights when turn changes (persists only for one full turn)
+  useEffect(() => {
+    setHighlightedSquares([]);
+  }, [gameState?.moves?.length]); // Clears highlights on any move (turn change)
 
   useEffect(() => {
     if (!lastArcanaEvent) return;
@@ -559,6 +566,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           chess={chess}
           myColor={myColor}
           visionMoves={visionMoves}
+          highlightedSquares={highlightedSquares}
+          highlightColor={highlightColor}
         />
         <group>
           {piecesState.map((p) => {
@@ -922,7 +931,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   );
 }
 
-function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, targetingMode, chess, myColor, visionMoves }) {
+function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, targetingMode, chess, myColor, visionMoves, highlightedSquares, highlightColor }) {
   const tiles = [];
 
   const isLegalTarget = (fileIndex, rankIndex) => {
@@ -937,6 +946,13 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
     const rankNum = 8 - rankIndex;
     const sq = `${fileChar}${rankNum}`;
     return visionMoves && visionMoves.includes(sq);
+  };
+  
+  const isHighlighted = (fileIndex, rankIndex) => {
+    const fileChar = 'abcdefgh'[fileIndex];
+    const rankNum = 8 - rankIndex;
+    const sq = `${fileChar}${rankNum}`;
+    return highlightedSquares && highlightedSquares.includes(sq);
   };
   
   const isValidTargetSquare = (fileIndex, rankIndex) => {
@@ -997,14 +1013,16 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
       const shielded = isShieldSquare(file, rank);
       const validTarget = isValidTargetSquare(file, rank);
       const vision = isVisionMove(file, rank);
+      const highlighted = isHighlighted(file, rank);
 
       let color = baseColor;
       if (last) color = '#ffd27f';
       // Brighter selection/target colors for clarity
       if (selected) color = '#4db8ff';
       else if (legal) color = '#4cd964';
-      else if (validTarget) color = '#a3be8c'; // Green for valid arcana targets
+      else if (validTarget && targetingMode) color = '#a3be8c'; // Green for valid arcana targets (only when targeting)
       else if (vision) color = '#bf616a'; // Red for opponent's potential moves (vision)
+      else if (highlighted) color = highlightColor || '#88c0d0'; // Cyan for Line of Sight, Map Fragments, etc
       if (shielded) color = '#b48ead';
 
       tiles.push(

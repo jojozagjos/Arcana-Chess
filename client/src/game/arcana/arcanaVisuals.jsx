@@ -31,35 +31,6 @@ export function ShieldGlowEffect({ square }) {
   );
 }
 
-export function IronFortressEffect({ kingSquare }) {
-  if (!kingSquare) return null;
-  
-  const [x, , z] = squareToPosition(kingSquare);
-  
-  return (
-    <group position={[x, 0, z]}>
-      {/* Fortress walls around king */}
-      {[0, 1, 2, 3].map(i => {
-        const angle = (i / 4) * Math.PI * 2;
-        const wallX = Math.cos(angle) * 0.6;
-        const wallZ = Math.sin(angle) * 0.6;
-        return (
-          <mesh key={i} position={[wallX, 0.4, wallZ]} rotation={[0, angle, 0]}>
-            <boxGeometry args={[0.1, 0.8, 0.5]} />
-            <meshStandardMaterial
-              color="#5e81ac"
-              emissive="#5e81ac"
-              emissiveIntensity={0.8}
-              metalness={0.8}
-              roughness={0.2}
-            />
-          </mesh>
-        );
-      })}
-    </group>
-  );
-}
-
 export function BishopsBlessingEffect({ square }) {
   if (!square) return null;
   
@@ -182,6 +153,80 @@ export function PoisonCloudEffect({ square }) {
           </mesh>
         );
       })}
+    </group>
+  );
+}
+
+// Persistent effect for poisoned pieces (green glow + skull particles)
+export function PoisonedPieceEffect({ square, turnsLeft }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const groupRef = useRef();
+  
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.8;
+    }
+  });
+  
+  // More urgent glow as death approaches
+  const urgency = turnsLeft === 1 ? 2.5 : turnsLeft === 2 ? 1.8 : 1.2;
+  
+  return (
+    <group position={[x, 0, z]} ref={groupRef}>
+      {/* Green poisonous aura */}
+      <mesh position={[0, 0.5, 0]}>
+        <cylinderGeometry args={[0.45, 0.45, 0.9, 16, 1, true]} />
+        <meshStandardMaterial
+          emissive="#7cb518"
+          emissiveIntensity={urgency}
+          color="#7cb518"
+          transparent
+          opacity={0.35}
+          side={2}
+        />
+      </mesh>
+      
+      {/* Skull particles rising */}
+      {[...Array(4)].map((_, i) => {
+        const angle = (i / 4) * Math.PI * 2;
+        const radius = 0.25;
+        const bobOffset = Math.sin(Date.now() * 0.002 + i) * 0.2;
+        
+        return (
+          <group key={i} position={[Math.cos(angle) * radius, 0.6 + bobOffset, Math.sin(angle) * radius]}>
+            {/* Simple skull shape */}
+            <mesh position={[0, 0, 0]}>
+              <sphereGeometry args={[0.08, 8, 8]} />
+              <meshStandardMaterial
+                emissive="#5a7c1b"
+                emissiveIntensity={1.5}
+                color="#5a7c1b"
+                transparent
+                opacity={0.6}
+              />
+            </mesh>
+            {/* Eyes */}
+            <mesh position={[-0.03, 0, 0.06]}>
+              <sphereGeometry args={[0.015, 4, 4]} />
+              <meshStandardMaterial
+                emissive="#000000"
+                color="#000000"
+              />
+            </mesh>
+            <mesh position={[0.03, 0, 0.06]}>
+              <sphereGeometry args={[0.015, 4, 4]} />
+              <meshStandardMaterial
+                emissive="#000000"
+                color="#000000"
+              />
+            </mesh>
+          </group>
+        );
+      })}
+      
+      <pointLight position={[0, 0.5, 0]} intensity={urgency * 0.8} color="#7cb518" distance={2} />
     </group>
   );
 }
@@ -895,6 +940,197 @@ export function AntidoteEffect({ square, onComplete }) {
               color="#a3be8c"
               transparent
               opacity={1 - progress}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+// ===== UNCOMMON CARD VISUALS =====
+
+export function SquireSupportEffect({ square }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const groupRef = useRef();
+  
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.6;
+    }
+  });
+  
+  return (
+    <group position={[x, 0, z]} ref={groupRef}>
+      {/* Protective rotating barrier */}
+      {[...Array(6)].map((_, i) => {
+        const angle = (i / 6) * Math.PI * 2;
+        const radius = 0.5;
+        return (
+          <mesh key={i} position={[Math.cos(angle) * radius, 0.5, Math.sin(angle) * radius]}>
+            <boxGeometry args={[0.08, 0.6, 0.08]} />
+            <meshStandardMaterial
+              emissive="#81a1c1"
+              emissiveIntensity={1.5}
+              color="#81a1c1"
+              transparent
+              opacity={0.6}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+export function FogOfWarEffect({ onComplete }) {
+  const [progress, setProgress] = useState(0);
+  const groupRef = useRef();
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 0.6;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+    
+    // Gentle rotation for atmospheric effect
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.1;
+    }
+  });
+  
+  return (
+    <group ref={groupRef}>
+      {/* Large billowing cloud particles spreading across board */}
+      {[...Array(40)].map((_, i) => {
+        // Create waves of clouds spreading outward
+        const angle = (Math.random() * Math.PI * 2);
+        const distance = Math.random() * 6;
+        const x = Math.cos(angle) * distance;
+        const z = Math.sin(angle) * distance;
+        
+        // Stagger cloud appearance
+        const delay = (i / 40) * 0.5;
+        const localProgress = Math.max(0, Math.min(1, (progress - delay) / 0.7));
+        
+        // Cloud gets bigger and more transparent as it spreads
+        const scale = 0.3 + localProgress * 0.4;
+        const opacity = 0.4 * (1 - localProgress * 0.7);
+        
+        return (
+          <group
+            key={i}
+            position={[
+              x + Math.sin(localProgress * Math.PI * 2) * 0.3,
+              0.3 + Math.random() * 0.4,
+              z + Math.cos(localProgress * Math.PI * 2) * 0.3
+            ]}
+          >
+            {/* Multiple spheres per cloud for billowing effect */}
+            <mesh position={[0, 0, 0]}>
+              <sphereGeometry args={[scale * 0.7, 16, 16]} />
+              <meshStandardMaterial
+                emissive="#2e3440"
+                emissiveIntensity={0.8}
+                color="#3b4252"
+                transparent
+                opacity={opacity}
+                fog={false}
+              />
+            </mesh>
+            <mesh position={[scale * 0.4, scale * 0.2, 0]}>
+              <sphereGeometry args={[scale * 0.5, 12, 12]} />
+              <meshStandardMaterial
+                emissive="#2e3440"
+                emissiveIntensity={0.7}
+                color="#3b4252"
+                transparent
+                opacity={opacity * 0.8}
+                fog={false}
+              />
+            </mesh>
+            <mesh position={[-scale * 0.3, scale * 0.1, scale * 0.3]}>
+              <sphereGeometry args={[scale * 0.6, 14, 14]} />
+              <meshStandardMaterial
+                emissive="#2e3440"
+                emissiveIntensity={0.7}
+                color="#3b4252"
+                transparent
+                opacity={opacity * 0.75}
+                fog={false}
+              />
+            </mesh>
+          </group>
+        );
+      })}
+      
+      {/* Ground-level fog swirls */}
+      {[...Array(15)].map((_, i) => {
+        const angle = (i / 15) * Math.PI * 2;
+        const radius = 2 + Math.random() * 3;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        
+        const delay = 0.3 + (i / 15) * 0.3;
+        const localProgress = Math.max(0, Math.min(1, (progress - delay) / 0.6));
+        
+        return (
+          <mesh
+            key={`swirl-${i}`}
+            position={[x, 0.1 + localProgress * 0.1, z]}
+            rotation={[0, angle + progress * Math.PI, 0]}
+          >
+            <planeGeometry args={[2, 0.5]} />
+            <meshStandardMaterial
+              emissive="#2e3440"
+              emissiveIntensity={0.5}
+              color="#3b4252"
+              transparent
+              opacity={0.25 * (1 - localProgress)}
+              fog={false}
+              side={2}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+export function SpectralMarchEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.5;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group position={[x, 0, z]}>
+      {/* Ghost trail effect */}
+      {[...Array(8)].map((_, i) => {
+        const offset = i * 0.15;
+        const localProgress = Math.max(0, Math.min(1, (progress - offset) / 0.7));
+        
+        return (
+          <mesh key={i} position={[0, 0.5, i * 0.2 - 0.8]} rotation={[0, progress * Math.PI, 0]}>
+            <sphereGeometry args={[0.25, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#88c0d0"
+              emissiveIntensity={1.5 * (1 - localProgress)}
+              color="#88c0d0"
+              transparent
+              opacity={0.4 * (1 - localProgress)}
+              wireframe
             />
           </mesh>
         );
