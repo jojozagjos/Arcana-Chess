@@ -22,7 +22,6 @@ const TEST_SCENARIOS = {
   pawnPromotion: { name: 'Pawn Promotion Test', fen: '4k3/4P3/8/8/8/8/8/4K3 w - - 0 1' },
   checkScenario: { name: 'King in Check', fen: 'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3' },
   crowdedBoard: { name: 'Crowded Center', fen: 'rnbqkbnr/pppppppp/8/8/3PP3/3NN3/PPP2PPP/R1BQKB1R b KQkq - 0 1' },
-  shieldTest: { name: 'Shield Test (White Pawn e2)', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
 };
 
 export function CardBalancingToolV2({ onBack }) {
