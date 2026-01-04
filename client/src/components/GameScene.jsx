@@ -196,11 +196,22 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       
       // Validate target based on type
       let validTarget = false;
-      if (targetType === 'pawn' && piece?.type === 'p' && piece.color === myColorCode) {
+      
+      // Special case: antidote only works on poisoned pieces
+      if (arcanaId === 'antidote') {
+        if (piece) {
+          const poisonedPieces = gameState?.activeEffects?.poisonedPieces || [];
+          validTarget = poisonedPieces.some(p => p.square === square);
+        }
+      } else if (targetType === 'pawn' && piece?.type === 'p' && piece.color === myColorCode) {
         validTarget = true;
       } else if (targetType === 'piece' && piece && piece.color === myColorCode) {
         validTarget = true;
+      } else if (targetType === 'knight' && piece?.type === 'n' && piece.color === myColorCode) {
+        validTarget = true;
       } else if (targetType === 'enemyPiece' && piece && piece.color !== myColorCode && piece.type !== 'k') {
+        validTarget = true;
+      } else if (targetType === 'enemyRook' && piece?.type === 'r' && piece.color !== myColorCode) {
         validTarget = true;
       } else if (targetType === 'square') {
         validTarget = true;
@@ -227,7 +238,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setTargetingMode(null);
         }
       } else {
-        setPendingMoveError(`Invalid target - please select a ${targetType}`);
+        const targetDescription = arcanaId === 'antidote' ? 'poisoned piece' : 
+                                  targetType === 'knight' ? 'knight' : targetType;
+        setPendingMoveError(`Invalid target - please select a ${targetDescription}`);
       }
       return;
     }
@@ -963,13 +976,25 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
     const piece = chess?.get(sq);
     const myColorCode = myColor === 'white' ? 'w' : 'b';
     
-    const { targetType } = targetingMode;
+    const { targetType, arcanaId } = targetingMode;
+    
+    // Special case: antidote only works on poisoned pieces
+    if (arcanaId === 'antidote') {
+      if (!piece) return false;
+      const poisonedPieces = gameState?.activeEffects?.poisonedPieces || [];
+      return poisonedPieces.some(p => p.square === sq);
+    }
+    
     if (targetType === 'pawn') {
       return piece?.type === 'p' && piece.color === myColorCode;
     } else if (targetType === 'piece') {
       return piece && piece.color === myColorCode;
+    } else if (targetType === 'knight') {
+      return piece?.type === 'n' && piece.color === myColorCode;
     } else if (targetType === 'enemyPiece') {
       return piece && piece.color !== myColorCode && piece.type !== 'k';
+    } else if (targetType === 'enemyRook') {
+      return piece?.type === 'r' && piece.color !== myColorCode;
     } else if (targetType === 'square') {
       return true; // Any square is valid
     }
@@ -1090,7 +1115,9 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
     switch(targetType) {
       case 'pawn': return 'Select a pawn';
       case 'piece': return 'Select one of your pieces';
+      case 'knight': return 'Select a knight';
       case 'enemyPiece': return 'Select an enemy piece';
+      case 'enemyRook': return 'Select an enemy rook';
       case 'square': return 'Select a square';
       default: return 'Select a target';
     }

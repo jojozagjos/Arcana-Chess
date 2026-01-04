@@ -43,11 +43,13 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       cursedSquares: [],  // [{ square, turns, setter }]
       sanctuaries: [],    // [{ square, turns }]
       fogOfWar: { w: false, b: false },
+      vision: { w: false, b: false },  // reveals opponent's legal moves
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
       poisonedPieces: [],  // [{ square, turnsLeft: 3, poisonedBy }]
       squireSupport: [],   // [{ square, turnsLeft: 1 }]
+      focusFire: { w: false, b: false },  // next capture draws extra card
       queensGambit: { w: 0, b: 0 }, // extra moves remaining
       queensGambitUsed: { w: false, b: false }, // track if extra move was used this turn
       divineIntervention: { w: false, b: false },
@@ -56,6 +58,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       phantomStep: { w: false, b: false },    // piece moves as knight
       pawnRush: { w: false, b: false },       // all pawns can move 2
       sharpshooter: { w: false, b: false },   // bishop ignores blockers
+      knightOfStorms: { w: null, b: null },    // knight can move within 2-square radius
       mindControlled: [],  // [{ square, originalColor, controlledBy }]
       enPassantMaster: { w: false, b: false }, // enhanced en passant
       temporalEcho: null,  // { pattern, color } for repeating last move
@@ -363,11 +366,9 @@ export class GameManager {
       const tempChess = new Chess(chess.fen());
       tempChess.move(candidate);
       if (tempChess.inCheck()) {
-        const kingInCheck = tempChess.turn(); // After move, turn switches
-        const protectedColor = opponentColor === 'w' ? 'b' : 'w';
-        if (kingInCheck === protectedColor) {
-          throw new Error('Divine Intervention prevents check on the king!');
-        }
+        // After move, it's opponent's turn. If they're in check, their king is threatened.
+        // opponentColor has Divine Intervention active, so block this move.
+        throw new Error('Divine Intervention prevents check on the king!');
       }
     }
 
@@ -411,6 +412,41 @@ export class GameManager {
     if (myBlessing && result.from === myBlessing && result.piece === 'b') {
       // Blessing follows the bishop to its new square
       gameState.activeEffects.bishopsBlessing[moverColor] = result.to;
+    }
+
+    // Update poisoned piece square if a poisoned piece moved
+    if (gameState.activeEffects.poisonedPieces && gameState.activeEffects.poisonedPieces.length > 0) {
+      const poisonedEntry = gameState.activeEffects.poisonedPieces.find(p => p.square === result.from);
+      if (poisonedEntry) {
+        // Poison follows the piece to its new square
+        poisonedEntry.square = result.to;
+      }
+    }
+
+    // Update squire support square if a protected piece moved
+    if (gameState.activeEffects.squireSupport && gameState.activeEffects.squireSupport.length > 0) {
+      const squireEntry = gameState.activeEffects.squireSupport.find(s => s.square === result.from);
+      if (squireEntry) {
+        // Protection follows the piece to its new square
+        squireEntry.square = result.to;
+      }
+    }
+
+    // Mirror Image: If a mirror image was captured, just remove it from tracking (no penalty)
+    if (result.captured && gameState.activeEffects.mirrorImages && gameState.activeEffects.mirrorImages.length > 0) {
+      const mirrorIndex = gameState.activeEffects.mirrorImages.findIndex(m => m.square === result.to);
+      if (mirrorIndex !== -1) {
+        // Remove the mirror image from tracking - it was captured
+        gameState.activeEffects.mirrorImages.splice(mirrorIndex, 1);
+      }
+    }
+
+    // Mirror Image: If a mirror image piece moved, update its tracking
+    if (gameState.activeEffects.mirrorImages && gameState.activeEffects.mirrorImages.length > 0) {
+      const mirrorEntry = gameState.activeEffects.mirrorImages.find(m => m.square === result.from);
+      if (mirrorEntry) {
+        mirrorEntry.square = result.to;
+      }
     }
 
     // Squire Support: protected piece bounces back when captured (along with attacker)
@@ -487,6 +523,19 @@ export class GameManager {
           color: moverColor,
           from: result.to, // Must attack from the piece that just captured
         };
+      }
+
+      // Focus Fire: draw an extra card on capture
+      if (gameState.activeEffects.focusFire && gameState.activeEffects.focusFire[moverColor]) {
+        const { pickWeightedArcana } = await import('./arcana/arcanaUtils.js');
+        const bonusCard = pickWeightedArcana();
+        gameState.arcanaByPlayer[socket.id].push(bonusCard);
+        gameState.activeEffects.focusFire[moverColor] = false; // Clear after use
+        
+        // Notify player of bonus card
+        if (!socket.id.startsWith('AI-')) {
+          this.io.to(socket.id).emit('arcanaDrawn', { card: bonusCard, reason: 'Focus Fire bonus' });
+        }
       }
     }
 
@@ -737,10 +786,19 @@ export class GameManager {
       return s.turns > 0;
     });
     
-    // Decrement mirror images
+    // Decrement mirror images and remove expired duplicates from board
+    const chess = gameState.chess;
     effects.mirrorImages = (effects.mirrorImages || []).filter(m => {
       m.turnsLeft--;
-      return m.turnsLeft > 0;
+      if (m.turnsLeft <= 0) {
+        // Remove the mirror image piece from the board
+        const piece = chess.get(m.square);
+        if (piece && piece.type === m.type && piece.color === m.color) {
+          chess.remove(m.square);
+        }
+        return false;
+      }
+      return true;
     });
     
     // Decrement squire support
@@ -750,7 +808,6 @@ export class GameManager {
     });
     
     // Decrement poisoned pieces and kill those at 0 turns
-    const chess = gameState.chess;
     if (effects.poisonedPieces) {
       effects.poisonedPieces = effects.poisonedPieces.filter(p => {
         p.turnsLeft--;
@@ -770,6 +827,8 @@ export class GameManager {
     effects.ironFortress = { w: false, b: false };
     effects.bishopsBlessing = { w: null, b: null };
     effects.fogOfWar = { w: false, b: false };
+    effects.vision = { w: false, b: false };
+    effects.focusFire = effects.focusFire || { w: false, b: false };
     effects.doubleStrike = { w: false, b: false };
     effects.poisonTouch = { w: false, b: false };
     effects.spectralMarch = { w: false, b: false };
@@ -778,6 +837,7 @@ export class GameManager {
     effects.sharpshooter = { w: false, b: false };
     effects.enPassantMaster = { w: false, b: false };
     effects.temporalEcho = null;
+    effects.knightOfStorms = { w: null, b: null };
     
     // Reverse mind control after 1 turn
     if (effects.mindControlled && effects.mindControlled.length > 0) {

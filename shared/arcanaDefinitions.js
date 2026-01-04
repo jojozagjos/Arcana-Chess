@@ -30,6 +30,15 @@ export const ARCANA_DEFINITIONS = [
     visual: { particles: false, animation: true, cutscene: false },
     soundKey: 'arcana:shield',
   },
+  {
+    id: 'iron_fortress',
+    name: 'Iron Fortress',
+    rarity: 'rare',
+    category: 'defense',
+    description: 'All your pawns cannot be captured for one enemy turn.',
+    visual: { particles: true, animation: true, cutscene: false },
+    soundKey: 'arcana:iron_fortress',
+  },
 
   // DEFENSIVE ARCANA - RARE+
   {

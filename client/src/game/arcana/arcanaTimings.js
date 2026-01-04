@@ -1,74 +1,40 @@
-/**
- * Centralized timing constants for arcana animations and cutscenes
- * Ensures identical timing between GameScene and CardBalancingToolV2
- */
+// Arcana effect timing configurations
+// Defines duration and delay constants for visual effects
 
-export const ARCANA_TIMINGS = {
-  // Default durations (ms)
-  DEFAULT_CUTSCENE: 3000,
-  DEFAULT_EFFECT: 2000,
-  DEFAULT_PERSISTENT: 0, // Persistent effects stay until removed
-  
-  // Specific arcana timings
-  astral_rebirth: 2500,
-  execution: 2000,
-  time_travel: 3000,
-  mind_control: 2500,
-  divine_intervention: 3000,
-  chain_lightning: 2000,
-  poison_touch: 2000,
-  promotion_ritual: 2500,
-  metamorphosis: 2500,
-  bishops_blessing: 0, // Persistent
-  time_freeze: 2000,
-  spectral_march: 2000,
-  knight_of_storms: 2000,
-  queens_gambit: 2000,
-  royal_swap: 2500,
-  double_strike: 1500,
-  sharpshooter: 2000,
-  berserker_rage: 2000,
-  necromancy: 2500,
-  mirror_image: 0, // Persistent
-  fog_of_war: 0, // Persistent
-  chaos_theory: 2500,
-  sacrifice: 2000,
-  castle_breaker: 2000,
-  temporal_echo: 2500,
-  
-  // Shield effects
-  pawn_guard: 0, // Persistent
-  shield_pawn: 0, // Persistent
-  
-  // Common card effects
-  soft_push: 1500,
-  focus_fire: 1800,
-  line_of_sight: 2000,
-  arcane_cycle: 2000,
-  quiet_thought: 2200,
-  map_fragments: 2000,
-  peek_card: 1800,
-  antidote: 1500,
-  vision: 1500,
-  
-  // Uncommon card effects
-  squire_support: 0, // Persistent until used
-  spectral_march: 1800,
-  phantom_step: 1500,
-  fog_of_war: 2500,
-  en_passant_master: 0, // Instant
-  
-  // Animation easing constants
-  EASE_IN_OUT: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2,
-  EASE_IN: (t) => t * t,
-  EASE_OUT: (t) => 1 - Math.pow(1 - t, 2),
-};
-
-/**
- * Get duration for a specific arcana effect
- * @param {string} arcanaId - The arcana card ID
- * @returns {number} Duration in milliseconds
- */
 export function getArcanaEffectDuration(arcanaId) {
-  return ARCANA_TIMINGS[arcanaId] ?? ARCANA_TIMINGS.DEFAULT_EFFECT;
+  const durations = {
+    // Quick effects (< 1s)
+    shield_pawn: 800,
+    soft_push: 900,
+    pawn_rush: 1000,
+    
+    // Medium effects (1-2s)
+    phantom_step: 1200,
+    spectral_march: 1500,
+    poison_touch: 1400,
+    squire_support: 1100,
+    vision: 1000,
+    line_of_sight: 1000,
+    map_fragments: 1200,
+    
+    // Long effects (2s+)
+    fog_of_war: 2500,
+    metamorphosis: 2000,
+    sacrifice: 1800,
+    
+    // Default
+    default: 1500,
+  };
+  
+  return durations[arcanaId] || durations.default;
+}
+
+export function getArcanaDelay(arcanaId) {
+  // Some arcana may need a delay before showing effects
+  const delays = {
+    fog_of_war: 200,
+    default: 0,
+  };
+  
+  return delays[arcanaId] || delays.default;
 }

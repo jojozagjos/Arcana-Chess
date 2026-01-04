@@ -2,6 +2,106 @@ import { Chess } from 'chess.js';
 import { pickWeightedArcana, squareToCoords, coordsToSquare } from './arcanaUtils.js';
 
 /**
+ * Validate arcana targeting before applying
+ */
+function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState) {
+  const targetSquare = params?.targetSquare;
+  const piece = targetSquare ? chess.get(targetSquare) : null;
+  
+  // Cards that don't need targeting
+  const noTargetCards = [
+    'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
+    'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
+    'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning', 'necromancy',
+    'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
+    'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress'
+  ];
+  
+  if (noTargetCards.includes(arcanaId)) {
+    return { valid: true };
+  }
+  
+  // Cards requiring target validation
+  switch (arcanaId) {
+    case 'shield_pawn':
+    case 'pawn_guard':
+    case 'promotion_ritual':
+      // Requires own pawn
+      if (!targetSquare) return { valid: false, error: 'No target selected' };
+      if (!piece || piece.type !== 'p' || piece.color !== moverColor) {
+        return { valid: false, error: 'Must target your own pawn' };
+      }
+      return { valid: true };
+      
+    case 'bishops_blessing':
+      // Requires own bishop
+      if (!targetSquare) return { valid: false, error: 'No target selected' };
+      if (!piece || piece.type !== 'b' || piece.color !== moverColor) {
+        return { valid: false, error: 'Must target your own bishop' };
+      }
+      return { valid: true };
+      
+    case 'knight_of_storms':
+      // Requires own knight
+      if (!targetSquare) return { valid: false, error: 'No target selected' };
+      if (!piece || piece.type !== 'n' || piece.color !== moverColor) {
+        return { valid: false, error: 'Must target your own knight' };
+      }
+      return { valid: true };
+      
+    case 'squire_support':
+    case 'soft_push':
+    case 'line_of_sight':
+    case 'royal_swap':
+    case 'metamorphosis':
+    case 'mirror_image':
+    case 'sacrifice':
+      // Requires own piece
+      if (!targetSquare) return { valid: false, error: 'No target selected' };
+      if (!piece || piece.color !== moverColor) {
+        return { valid: false, error: 'Must target your own piece' };
+      }
+      return { valid: true };
+      
+    case 'execution':
+    case 'mind_control':
+      // Requires enemy piece (not king)
+      if (!targetSquare) return { valid: false, error: 'No target selected' };
+      if (!piece || piece.color === moverColor || piece.type === 'k') {
+        return { valid: false, error: 'Must target an enemy piece (not king)' };
+      }
+      return { valid: true };
+      
+    case 'castle_breaker':
+      // Requires enemy rook (or auto-selects if no target)
+      if (targetSquare) {
+        if (!piece || piece.type !== 'r' || piece.color === moverColor) {
+          return { valid: false, error: 'Must target an enemy rook' };
+        }
+      }
+      return { valid: true };
+      
+    case 'antidote':
+      // Requires poisoned piece
+      if (!targetSquare) return { valid: false, error: 'No target selected' };
+      const poisonedPieces = gameState.activeEffects?.poisonedPieces || [];
+      if (!poisonedPieces.some(p => p.square === targetSquare)) {
+        return { valid: false, error: 'Target is not poisoned' };
+      }
+      return { valid: true };
+      
+    case 'sanctuary':
+    case 'cursed_square':
+      // Requires any square
+      if (!targetSquare) return { valid: false, error: 'No target square selected' };
+      return { valid: true };
+      
+    default:
+      return { valid: true };
+  }
+}
+
+/**
  * Apply all arcana cards used in a turn
  * @param {string} socketId - Player who used the arcana
  * @param {Object} gameState - Current game state
@@ -30,6 +130,13 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     // Get mover color from moveResult if available, otherwise from current turn
     const moverColor = moveResult?.color || chess.turn();
     let params = use.params || {};
+
+    // Validate targeting before applying
+    const validation = validateArcanaTargeting(def.id, chess, params, moverColor, gameState);
+    if (!validation.valid) {
+      console.warn(`Arcana ${def.id} targeting validation failed: ${validation.error}`);
+      continue; // Skip this arcana if targeting is invalid
+    }
 
     // Apply the specific arcana effect
     const result = applyArcanaEffect(def.id, {
@@ -93,6 +200,8 @@ function applyArcanaEffect(arcanaId, context) {
       return applyTimeFreeze(context);
     case 'divine_intervention':
       return applyDivineIntervention(context);
+    case 'iron_fortress':
+      return applyIronFortress(context);
     case 'sanctuary':
       return applySanctuary(context);
       
@@ -292,8 +401,21 @@ function applySpectralMarch({ gameState, moverColor }) {
   return null;
 }
 
-function applyKnightOfStorms({ moveResult }) {
-  return { params: { from: moveResult?.from, to: moveResult?.to } };
+function applyKnightOfStorms({ chess, gameState, moverColor, params }) {
+  // Knight of Storms: allows knight to move to any square within 2-square radius
+  const targetSquare = params?.targetSquare;
+  if (!targetSquare) return null;
+  
+  const knight = chess.get(targetSquare);
+  if (!knight || knight.type !== 'n' || knight.color !== moverColor) return null;
+  
+  // Enable knight of storms effect for this knight
+  if (!gameState.activeEffects.knightOfStorms) {
+    gameState.activeEffects.knightOfStorms = { w: null, b: null };
+  }
+  gameState.activeEffects.knightOfStorms[moverColor] = targetSquare;
+  
+  return { params: { knightSquare: targetSquare, color: moverColor } };
 }
 
 function applyQueensGambit({ gameState, moverColor }) {
@@ -428,14 +550,26 @@ function applyExecution({ chess, moverColor, params }) {
 
 function applyChainLightning({ chess, moverColor, moveResult }) {
   if (moveResult?.captured && moveResult.to) {
-    const chained = chainLightningEffect(chess, moveResult.to, moverColor, 2);
+    const chained = chainLightningEffect(chess, moveResult.to, moverColor, 1);
     return { params: { origin: moveResult.to, chained } };
   }
   return null;
 }
 
-function applyCastleBreaker({ chess, moverColor }) {
+function applyCastleBreaker({ chess, moverColor, params }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  
+  // If targetSquare is specified, destroy that specific rook
+  if (params?.targetSquare) {
+    const piece = chess.get(params.targetSquare);
+    if (piece && piece.type === 'r' && piece.color === opponentColor) {
+      chess.remove(params.targetSquare);
+      return { params: { destroyed: params.targetSquare } };
+    }
+    return null; // Invalid target
+  }
+  
+  // Fallback: destroy first rook found
   const destroyed = destroyRook(chess, opponentColor);
   return { params: { destroyed } };
 }
@@ -461,12 +595,13 @@ function applyNecromancy({ gameState, moverColor }) {
 }
 
 function applyPromotionRitual({ chess, moverColor, params }) {
-  if (params?.pawnSquare) {
-    const pawn = chess.get(params.pawnSquare);
+  const targetSquare = params?.targetSquare || params?.pawnSquare;
+  if (targetSquare) {
+    const pawn = chess.get(targetSquare);
     if (pawn && pawn.type === 'p' && pawn.color === moverColor) {
-      chess.remove(params.pawnSquare);
-      chess.put({ type: 'q', color: moverColor }, params.pawnSquare);
-      return { params: { square: params.pawnSquare } };
+      chess.remove(targetSquare);
+      chess.put({ type: 'q', color: moverColor }, targetSquare);
+      return { params: { square: targetSquare } };
     }
   }
   return null;
@@ -487,19 +622,32 @@ function applyMetamorphosis({ chess, moverColor, params }) {
 
 function applyMirrorImage({ chess, gameState, moverColor, params }) {
   const targetSquare = params?.targetSquare || params?.pieceSquare;
-  if (targetSquare) {
-    const piece = chess.get(targetSquare);
-    if (piece && piece.color === moverColor) {
-      gameState.activeEffects.mirrorImages.push({
-        square: targetSquare,
-        type: piece.type,
-        color: piece.color,
-        turnsLeft: 3,
-      });
-      return { params: { square: targetSquare, type: piece.type } };
-    }
+  if (!targetSquare) return null;
+  
+  const piece = chess.get(targetSquare);
+  if (!piece || piece.color !== moverColor) return null;
+  
+  // Find an adjacent free square for the duplicate
+  const adjacentSquares = getAdjacentSquares(targetSquare);
+  const freeSquare = adjacentSquares.find(sq => !chess.get(sq));
+  
+  if (!freeSquare) {
+    // No free adjacent square available
+    return null;
   }
-  return null;
+  
+  // Place the duplicate piece on the board
+  chess.put({ type: piece.type, color: piece.color }, freeSquare);
+  
+  // Track the mirror image so it disappears after 3 turns
+  gameState.activeEffects.mirrorImages.push({
+    square: freeSquare, // Track the duplicate, not the original
+    type: piece.type,
+    color: piece.color,
+    turnsLeft: 3,
+  });
+  
+  return { params: { originalSquare: targetSquare, duplicateSquare: freeSquare, type: piece.type } };
 }
 
 function applySacrifice({ chess, gameState, socketId, moverColor, params }) {
@@ -519,13 +667,39 @@ function applySacrifice({ chess, gameState, socketId, moverColor, params }) {
 
 // ============ UTILITY CARDS ============
 
-function applyVision({ chess, moverColor }) {
+/**
+ * Helper to get all legal moves for a specific color by temporarily flipping turn
+ */
+function getMovesForColor(chess, color) {
+  const currentTurn = chess.turn();
+  
+  // If it's already the requested color's turn, just return moves
+  if (currentTurn === color) {
+    return chess.moves({ verbose: true });
+  }
+  
+  // Otherwise, temporarily flip the turn in the FEN
+  const fen = chess.fen();
+  const fenParts = fen.split(' ');
+  fenParts[1] = color; // Set turn to requested color
+  
+  const tempChess = new Chess(fenParts.join(' '));
+  const moves = tempChess.moves({ verbose: true });
+  
+  return moves;
+}
+
+function applyVision({ chess, gameState, moverColor }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
-  const opponentMoves = chess.moves({ verbose: true }).filter(m => {
-    const piece = chess.get(m.from);
-    return piece && piece.color === opponentColor;
-  });
-  return { params: { color: moverColor, revealedMoves: opponentMoves.length } };
+  const opponentMoves = getMovesForColor(chess, opponentColor);
+  
+  // Store vision state so client can display opponent moves
+  if (!gameState.activeEffects.vision) {
+    gameState.activeEffects.vision = { w: false, b: false };
+  }
+  gameState.activeEffects.vision[moverColor] = true;
+  
+  return { params: { color: moverColor, revealedMoves: opponentMoves.length, moves: opponentMoves.map(m => m.to) } };
 }
 
 function applyLineOfSight({ chess, moverColor, params }) {
@@ -539,48 +713,81 @@ function applyLineOfSight({ chess, moverColor, params }) {
   return { params: { square: targetSquare, legalMoves: moves.map(m => m.to) } };
 }
 
-function applyArcaneCycle({ gameState, socketId }) {
+function applyArcaneCycle({ gameState, socketId, params }) {
+  // Requires discarding a card first (by index)
+  const discardIndex = params?.discardIndex;
+  
+  // If no discard index provided, just draw (for backward compatibility)
+  // But ideally client should provide a card to discard
+  if (typeof discardIndex === 'number') {
+    const cards = gameState.arcanaByPlayer[socketId];
+    if (discardIndex >= 0 && discardIndex < cards.length) {
+      const discarded = cards.splice(discardIndex, 1)[0];
+      // Mark the card as used so it's not counted in usedArcanaIdsByPlayer
+      // Actually we already mark arcane_cycle as used, so this is fine
+    }
+  }
+  
   // Draw a new common arcana
   const newCard = pickWeightedArcana();
   gameState.arcanaByPlayer[socketId].push(newCard);
-  return { params: { drewCard: newCard.id } };
+  return { params: { drewCard: newCard.id, discardIndex } };
 }
 
 function applyQuietThought({ chess, moverColor }) {
   const kingSquare = findKing(chess, moverColor);
   if (!kingSquare) return null;
   
-  // Find squares that threaten the king
+  // Find squares where opponent pieces can attack the king
+  // We need to check opponent's attack potential regardless of whose turn it is
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
   const threats = [];
-  const allMoves = chess.moves({ verbose: true });
   
-  for (const move of allMoves) {
-    const piece = chess.get(move.from);
-    if (piece && piece.color === opponentColor) {
-      // Check if this piece threatens king square
-      const pieceMoves = chess.moves({ square: move.from, verbose: true });
-      if (pieceMoves.some(m => m.to === kingSquare)) {
-        threats.push(move.from);
+  // Get opponent's possible moves
+  const opponentMoves = getMovesForColor(chess, opponentColor);
+  
+  // Find unique squares from which opponent can attack
+  const attackerSquares = new Set();
+  for (const move of opponentMoves) {
+    if (move.to === kingSquare) {
+      attackerSquares.add(move.from);
+    }
+  }
+  
+  // Also check for indirect threats (pieces that could attack if path was clear)
+  const board = chess.board();
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const piece = board[rank][file];
+      if (piece && piece.color === opponentColor) {
+        const sq = 'abcdefgh'[file] + (8 - rank);
+        // Check if this piece type can potentially attack the king's square
+        if (canPieceTypeAttack(piece.type, sq, kingSquare)) {
+          attackerSquares.add(sq);
+        }
       }
     }
   }
   
-  return { params: { kingSquare, threats } };
+  return { params: { kingSquare, threats: [...attackerSquares] } };
 }
 
 function applyMapFragments({ chess, moverColor }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
-  const opponentMoves = chess.moves({ verbose: true }).filter(m => {
-    const piece = chess.get(m.from);
-    return piece && piece.color === opponentColor;
-  });
+  const opponentMoves = getMovesForColor(chess, opponentColor);
   
-  // Highlight 3 likely target squares based on captures or center control
-  const likelySquares = opponentMoves
-    .filter(m => m.captured || ['e4', 'e5', 'd4', 'd5'].includes(m.to))
-    .map(m => m.to)
-    .slice(0, 3);
+  // Highlight likely target squares based on captures or center control
+  // Prioritize captures, then center squares
+  const captureTargets = opponentMoves.filter(m => m.captured).map(m => m.to);
+  const centerTargets = opponentMoves.filter(m => ['e4', 'e5', 'd4', 'd5'].includes(m.to)).map(m => m.to);
+  const allTargets = [...new Set([...captureTargets, ...centerTargets])];
+  
+  // If not enough priority targets, add all possible destinations
+  let likelySquares = allTargets.slice(0, 3);
+  if (likelySquares.length < 3) {
+    const otherTargets = opponentMoves.map(m => m.to).filter(sq => !likelySquares.includes(sq));
+    likelySquares = [...likelySquares, ...otherTargets].slice(0, 3);
+  }
   
   return { params: { predictedSquares: likelySquares } };
 }
@@ -755,6 +962,33 @@ function findKing(chess, color) {
     }
   }
   return null;
+}
+
+function canPieceTypeAttack(pieceType, fromSquare, toSquare) {
+  const fromFile = fromSquare.charCodeAt(0) - 97;
+  const fromRank = parseInt(fromSquare[1]);
+  const toFile = toSquare.charCodeAt(0) - 97;
+  const toRank = parseInt(toSquare[1]);
+  
+  const fileDiff = Math.abs(toFile - fromFile);
+  const rankDiff = Math.abs(toRank - fromRank);
+  
+  switch (pieceType) {
+    case 'r': // Rook: same file or rank
+      return fileDiff === 0 || rankDiff === 0;
+    case 'b': // Bishop: diagonal
+      return fileDiff === rankDiff && fileDiff > 0;
+    case 'q': // Queen: rook or bishop pattern
+      return fileDiff === 0 || rankDiff === 0 || fileDiff === rankDiff;
+    case 'n': // Knight: L-shape
+      return (fileDiff === 2 && rankDiff === 1) || (fileDiff === 1 && rankDiff === 2);
+    case 'p': // Pawn: diagonal capture only
+      return fileDiff === 1 && rankDiff === 1;
+    case 'k': // King: one square any direction
+      return fileDiff <= 1 && rankDiff <= 1 && (fileDiff > 0 || rankDiff > 0);
+    default:
+      return false;
+  }
 }
 
 function applyBerserkerPath(chess, from, to, color) {

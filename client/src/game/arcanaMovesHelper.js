@@ -41,6 +41,12 @@ export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
     customMoves.push(...sharpshooterMoves);
   }
 
+  // KNIGHT OF STORMS: Knight can move to any square within 2-square radius
+  if (effects.knightOfStorms?.[myColorCode] === square && piece.type === 'n') {
+    const stormMoves = generateKnightOfStormsMoves(chess, square, myColorCode);
+    customMoves.push(...stormMoves);
+  }
+
   // QUEEN'S GAMBIT: Handled differently (allows second move after first)
   // No custom moves here, just tracked in state
 
@@ -230,6 +236,50 @@ function generateSharpshooterMoves(chess, square, color) {
       } else {
         // Friendly piece blocks
         break;
+      }
+    }
+  }
+
+  return moves;
+}
+
+function generateKnightOfStormsMoves(chess, square, color) {
+  const moves = [];
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1]);
+
+  // Knight of Storms: can move to any square within 2-square radius
+  for (let df = -2; df <= 2; df++) {
+    for (let dr = -2; dr <= 2; dr++) {
+      if (df === 0 && dr === 0) continue; // Can't stay in place
+      
+      const newFile = file + df;
+      const newRank = rank + dr;
+      
+      if (newFile < 0 || newFile > 7 || newRank < 1 || newRank > 8) continue;
+      
+      const targetSquare = String.fromCharCode(97 + newFile) + newRank;
+      const targetPiece = chess.get(targetSquare);
+      
+      if (!targetPiece) {
+        moves.push({
+          from: square,
+          to: targetSquare,
+          piece: 'n',
+          color,
+          flags: 'n',
+          san: `N${targetSquare}`,
+        });
+      } else if (targetPiece.color !== color) {
+        moves.push({
+          from: square,
+          to: targetSquare,
+          piece: 'n',
+          color,
+          captured: targetPiece.type,
+          flags: 'c',
+          san: `Nx${targetSquare}`,
+        });
       }
     }
   }

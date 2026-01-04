@@ -46,6 +46,12 @@ export function validateArcanaMove(chess, move, activeEffects, moverColor) {
     if (validMove) return validMove;
   }
 
+  // Knight of Storms: Knight can move to any square within 2-square radius
+  if (activeEffects.knightOfStorms && activeEffects.knightOfStorms[moverColor] === fromSquare && piece.type === 'n') {
+    const validMove = validateKnightOfStorms(chess, fromSquare, toSquare, moverColor);
+    if (validMove) return validMove;
+  }
+
   // Temporal Echo: Repeat last move pattern
   if (activeEffects.temporalEcho && activeEffects.temporalEcho.color === moverColor) {
     const validMove = validateTemporalEcho(chess, fromSquare, toSquare, piece, activeEffects.temporalEcho.pattern);
@@ -154,6 +160,26 @@ function validateSharpshooter(chess, from, to, color) {
   if (!destPiece || destPiece.color === color) return null;
 
   return { from, to, piece: 'b', captured: destPiece.type, color };
+}
+
+function validateKnightOfStorms(chess, from, to, color) {
+  const fromFile = from.charCodeAt(0);
+  const fromRank = parseInt(from[1]);
+  const toFile = to.charCodeAt(0);
+  const toRank = parseInt(to[1]);
+
+  const fileDiff = Math.abs(toFile - fromFile);
+  const rankDiff = Math.abs(toRank - fromRank);
+
+  // Knight of Storms: can move to any square within 2-square radius (Manhattan distance <= 2)
+  // This includes normal knight moves plus adjacent squares and 2 squares in any direction
+  if (fileDiff > 2 || rankDiff > 2) return null;
+  if (fileDiff === 0 && rankDiff === 0) return null; // Can't stay in place
+
+  const destPiece = chess.get(to);
+  if (destPiece && destPiece.color === color) return null; // Can't capture own pieces
+
+  return { from, to, piece: 'n', captured: destPiece?.type, color };
 }
 
 function validateTemporalEcho(chess, from, to, piece, pattern) {
