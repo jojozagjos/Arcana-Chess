@@ -198,13 +198,16 @@ function validateTemporalEcho(chess, from, to, piece, pattern) {
   const destPiece = chess.get(to);
   if (destPiece && destPiece.color === piece.color) return null;
 
-  if (Math.abs(fileDelta) > 1 || Math.abs(rankDelta) > 1) {
+  // Only check intervening squares for sliding moves (rook/bishop/queen patterns).
+  // Knight-like or other non-linear deltas should NOT be blocked by intervening pieces.
+  const isSlidingMove = (fileDelta === 0 || rankDelta === 0 || Math.abs(fileDelta) === Math.abs(rankDelta));
+  if (isSlidingMove && (Math.abs(fileDelta) > 1 || Math.abs(rankDelta) > 1)) {
     const fileStep = fileDelta === 0 ? 0 : fileDelta / Math.abs(fileDelta);
     const rankStep = rankDelta === 0 ? 0 : rankDelta / Math.abs(rankDelta);
-    
+
     let currentFile = fromFile + fileStep;
     let currentRank = fromRank + rankStep;
-    
+
     while (currentFile !== toFile || currentRank !== toRank) {
       const square = String.fromCharCode(currentFile) + currentRank;
       if (chess.get(square)) return null;

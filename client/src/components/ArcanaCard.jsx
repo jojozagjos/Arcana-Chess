@@ -32,7 +32,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
           border: 'none',
           opacity: isUsed ? 0.55 : 1,
           transition: 'transform 0.18s ease, box-shadow 0.18s ease',
-          boxShadow: isSelected ? '0 0 18px rgba(47,111,237,0.65)' : '0 4px 12px rgba(0,0,0,0.4)',
+          // boxShadow: isSelected ? '0 0 18px rgba(47,111,237,0.65)' : '0 4px 12px rgba(0,0,0,0.4)',
           transformOrigin: 'center center',
       }}
       onClick={onClick}

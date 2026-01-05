@@ -4,6 +4,27 @@ import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, checkForKingRemoval } from './arcana/arcanaUtils.js';
 
+/**
+ * Get adjacent squares for a given square (for berserker rage check)
+ */
+function getAdjacentSquares(square) {
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1]);
+  const adjacent = [];
+  
+  for (let df = -1; df <= 1; df++) {
+    for (let dr = -1; dr <= 1; dr++) {
+      if (df === 0 && dr === 0) continue;
+      const newFile = file + df;
+      const newRank = rank + dr;
+      if (newFile >= 0 && newFile < 8 && newRank >= 1 && newRank <= 8) {
+        adjacent.push(`${String.fromCharCode(97 + newFile)}${newRank}`);
+      }
+    }
+  }
+  return adjacent;
+}
+
 function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor }) {
   const chess = new Chess();
   // No arcana at start - awarded on ascension
@@ -27,14 +48,14 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     playerColors,
     currentTurnSocket: playerIds[0],
     status: 'ongoing',
-    ascended: false,
-    ascensionTrigger: 'firstCapture',
+    ascended: mode === 'Classic' ? false : false,
+    ascensionTrigger: mode === 'Classic' ? 'never' : 'firstCapture',
     arcanaByPlayer,
     usedArcanaIdsByPlayer: {},
     lastMove: null,
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
-    lastDrawnBy: null,  // Track last player who drew a card
+    lastDrawTurn: { w: -99, b: -99 },  // Track turn number when each player last drew
     // Extended state for Arcana effects
     activeEffects: {
       ironFortress: { w: false, b: false },
@@ -59,9 +80,12 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       pawnRush: { w: false, b: false },       // all pawns can move 2
       sharpshooter: { w: false, b: false },   // bishop ignores blockers
       knightOfStorms: { w: null, b: null },    // knight can move within 2-square radius
+      berserkerRage: { w: null, b: null },    // { active, firstKillSquare, usedSecondKill }
       mindControlled: [],  // [{ square, originalColor, controlledBy }]
       enPassantMaster: { w: false, b: false }, // enhanced en passant
       temporalEcho: null,  // { pattern, color } for repeating last move
+      chainLightning: { w: false, b: false }, // next capture destroys adjacent enemies
+      castleBroken: { w: 0, b: 0 },           // prevents castling (turn counter, 0 = inactive)
     },
     moveHistory: [],  // for time_travel
   };
@@ -182,17 +206,28 @@ export class GameManager {
         throw new Error('You can only draw a card on your turn');
       }
       
-      if (gameState.lastDrawnBy === socket.id) throw new Error('Cannot draw on consecutive turns');
-      
+      // Check draw cooldown: draw → opp turn → your turn (blocked) → opp turn → your turn (can draw)
+      // This means 4 plies must pass: opp move + your move + opp move + your move
+      const turnColor = playerColor === 'white' ? 'w' : 'b';
+      const currentPly = gameState.chess.history().length; // number of half-moves played so far
+      const lastDrawPly = gameState.lastDrawTurn[turnColor];
+      console.log('[drawArcana] player', socket.id, 'color', turnColor, 'currentPly', currentPly, 'lastDrawPly', lastDrawPly, 'diff', currentPly - lastDrawPly);
+      // Require at least 4 plies between draws (2 full turn cycles)
+      if (currentPly - lastDrawPly < 4) {
+        throw new Error('Must wait 2 turns between draws');
+      }
+
       const newCard = pickWeightedArcana();
       gameState.arcanaByPlayer[socket.id].push(newCard);
-      gameState.lastDrawnBy = socket.id;
+      gameState.lastDrawTurn[turnColor] = currentPly;
       
       // Pass turn by manipulating FEN (swap active color)
       const chess = gameState.chess;
       const fen = chess.fen();
       const fenParts = fen.split(' ');
-      fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w'; // Swap turn
+      fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w'; // Swap active color
+      // Clear en-passant square when swapping without a real move to avoid invalid FEN
+      if (fenParts.length > 3) fenParts[3] = '-';
       chess.load(fenParts.join(' '));
       
       // Emit to both players
@@ -236,6 +271,16 @@ export class GameManager {
         throw new Error('You can only use arcana on your turn');
       }
 
+      // Limit to 1 arcana card per turn
+      if (gameState.arcanaUsedThisTurn && gameState.arcanaUsedThisTurn[socket.id]) {
+        throw new Error('You can only use one arcana card per turn');
+      }
+      
+      // Only allow using 1 card at a time
+      if (arcanaUsed.length > 1) {
+        throw new Error('You can only use one arcana card at a time');
+      }
+
       const chess = gameState.chess;
 
       // Apply arcana effects (no move result since arcana is used before a move)
@@ -255,6 +300,10 @@ export class GameManager {
         }
         return { gameState: serialised, appliedArcana };
       }
+
+      // Track that this player used an arcana this turn
+      if (!gameState.arcanaUsedThisTurn) gameState.arcanaUsedThisTurn = {};
+      gameState.arcanaUsedThisTurn[socket.id] = true;
 
       // Emit game update to both players
       const serialised = this.serialiseGameState(gameState);
@@ -303,6 +352,24 @@ export class GameManager {
       return { ok: true, appliedArcana };
     }
 
+    // Handle peek card selection from client when a peek is pending
+    if (actionType === 'peekCardSelect') {
+      const cardIndex = payload?.cardIndex;
+      if (cardIndex === undefined || cardIndex === null) throw new Error('No card selected');
+      const pending = gameState.pendingPeek && gameState.pendingPeek[socket.id];
+      if (!pending) throw new Error('No peek pending');
+      const opponentId = pending.opponentId;
+      const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
+      const idx = parseInt(cardIndex);
+      if (isNaN(idx) || idx < 0 || idx >= opponentCards.length) throw new Error('Invalid card index');
+      const revealedCard = opponentCards[idx];
+      // Reveal only to requesting player
+      this.io.to(socket.id).emit('peekCardRevealed', { card: revealedCard, cardIndex: idx });
+      // Clear pending peek
+      delete gameState.pendingPeek[socket.id];
+      return { ok: true };
+    }
+
     // Regular move handling
     const chess = gameState.chess;
     const moverColor = chess.turn();
@@ -335,18 +402,57 @@ export class GameManager {
       throw new Error('Illegal move');
     }
 
-    // Shielded pawn protection: prevent captures on shielded pawn for one enemy turn
+    // Castle Breaker: prevent castling if opponent used this card (turns > 0 means active)
+    const castleBroken = gameState.activeEffects.castleBroken?.[moverColor] > 0;
+    if (castleBroken && candidate.flags && (candidate.flags.includes('k') || candidate.flags.includes('q'))) {
+      // 'k' is kingside castle, 'q' is queenside castle in chess.js
+      if (candidate.piece === 'k' && Math.abs(candidate.from.charCodeAt(0) - candidate.to.charCodeAt(0)) > 1) {
+        throw new Error('Castle Breaker has disabled your castling!');
+      }
+    }
+
+    // Shield protection: prevent captures on shielded pieces
     const opponentColor = moverColor === 'w' ? 'b' : 'w';
     const shield = gameState.pawnShields[opponentColor];
-    if (shield && candidate.captured && candidate.to === shield.square) {
-      throw new Error('That pawn is shielded for this turn.');
+    if (shield && candidate.captured) {
+      // For en passant, the captured pawn is not at candidate.to but at adjacent square
+      let capturedSquare = candidate.to;
+      if (candidate.flags && candidate.flags.includes('e')) {
+        // En passant: captured pawn is on same file as destination but same rank as source
+        capturedSquare = candidate.to[0] + candidate.from[1];
+      }
+      
+      if (capturedSquare === shield.square) {
+        if (shield.shieldType === 'pawn') {
+          throw new Error('That pawn is shielded for this turn.');
+        } else {
+          throw new Error('That piece is protected by Pawn Guard!');
+        }
+      }
     }
 
     // Iron Fortress: prevent ALL pawn captures
     if (gameState.activeEffects.ironFortress[opponentColor] && candidate.captured) {
-      const targetPiece = chess.get(candidate.to);
+      // For en passant, the captured pawn is not at candidate.to
+      let capturedSquare = candidate.to;
+      if (candidate.flags && candidate.flags.includes('e')) {
+        capturedSquare = candidate.to[0] + candidate.from[1];
+      }
+      const targetPiece = chess.get(capturedSquare);
       if (targetPiece && targetPiece.type === 'p') {
         throw new Error('Iron Fortress protects all pawns from capture!');
+      }
+    }
+
+    // Sanctuary: prevent captures on sanctuary squares
+    if (gameState.activeEffects.sanctuaries && gameState.activeEffects.sanctuaries.length > 0 && candidate.captured) {
+      let capturedSquare = candidate.to;
+      if (candidate.flags && candidate.flags.includes('e')) {
+        capturedSquare = candidate.to[0] + candidate.from[1];
+      }
+      const isSanctuary = gameState.activeEffects.sanctuaries.some(s => s.square === capturedSquare);
+      if (isSanctuary) {
+        throw new Error('Sanctuary protects that square from captures!');
       }
     }
 
@@ -402,9 +508,19 @@ export class GameManager {
 
     // Update shield position if the shielded piece moved
     const myShield = gameState.pawnShields[moverColor];
-    if (myShield && result.from === myShield.square && result.piece === 'p') {
-      // Shield follows the pawn to its new square
+    if (myShield && result.from === myShield.square) {
+      // For shield_pawn: pawn is protected and moves
+      // For pawn_guard: the protected piece (behind pawn) moves
+      // In both cases, protection follows the piece to its new square
       myShield.square = result.to;
+    }
+    // For pawn_guard: if the guarding pawn itself is captured, the shield is broken
+    if (myShield && myShield.shieldType === 'behind' && myShield.pawnSquare) {
+      const guardPawn = chess.get(myShield.pawnSquare);
+      // If pawn no longer exists at its square (captured or moved away), clear shield
+      if (!guardPawn || guardPawn.type !== 'p' || guardPawn.color !== moverColor) {
+        gameState.pawnShields[moverColor] = null;
+      }
     }
 
     // Update Bishop's Blessing position if the blessed bishop moved
@@ -432,6 +548,15 @@ export class GameManager {
       }
     }
 
+    // Update mind-controlled piece position if it moved
+    if (gameState.activeEffects.mindControlled && gameState.activeEffects.mindControlled.length > 0) {
+      const controlledEntry = gameState.activeEffects.mindControlled.find(c => c.square === result.from);
+      if (controlledEntry) {
+        // Track the new position so it reverts at the correct square
+        controlledEntry.square = result.to;
+      }
+    }
+
     // Mirror Image: If a mirror image was captured, just remove it from tracking (no penalty)
     if (result.captured && gameState.activeEffects.mirrorImages && gameState.activeEffects.mirrorImages.length > 0) {
       const mirrorIndex = gameState.activeEffects.mirrorImages.findIndex(m => m.square === result.to);
@@ -446,6 +571,10 @@ export class GameManager {
       const mirrorEntry = gameState.activeEffects.mirrorImages.find(m => m.square === result.from);
       if (mirrorEntry) {
         mirrorEntry.square = result.to;
+        // If the mirror image pawn promoted, update the tracked piece type
+        if (result.promotion) {
+          mirrorEntry.type = result.promotion;
+        }
       }
     }
 
@@ -516,13 +645,33 @@ export class GameManager {
         }
       }
 
-      // Double Strike: allow immediate second attack
-      if (gameState.activeEffects.doubleStrike[moverColor]) {
-        // Mark that this player can make another capturing move
-        gameState.activeEffects.doubleStrikeActive = {
-          color: moverColor,
-          from: result.to, // Must attack from the piece that just captured
-        };
+      // Double Strike: After capturing with the same piece, allow a second capture if target is NOT adjacent
+      const doubleStrike = gameState.activeEffects.doubleStrike?.[moverColor];
+      if (doubleStrike && doubleStrike.active && doubleStrike.firstKillSquare && !doubleStrike.usedSecondKill) {
+        // Check if this capture is with the same piece and target is NOT adjacent to the first kill
+        const firstKill = doubleStrike.firstKillSquare;
+        const isAdjacent = getAdjacentSquares(firstKill).includes(result.to);
+        
+        if (!isAdjacent) {
+          // Valid second kill - mark as used
+          doubleStrike.usedSecondKill = true;
+          result.doubleStrikeSecondKill = true;
+        }
+      }
+
+      // Berserker Rage: Check if this was the second capture (must not be adjacent to first)
+      const berserker = gameState.activeEffects.berserkerRage?.[moverColor];
+      if (berserker && berserker.active && berserker.firstKillSquare && !berserker.usedSecondKill) {
+        // Check if this capture is adjacent to the first kill
+        const firstKill = berserker.firstKillSquare;
+        const isAdjacent = getAdjacentSquares(firstKill).includes(result.to);
+        
+        if (!isAdjacent) {
+          // Valid second kill - mark as used
+          berserker.usedSecondKill = true;
+          result.berserkerSecondKill = true;
+        }
+        // If adjacent, the capture still happens normally, but berserker rage doesn't trigger bonus
       }
 
       // Focus Fire: draw an extra card on capture
@@ -536,6 +685,38 @@ export class GameManager {
         if (!socket.id.startsWith('AI-')) {
           this.io.to(socket.id).emit('arcanaDrawn', { card: bonusCard, reason: 'Focus Fire bonus' });
         }
+      }
+
+      // Chain Lightning: on capture, destroy 1 adjacent enemy piece (not kings/queens)
+      if (gameState.activeEffects.chainLightning?.[moverColor]) {
+        const adjacentSquares = getAdjacentSquares(result.to);
+        const chainedPieces = [];
+        
+        for (const sq of adjacentSquares) {
+          const piece = chess.get(sq);
+          // Only destroy 1 piece, and not kings or queens per card description
+          if (piece && piece.color !== moverColor && piece.type !== 'k' && piece.type !== 'q') {
+            chess.remove(sq);
+            chainedPieces.push({ square: sq, type: piece.type });
+            break; // Only chain to 1 piece
+          }
+        }
+        
+        if (chainedPieces.length > 0) {
+          result.chainLightning = chainedPieces;
+          // Notify clients about chain lightning effect
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('chainLightningTriggered', {
+                captureSquare: result.to,
+                destroyedPieces: chainedPieces
+              });
+            }
+          }
+        }
+        
+        // Clear chain lightning after use
+        gameState.activeEffects.chainLightning[moverColor] = false;
       }
     }
 
@@ -560,6 +741,9 @@ export class GameManager {
     // Decrement turn-based effects
     this.decrementEffects(gameState);
 
+    // Reset arcana used this turn tracking when a move is made
+    gameState.arcanaUsedThisTurn = {};
+
     let outcome = null;
     if (chess.isCheckmate()) {
       gameState.status = 'finished';
@@ -569,15 +753,21 @@ export class GameManager {
       outcome = { type: 'draw' };
     }
 
-    // Check if Queen's Gambit allows an extra move
+    // Check if Queen's Gambit allows an extra move (must have moved the queen)
     const hasQueensGambit = gameState.activeEffects.queensGambit[moverColor] > 0 && 
-                           !gameState.activeEffects.queensGambitUsed[moverColor];
-    
+                 !gameState.activeEffects.queensGambitUsed[moverColor] &&
+                 result.piece === 'q'; // Queen must be the piece that moved
+
     // Check if Double Strike is active (second attack ready)
-    const hasDoubleStrike = gameState.activeEffects.doubleStrikeActive?.color === moverColor;
+    // Do not grant extra-move if this move performed a promotion
+    const hasDoubleStrike = gameState.activeEffects.doubleStrikeActive?.color === moverColor && !result.promotion;
+
+    // Check if Berserker Rage is active (after first capture, get another move)
+    // Also prevent berserker extra-move when the mover promoted on this move
+    const hasBerserkerRage = gameState.activeEffects.berserkerRageActive?.color === moverColor && !result.promotion;
 
     // If player has extra move available, don't switch turns yet
-    if ((hasQueensGambit || hasDoubleStrike) && !outcome) {
+    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage) && !outcome) {
       // Mark that they used their extra move opportunity
       if (hasQueensGambit) {
         gameState.activeEffects.queensGambitUsed[moverColor] = true;
@@ -585,6 +775,10 @@ export class GameManager {
       if (hasDoubleStrike) {
         // Clear double strike after second attack
         gameState.activeEffects.doubleStrikeActive = null;
+      }
+      if (hasBerserkerRage) {
+        // Clear berserker rage after second move
+        gameState.activeEffects.berserkerRageActive = null;
       }
       
       // Don't change turn - same player can move again
@@ -595,7 +789,7 @@ export class GameManager {
           // Notify about extra move
           this.io.to(pid).emit('extraMoveAvailable', { 
             color: moverColor, 
-            type: hasQueensGambit ? 'queensGambit' : 'doubleStrike'
+            type: hasQueensGambit ? 'queensGambit' : (hasDoubleStrike ? 'doubleStrike' : 'berserkerRage')
           });
         }
       }
@@ -664,9 +858,32 @@ export class GameManager {
     const chess = gameState.chess;
     if (gameState.status !== 'ongoing') return;
 
-    // Small artificial delay so AI doesn't move instantly — improves UX
-    const delayMs = 1000; // milliseconds; adjust if you want slower/faster AI
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    // AI Difficulty settings - affects move selection and arcana usage
+    const difficultySettings = {
+      'Scholar': { 
+        thinkTime: 800, 
+        randomness: 0.7,  // High randomness = easier
+        arcanaUseChance: 0.15,  // Low chance to use arcana
+        arcanaDrawChance: 0.1,  // Low chance to draw
+      },
+      'Knight': { 
+        thinkTime: 1200, 
+        randomness: 0.4,  // Medium randomness
+        arcanaUseChance: 0.35,  // Medium chance to use arcana
+        arcanaDrawChance: 0.25,  // Medium chance to draw
+      },
+      'Monarch': { 
+        thinkTime: 1500, 
+        randomness: 0.15,  // Low randomness = harder
+        arcanaUseChance: 0.6,  // High chance to use arcana
+        arcanaDrawChance: 0.4,  // High chance to draw
+      },
+    };
+
+    const settings = difficultySettings[gameState.aiDifficulty] || difficultySettings['Scholar'];
+    
+    // Artificial delay based on difficulty
+    await new Promise((resolve) => setTimeout(resolve, settings.thinkTime));
 
     const allMoves = chess.moves({ verbose: true });
     if (!allMoves.length) return;
@@ -674,30 +891,188 @@ export class GameManager {
     const moverColor = chess.turn();
     const opponentColor = moverColor === 'w' ? 'b' : 'w';
     const shield = gameState.pawnShields[opponentColor];
+    const aiSocketId = gameState.playerIds.find(id => id.startsWith('AI-'));
 
-    // Avoid capturing shielded pawn if possible
+    // === AI ARCANA LOGIC (only in Ascendant mode) ===
+    if (gameState.ascended && gameState.mode === 'Ascendant' && aiSocketId) {
+      const aiCards = gameState.arcanaByPlayer[aiSocketId] || [];
+      const usedIndices = gameState.usedArcanaIdsByPlayer[aiSocketId] || [];
+      const availableCards = aiCards.filter((card, idx) => !usedIndices.includes(idx));
+      
+      // Check if AI already used a card this turn
+      const aiUsedCardThisTurn = gameState.aiUsedCardThisTurn || false;
+
+      // AI Draw Card Logic (before using cards)
+      if (!aiUsedCardThisTurn && Math.random() < settings.arcanaDrawChance && !gameState.lastDrawnBy?.startsWith('AI-')) {
+        const newCard = pickWeightedArcana();
+        gameState.arcanaByPlayer[aiSocketId].push(newCard);
+        gameState.lastDrawnBy = aiSocketId;
+        
+        // Notify human player that AI drew a card
+        const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));
+        if (humanId) {
+          this.io.to(humanId).emit('arcanaDrawn', {
+            playerId: aiSocketId,
+            arcana: newCard,
+          });
+        }
+        
+        // After drawing, pass turn by swapping color
+        const fen = chess.fen();
+        const fenParts = fen.split(' ');
+        fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+        chess.load(fenParts.join(' '));
+        return; // AI drew a card, end turn
+      }
+
+      // AI Use Card Logic
+      if (!aiUsedCardThisTurn && availableCards.length > 0 && Math.random() < settings.arcanaUseChance) {
+        // Prioritize cards by strategic value
+        const cardPriority = {
+          'execution': 10,           // Very high priority - removes enemy piece
+          'time_freeze': 9,          // Skip opponent turn
+          'promotion_ritual': 8,     // Instant queen
+          'castle_breaker': 7,       // Disable castling
+          'poison_touch': 6,         // Good for next capture
+          'double_strike': 6,        // Double capture
+          'sharpshooter': 5,         // Bishop power
+          'shield_pawn': 4,          // Protection
+          'iron_fortress': 4,        // Pawn protection
+          'pawn_rush': 3,            // Movement enhancement
+          'focus_fire': 3,           // Extra card on capture
+          'vision': 2,               // Info gathering
+        };
+
+        // Sort available cards by priority (higher = more likely to use)
+        const sortedCards = [...availableCards].sort((a, b) => {
+          return (cardPriority[b.id] || 1) - (cardPriority[a.id] || 1);
+        });
+
+        // Pick a card to use based on difficulty (harder AI picks better cards)
+        const cardIndex = Math.random() < settings.randomness 
+          ? Math.floor(Math.random() * sortedCards.length)  // Random pick for easier AI
+          : 0;  // Best card for harder AI
+        
+        const cardToUse = sortedCards[cardIndex];
+        
+        // Try to use the card (some cards need targets)
+        const usageResult = await this.tryAIUseArcana(gameState, aiSocketId, cardToUse, moverColor);
+        
+        if (usageResult.success) {
+          gameState.aiUsedCardThisTurn = true;
+          
+          // Notify human player
+          const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));
+          if (humanId) {
+            this.io.to(humanId).emit('arcanaUsed', {
+              playerId: aiSocketId,
+              arcana: cardToUse,
+            });
+            this.io.to(humanId).emit('gameUpdated', this.serialiseGameState(gameState));
+          }
+          
+          // If card ends turn, return
+          if (usageResult.endsTurn) {
+            const fen = chess.fen();
+            const fenParts = fen.split(' ');
+            fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+            chess.load(fenParts.join(' '));
+            return;
+          }
+        }
+      }
+    }
+
+    // Reset AI card usage for next turn
+    gameState.aiUsedCardThisTurn = false;
+
+    // Avoid capturing shielded pieces if possible
     let candidateMoves = allMoves;
     if (shield) {
-      const filtered = allMoves.filter((m) => !(m.captured && m.to === shield.square));
+      const filtered = allMoves.filter((m) => {
+        if (!m.captured) return true;
+        // For en passant, the captured pawn is on a different square
+        let capturedSquare = m.to;
+        if (m.flags && m.flags.includes('e')) {
+          capturedSquare = m.to[0] + m.from[1];
+        }
+        return capturedSquare !== shield.square;
+      });
       if (filtered.length > 0) {
         candidateMoves = filtered;
       }
     }
 
-    const move = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
+    // Prefer to avoid sending pieces into sanctuaries or cursed squares when possible
+    const sanctuarySquares = (gameState.activeEffects?.sanctuaries || []).map(s => s.square);
+    const cursedSquares = (gameState.activeEffects?.cursedSquares || []).map(c => c.square);
+
+    const avoidFiltered = candidateMoves.filter((m) => {
+      // Determine destination square for this move
+      const dest = m.to;
+
+      // If this move is an en-passant capture, the captured pawn sits on a different square
+      // but the destination still matters for cursed/sanctuary checks
+      // Avoid moves that land on a cursed square or capture into a sanctuary
+      if (sanctuarySquares.length > 0 && m.captured) {
+        // capturedSquare used for checking against shields was computed earlier; here use m.to for sanctuary captures
+        if (sanctuarySquares.includes(m.to)) return false;
+      }
+
+      if (cursedSquares.length > 0) {
+        // Avoid moving into cursed squares
+        if (cursedSquares.includes(dest)) return false;
+      }
+
+      return true;
+    });
+
+    if (avoidFiltered.length > 0) {
+      candidateMoves = avoidFiltered;
+    }
+
+    // Better move selection based on difficulty
+    let selectedMove;
+    if (Math.random() < settings.randomness) {
+      // Random move (easier AI)
+      selectedMove = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
+    } else {
+      // Prioritize moves (harder AI)
+      // Sort by: captures > checks > center control > random
+      const scoredMoves = candidateMoves.map(m => {
+        let score = 0;
+        if (m.captured) {
+          const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+          score += (pieceValues[m.captured] || 1) * 10;
+        }
+        if (m.san.includes('+')) score += 5; // Check
+        if (m.san.includes('#')) score += 1000; // Checkmate
+        if (['d4', 'd5', 'e4', 'e5'].includes(m.to)) score += 2; // Center control
+        return { move: m, score };
+      }).sort((a, b) => b.score - a.score);
+      
+      selectedMove = scoredMoves[0].move;
+    }
     
     // Save FEN to history before AI move
     if (!gameState.moveHistory) gameState.moveHistory = [];
     gameState.moveHistory.push(chess.fen());
     if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
     
-    const result = chess.move(move);
+    const result = chess.move(selectedMove);
 
     // Update shield position if the AI's shielded piece moved
     const aiShield = gameState.pawnShields[moverColor];
-    if (aiShield && result.from === aiShield.square && result.piece === 'p') {
-      // Shield follows the pawn to its new square
+    if (aiShield && result.from === aiShield.square) {
+      // Shield follows the piece (for both shield_pawn and pawn_guard)
       aiShield.square = result.to;
+    }
+    // For pawn_guard: if the guarding pawn is captured, shield is broken
+    if (aiShield && aiShield.shieldType === 'behind' && aiShield.pawnSquare) {
+      const guardPawn = chess.get(aiShield.pawnSquare);
+      if (!guardPawn || guardPawn.type !== 'p' || guardPawn.color !== moverColor) {
+        gameState.pawnShields[moverColor] = null;
+      }
     }
 
     // Check cursed squares (don't destroy kings)
@@ -752,6 +1127,133 @@ export class GameManager {
     } else if (chess.isStalemate() || chess.isDraw()) {
       gameState.status = 'finished';
     }
+  }
+
+  // Helper: AI attempts to use an arcana card
+  async tryAIUseArcana(gameState, aiSocketId, card, moverColor) {
+    const chess = gameState.chess;
+    const board = chess.board();
+    
+    // Cards that need no targeting - just activate
+    const noTargetCards = [
+      'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
+      'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
+      'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning', 'necromancy',
+      'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
+      'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress'
+    ];
+    
+    const turnEndingCards = [
+      'execution', 'castle_breaker', 'astral_rebirth', 'necromancy',
+      'time_travel', 'chaos_theory', 'sacrifice', 'mind_control',
+      'royal_swap', 'promotion_ritual', 'metamorphosis'
+    ];
+    
+    let params = {};
+    
+    // Cards that need targeting
+    if (!noTargetCards.includes(card.id)) {
+      // Find valid target for this card
+      const opponentColor = moverColor === 'w' ? 'b' : 'w';
+      
+      switch (card.id) {
+        case 'shield_pawn':
+        case 'pawn_guard':
+          // Find an AI pawn to protect
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.type === 'p' && piece.color === moverColor) {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+          break;
+          
+        case 'execution':
+          // Find most valuable enemy piece (not king)
+          let bestTarget = null;
+          let bestValue = 0;
+          const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.color === opponentColor && piece.type !== 'k') {
+                if ((pieceValues[piece.type] || 0) > bestValue) {
+                  bestValue = pieceValues[piece.type];
+                  bestTarget = 'abcdefgh'[f] + (8 - r);
+                }
+              }
+            }
+          }
+          if (bestTarget) params.targetSquare = bestTarget;
+          break;
+          
+        case 'mind_control':
+          // Find enemy piece to control (not king)
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.color === opponentColor && piece.type !== 'k') {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+          break;
+          
+        case 'promotion_ritual':
+          // Find a pawn to promote
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.type === 'p' && piece.color === moverColor) {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+          break;
+          
+        case 'sanctuary':
+        case 'cursed_square':
+          // Pick a central square
+          params.targetSquare = ['d4', 'd5', 'e4', 'e5'][Math.floor(Math.random() * 4)];
+          break;
+          
+        default:
+          // For other targeting cards, find any valid own piece
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.color === moverColor && piece.type !== 'k') {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+      }
+      
+      // If no valid target found, don't use the card
+      if (!params.targetSquare && !noTargetCards.includes(card.id)) {
+        return { success: false };
+      }
+    }
+    
+    // Apply the arcana
+    const arcanaUsed = [{ arcanaId: card.id, params }];
+    const appliedArcana = applyArcana(aiSocketId, gameState, arcanaUsed, null, this.io);
+    
+    if (appliedArcana.length > 0) {
+      return { success: true, endsTurn: turnEndingCards.includes(card.id) };
+    }
+    
+    return { success: false };
   }
 
   decrementEffects(gameState) {
@@ -829,7 +1331,8 @@ export class GameManager {
     effects.fogOfWar = { w: false, b: false };
     effects.vision = { w: false, b: false };
     effects.focusFire = effects.focusFire || { w: false, b: false };
-    effects.doubleStrike = { w: false, b: false };
+    // Keep structure consistent: doubleStrike stores objects or nulls per color
+    effects.doubleStrike = { w: null, b: null };
     effects.poisonTouch = { w: false, b: false };
     effects.spectralMarch = { w: false, b: false };
     effects.phantomStep = { w: false, b: false };
@@ -838,6 +1341,17 @@ export class GameManager {
     effects.enPassantMaster = { w: false, b: false };
     effects.temporalEcho = null;
     effects.knightOfStorms = { w: null, b: null };
+    effects.berserkerRage = { w: null, b: null };
+    effects.chainLightning = { w: false, b: false };
+    
+    // Decrement castle breaker turns (lasts 3 turns)
+    if (effects.castleBroken) {
+      for (const color of ['w', 'b']) {
+        if (effects.castleBroken[color] > 0) {
+          effects.castleBroken[color]--;
+        }
+      }
+    }
     
     // Reverse mind control after 1 turn
     if (effects.mindControlled && effects.mindControlled.length > 0) {

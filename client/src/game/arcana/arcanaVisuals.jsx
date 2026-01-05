@@ -498,21 +498,21 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
 }
 
 // ============================================================================
-// FOG OF WAR EFFECT - Dark mystical clouds
+// FOG OF WAR EFFECT - Dark mystical clouds (particles only, no ground plane)
 // ============================================================================
 
 export function FogOfWarEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
   
-  // Generate cloud particles
+  // Generate cloud particles - more of them for better coverage
   const clouds = useMemo(() => {
-    return [...Array(60)].map(() => ({
-      x: (Math.random() - 0.5) * 10,
-      z: (Math.random() - 0.5) * 10,
-      y: 0.2 + Math.random() * 0.5,
-      scale: 0.3 + Math.random() * 0.5,
-      speed: 0.2 + Math.random() * 0.3,
+    return [...Array(80)].map(() => ({
+      x: (Math.random() - 0.5) * 12,
+      z: (Math.random() - 0.5) * 12,
+      y: 0.1 + Math.random() * 0.8,
+      scale: 0.4 + Math.random() * 0.6,
+      speed: 0.15 + Math.random() * 0.25,
       phase: Math.random() * Math.PI * 2,
     }));
   }, []);
@@ -525,10 +525,7 @@ export function FogOfWarEffect({ onComplete }) {
         return Math.min(next, 1);
       });
     }
-    
-    if (groupRef.current) {
-      groupRef.current.rotation.y += delta * 0.02;
-    }
+    // No rotation - removed the rotating group
   });
   
   return (
@@ -536,18 +533,7 @@ export function FogOfWarEffect({ onComplete }) {
       {clouds.map((cloud, i) => (
         <FogCloud key={i} {...cloud} progress={progress} hasComplete={!!onComplete} />
       ))}
-      
-      {/* Ground fog layer */}
-      <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[12, 12]} />
-        <meshStandardMaterial
-          emissive="#1a237e"
-          emissiveIntensity={0.3}
-          color="#0d1421"
-          transparent
-          opacity={onComplete ? 0.3 * (1 - progress) : 0.3}
-        />
-      </mesh>
+      {/* Ground fog plane removed - just particles now */}
     </group>
   );
 }
@@ -558,12 +544,13 @@ function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete }) {
   useFrame((state) => {
     if (ref.current) {
       const t = state.clock.elapsedTime;
-      ref.current.position.x = x + Math.sin(t * speed + phase) * 0.5;
-      ref.current.position.z = z + Math.cos(t * speed + phase) * 0.5;
-      ref.current.position.y = y + Math.sin(t * speed * 2 + phase) * 0.1;
+      ref.current.position.x = x + Math.sin(t * speed + phase) * 0.8;
+      ref.current.position.z = z + Math.cos(t * speed + phase) * 0.8;
+      ref.current.position.y = y + Math.sin(t * speed * 2 + phase) * 0.15;
       
-      const baseOpacity = hasComplete ? 0.35 * (1 - progress) : 0.35;
-      ref.current.material.opacity = baseOpacity + Math.sin(t + phase) * 0.1;
+      // More transparent fog - opacity 0.15-0.25 instead of 0.35
+      const baseOpacity = hasComplete ? 0.2 * (1 - progress) : 0.2;
+      ref.current.material.opacity = baseOpacity + Math.sin(t + phase) * 0.05;
     }
   });
   
@@ -572,10 +559,10 @@ function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete }) {
       <sphereGeometry args={[scale, 12, 12]} />
       <meshStandardMaterial
         emissive="#1a237e"
-        emissiveIntensity={0.5}
+        emissiveIntensity={0.3}
         color="#283593"
         transparent
-        opacity={0.35}
+        opacity={0.2}
       />
     </mesh>
   );
@@ -857,7 +844,7 @@ export function SpectralMarchEffect({ square, onComplete }) {
 }
 
 // ============================================================================
-// POISON TOUCH EFFECT - Venomous activation
+// POISON TOUCH EFFECT - Venomous activation (green poison particles only)
 // ============================================================================
 
 export function PoisonTouchEffect({ onComplete }) {
@@ -872,28 +859,28 @@ export function PoisonTouchEffect({ onComplete }) {
     });
     
     if (groupRef.current) {
-      groupRef.current.rotation.y = state.clock.elapsedTime * 3;
+      groupRef.current.rotation.y = state.clock.elapsedTime * 2;
     }
   });
   
   return (
     <group ref={groupRef}>
-      {/* Poison splash particles */}
-      {[...Array(20)].map((_, i) => {
-        const angle = (i / 20) * Math.PI * 2;
-        const dist = progress * 3;
-        const height = Math.sin(progress * Math.PI) * 2;
+      {/* Poison splash particles - green toxic effect */}
+      {[...Array(24)].map((_, i) => {
+        const angle = (i / 24) * Math.PI * 2;
+        const dist = progress * 2.5;
+        const height = Math.sin(progress * Math.PI) * 1.5;
         
         return (
           <mesh
             key={i}
             position={[
               Math.cos(angle) * dist,
-              0.3 + height * (0.5 + Math.random() * 0.5),
+              0.2 + height * (0.5 + Math.random() * 0.5),
               Math.sin(angle) * dist
             ]}
           >
-            <sphereGeometry args={[0.08 * (1 - progress * 0.5), 8, 8]} />
+            <sphereGeometry args={[0.06 * (1 - progress * 0.5), 8, 8]} />
             <meshStandardMaterial
               emissive="#76ff03"
               emissiveIntensity={3 * (1 - progress)}
@@ -905,16 +892,16 @@ export function PoisonTouchEffect({ onComplete }) {
         );
       })}
       
-      {/* Central toxic burst */}
-      <mesh position={[0, 0.5, 0]} scale={[progress * 2, progress * 2, progress * 2]}>
-        <icosahedronGeometry args={[0.3, 1]} />
+      {/* Toxic mist expanding outward */}
+      <mesh position={[0, 0.3, 0]} scale={[progress * 3, progress * 0.5, progress * 3]}>
+        <cylinderGeometry args={[1, 1.2, 0.3, 16, 1, true]} />
         <meshStandardMaterial
           emissive="#64dd17"
-          emissiveIntensity={4 * (1 - progress)}
+          emissiveIntensity={2 * (1 - progress)}
           color="#76ff03"
           transparent
-          opacity={(1 - progress) * 0.6}
-          wireframe
+          opacity={(1 - progress) * 0.3}
+          side={THREE.DoubleSide}
         />
       </mesh>
     </group>
@@ -1275,6 +1262,104 @@ export function ChainLightningEffect({ origin, chained, onComplete }) {
   );
 }
 
+// ============================================================================
+// CHAOS THEORY EFFECT - Swirling cosmic chaos particles
+// ============================================================================
+
+export function ChaosTheoryEffect({ shuffledSquares = [], onComplete }) {
+  const [progress, setProgress] = useState(0);
+  const groupRef = useRef();
+  const particleCount = 150;
+  
+  // Generate random particle data
+  const particles = useMemo(() => {
+    return [...Array(particleCount)].map(() => ({
+      theta: Math.random() * Math.PI * 2,
+      phi: Math.random() * Math.PI,
+      speed: 1 + Math.random() * 2,
+      radius: 3 + Math.random() * 3,
+      offset: Math.random() * Math.PI * 2,
+      size: 0.03 + Math.random() * 0.05,
+      color: Math.random() > 0.5 ? '#9b59b6' : '#8e44ad', // Purple tones
+    }));
+  }, []);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta / 3;
+      if (next >= 1) {
+        onComplete?.();
+        return 1;
+      }
+      return next;
+    });
+    
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.8;
+    }
+  });
+  
+  const opacity = progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1;
+  
+  return (
+    <group ref={groupRef} position={[0, 2, 0]}>
+      {/* Central vortex */}
+      <mesh>
+        <torusGeometry args={[2, 0.1, 16, 100]} />
+        <meshStandardMaterial
+          emissive="#9b59b6"
+          emissiveIntensity={3}
+          color="#8e44ad"
+          transparent
+          opacity={opacity * 0.6}
+        />
+      </mesh>
+      
+      {/* Chaos particles */}
+      {particles.map((p, i) => {
+        const time = progress * p.speed + p.offset;
+        const r = p.radius * (1 - Math.abs(progress - 0.5));
+        const x = Math.sin(p.phi) * Math.cos(p.theta + time * 3) * r;
+        const y = Math.cos(p.phi) * r * 0.5 + Math.sin(time * 5) * 0.3;
+        const z = Math.sin(p.phi) * Math.sin(p.theta + time * 3) * r;
+        
+        return (
+          <mesh key={i} position={[x, y, z]}>
+            <sphereGeometry args={[p.size, 8, 8]} />
+            <meshStandardMaterial
+              emissive={p.color}
+              emissiveIntensity={2}
+              color={p.color}
+              transparent
+              opacity={opacity * 0.8}
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Shuffled square indicators */}
+      {shuffledSquares.map((sq, i) => {
+        const [x, , z] = squareToPosition(sq);
+        const pulseOffset = i * 0.5;
+        const pulse = Math.sin(progress * Math.PI * 4 + pulseOffset) * 0.2 + 1;
+        
+        return (
+          <mesh key={sq} position={[x, 0.1, z]} scale={[pulse, 1, pulse]}>
+            <cylinderGeometry args={[0.4, 0.4, 0.05, 32]} />
+            <meshStandardMaterial
+              emissive="#9b59b6"
+              emissiveIntensity={3 * opacity}
+              color="#8e44ad"
+              transparent
+              opacity={opacity * 0.6}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
 // Vision Effect
 export function VisionEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
@@ -1337,6 +1422,232 @@ export function VisionEffect({ onComplete }) {
           </mesh>
         );
       })}
+    </group>
+  );
+}
+
+// ============================================================================
+// SANCTUARY EFFECT - Holy protective barrier on a square
+// ============================================================================
+
+export function SanctuaryEffect({ square, onComplete }) {
+  const [progress, setProgress] = useState(0);
+  const groupRef = useRef();
+  
+  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta / 2;
+      if (next >= 1) {
+        onComplete?.();
+        return 1;
+      }
+      return next;
+    });
+    
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.5;
+    }
+  });
+  
+  const opacity = progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1;
+  
+  return (
+    <group position={[x, 0, z]} ref={groupRef}>
+      {/* Golden sanctuary dome */}
+      <mesh position={[0, 0.4, 0]}>
+        <sphereGeometry args={[0.5, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial
+          emissive="#ffd700"
+          emissiveIntensity={2}
+          color="#ffeb3b"
+          transparent
+          opacity={opacity * 0.3}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      
+      {/* Base ring */}
+      <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.4, 0.5, 32]} />
+        <meshStandardMaterial
+          emissive="#ffd700"
+          emissiveIntensity={3}
+          color="#ffeb3b"
+          transparent
+          opacity={opacity * 0.6}
+        />
+      </mesh>
+      
+      {/* Rising particles */}
+      {[...Array(12)].map((_, i) => {
+        const angle = (i / 12) * Math.PI * 2;
+        const r = 0.35;
+        const rise = (progress + i * 0.1) % 1;
+        
+        return (
+          <mesh
+            key={i}
+            position={[Math.cos(angle) * r, rise * 0.8, Math.sin(angle) * r]}
+          >
+            <sphereGeometry args={[0.02, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#ffd700"
+              emissiveIntensity={3}
+              color="#ffeb3b"
+              transparent
+              opacity={opacity * (1 - rise)}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+// Persistent sanctuary indicator for squares
+export function SanctuaryIndicatorEffect({ square }) {
+  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  const ringRef = useRef();
+  
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    if (ringRef.current) {
+      ringRef.current.material.opacity = 0.3 + Math.sin(t * 2) * 0.15;
+    }
+  });
+  
+  return (
+    <group position={[x, 0.12, z]}>
+      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.35, 0.45, 32]} />
+        <meshStandardMaterial
+          emissive="#ffd700"
+          emissiveIntensity={2}
+          color="#ffeb3b"
+          transparent
+          opacity={0.4}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// ============================================================================
+// CURSED SQUARE EFFECT - Dark malevolent energy on a square
+// ============================================================================
+
+export function CursedSquareEffect({ square, onComplete }) {
+  const [progress, setProgress] = useState(0);
+  const groupRef = useRef();
+  
+  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta / 2;
+      if (next >= 1) {
+        onComplete?.();
+        return 1;
+      }
+      return next;
+    });
+    
+    if (groupRef.current) {
+      groupRef.current.rotation.y -= delta * 0.8;
+    }
+  });
+  
+  const opacity = progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1;
+  
+  return (
+    <group position={[x, 0, z]} ref={groupRef}>
+      {/* Dark vortex */}
+      <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.1, 0.45, 32]} />
+        <meshStandardMaterial
+          emissive="#8b0000"
+          emissiveIntensity={2}
+          color="#dc143c"
+          transparent
+          opacity={opacity * 0.5}
+        />
+      </mesh>
+      
+      {/* Cursed particles rising */}
+      {[...Array(20)].map((_, i) => {
+        const angle = (i / 20) * Math.PI * 2;
+        const r = 0.3 * Math.random() + 0.1;
+        const rise = ((progress * 2 + i * 0.05) % 1);
+        
+        return (
+          <mesh
+            key={i}
+            position={[Math.cos(angle + progress * 3) * r, rise * 0.6, Math.sin(angle + progress * 3) * r]}
+          >
+            <sphereGeometry args={[0.015, 6, 6]} />
+            <meshStandardMaterial
+              emissive="#8b0000"
+              emissiveIntensity={2}
+              color="#dc143c"
+              transparent
+              opacity={opacity * (1 - rise) * 0.8}
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Dark tendrils */}
+      {[...Array(4)].map((_, i) => {
+        const angle = (i / 4) * Math.PI * 2 + progress * 2;
+        
+        return (
+          <mesh key={i} position={[Math.cos(angle) * 0.3, 0.2, Math.sin(angle) * 0.3]}>
+            <cylinderGeometry args={[0.01, 0.02, 0.3, 8]} />
+            <meshStandardMaterial
+              emissive="#8b0000"
+              emissiveIntensity={2}
+              color="#dc143c"
+              transparent
+              opacity={opacity * 0.6}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+// Persistent cursed square indicator
+export function CursedSquareIndicatorEffect({ square, turnsLeft }) {
+  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  const ringRef = useRef();
+  
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    if (ringRef.current) {
+      ringRef.current.rotation.z = t * 0.5;
+      ringRef.current.material.opacity = 0.3 + Math.sin(t * 3) * 0.1;
+    }
+  });
+  
+  return (
+    <group position={[x, 0.12, z]}>
+      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.35, 0.42, 6]} />
+        <meshStandardMaterial
+          emissive="#8b0000"
+          emissiveIntensity={2}
+          color="#dc143c"
+          transparent
+          opacity={0.4}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
     </group>
   );
 }

@@ -7,7 +7,10 @@ export function getArcanaEffectDuration(arcanaId) {
     shield_pawn: 800,
     soft_push: 900,
     pawn_rush: 1000,
-    
+    // Quick extras
+    execution: 800,
+    peek_card: 600,
+    mirror_image: 900,
     // Medium effects (1-2s)
     phantom_step: 1200,
     spectral_march: 1500,
@@ -16,11 +19,23 @@ export function getArcanaEffectDuration(arcanaId) {
     vision: 1000,
     line_of_sight: 1000,
     map_fragments: 1200,
+    temporal_echo: 1400,
+    double_strike: 1500,
+    berserker_rage: 1500,
+    chain_lightning: 1400,
+    cursed_square: 1800,
+    mind_control: 2000,
+    time_travel: 2200,
     
     // Long effects (2s+)
     fog_of_war: 2500,
     metamorphosis: 2000,
     sacrifice: 1800,
+    necromancy: 1600,
+    promotion_ritual: 1500,
+    arcane_cycle: 800,
+    sanctuary: 1000,
+    iron_fortress: 900,
     
     // Default
     default: 1500,
@@ -33,6 +48,10 @@ export function getArcanaDelay(arcanaId) {
   // Some arcana may need a delay before showing effects
   const delays = {
     fog_of_war: 200,
+    temporal_echo: 250,
+    time_travel: 400,
+    cursed_square: 150,
+    mind_control: 200,
     default: 0,
   };
   

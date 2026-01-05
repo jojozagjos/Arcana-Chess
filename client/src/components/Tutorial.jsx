@@ -3,147 +3,216 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Chess } from 'chess.js';
 import { ChessPiece } from './ChessPiece.jsx';
+import { ArcanaCard } from './ArcanaCard.jsx';
 import { soundManager } from '../game/soundManager.js';
+import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 
-// Reworked tutorial: friendlier guidance, clearer tasks, same interactive flow
+// Sample arcana cards for demonstration
+const DEMO_CARDS = [
+  ARCANA_DEFINITIONS.find(c => c.id === 'shield_pawn'),
+  ARCANA_DEFINITIONS.find(c => c.id === 'soft_push'),
+  ARCANA_DEFINITIONS.find(c => c.id === 'execution'),
+].filter(Boolean);
+
+// Reworked tutorial: Interactive demonstrations with visual card effects
 const TUTORIAL_STEPS = [
   {
     id: 0,
-    title: 'Welcome',
+    title: 'Welcome to Arcana Chess',
     description:
-      'Welcome to Arcana Chess — a chess game with powerful Arcana cards. This short guided tour will introduce the board, how pieces move, captures, and how Ascension unlocks Arcana.',
-    instruction: 'Click Next to begin the tour.',
+      'Arcana Chess combines classic chess with powerful magical cards. This interactive tutorial will teach you the basics through hands-on practice.',
+    instruction: 'Click Next to begin your journey.',
     setupFen: null,
     highlightSquares: [],
     requireMove: null,
+    showCards: false,
   },
   {
     id: 1,
-    title: 'Board Basics',
+    title: 'The Chess Board',
     description:
-      'The board is 8x8: files a–h (left→right) and ranks 1–8 (bottom→top). White starts at the bottom. Use the 3D board to select pieces and see legal moves.',
-    instruction: 'Select the pawn on e2 to view its moves.',
+      'The board has 8×8 squares. Files are labeled a–h (columns) and ranks 1–8 (rows). White pieces start at ranks 1-2, black at ranks 7-8.',
+    instruction: 'Click on the pawn at e2 to see its possible moves.',
     setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: ['e2'],
     requireMove: { select: 'e2' },
+    showCards: false,
   },
   {
     id: 2,
     title: 'Moving Pawns',
     description:
-      'Pawns move forward one square. From their starting rank they can move two squares. They capture diagonally forward.',
-    instruction: 'Move the pawn from e2 to e4 (two-square opening).',
+      'Pawns move forward one square, but on their first move they can advance two squares. They capture diagonally. Watch the green highlights showing legal moves!',
+    instruction: 'Move the pawn from e2 to e4 (opening move).',
     setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: ['e2', 'e4'],
     requireMove: { from: 'e2', to: 'e4' },
+    showCards: false,
   },
   {
     id: 3,
-    title: 'Knights',
+    title: 'Knights Jump',
     description:
-      'Knights jump in an L-shape (2+1). They ignore blockers, making them great early mobilizers.',
+      'Knights move in an L-shape: 2 squares in one direction, then 1 square perpendicular. They can jump over other pieces!',
     instruction: 'Move the knight from g1 to f3.',
-    setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    setupFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: ['g1', 'f3'],
     requireMove: { from: 'g1', to: 'f3' },
     resetPosition: false,
+    showCards: false,
   },
   {
     id: 4,
-    title: 'Bishops',
+    title: 'Bishops Glide',
     description:
-      'Bishops travel diagonally across the board. Clear paths allow long-range pressure.',
-    instruction: 'Move the bishop from f1 to c4 along its diagonal.',
-    setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+      'Bishops move diagonally any number of squares. Each bishop stays on its starting color (light or dark) for the entire game.',
+    instruction: 'Move the bishop from f1 to c4.',
+    setupFen: 'rnbqkbnr/pppppppp/8/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1',
     highlightSquares: ['f1', 'c4'],
     requireMove: { from: 'f1', to: 'c4' },
     resetPosition: false,
+    showCards: false,
   },
   {
     id: 5,
     title: 'Rooks & Queens',
     description:
-      'Rooks move straight files/ranks; queens combine rook and bishop movement. Use them for open-file control.',
-    instruction: 'Move the rook from a1 to a3 to practice vertical movement.',
-    setupFen: 'rnbqkbnr/pppppppp/8/8/2B1P3/5N2/1PPP1PPP/RNBQK2R w KQkq - 0 1',
+      'Rooks move in straight lines (files/ranks). The queen combines rook and bishop movement - the most powerful piece!',
+    instruction: 'Move the rook from a1 to a3.',
+    setupFen: 'rnbqkbnr/pppppppp/8/8/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 1',
     highlightSquares: ['a1', 'a3'],
     requireMove: { from: 'a1', to: 'a3' },
+    showCards: false,
   },
   {
     id: 6,
-    title: 'King Safety',
+    title: 'Capturing Pieces',
     description:
-      'The king moves one square in any direction. Castling and piece coordination keep your king safe.',
-    instruction: 'Move your king from e1 to f1 to simulate a short castle move.',
-    setupFen: 'rnbqkbnr/pppppppp/8/8/2B1P3/R4N2/1PPPQPPP/1NB1K2R w Kk - 0 1',
-    highlightSquares: ['e1', 'f1'],
-    requireMove: { from: 'e1', to: 'f1' },
-  },
-  {
-    id: 7,
-    title: 'Captures',
-    description:
-      'Captures remove opponent pieces. Pawns capture diagonally; other pieces capture by moving onto an occupied square.',
-    instruction: 'Capture the pawn on d5 using your pawn from e4.',
+      'When your piece moves to a square occupied by an enemy piece, you capture it! The captured piece is removed from the board.',
+    instruction: 'Capture the black pawn on d5 with your pawn on e4.',
     setupFen: 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: ['e4', 'd5'],
     requireMove: { from: 'e4', to: 'd5', capture: true },
     resetPosition: true,
+    showCards: false,
+  },
+  {
+    id: 7,
+    title: '⚡ Ascension!',
+    description:
+      'Your first capture triggers ASCENSION! This unlocks Arcana cards - magical abilities that add a new dimension to chess.',
+    instruction: 'You have ascended! Look at the cards that appear below. Click Next to learn how they work.',
+    setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+    highlightSquares: [],
+    requireMove: null,
+    resetPosition: false,
+    showCards: true,
+    triggerAscension: true,
   },
   {
     id: 8,
-    title: 'Ascension',
+    title: 'Using Arcana Cards',
     description:
-      'Your first capture triggers Ascension: Arcana cards become available. These cards add strategic, one-off effects to your turn.',
-    instruction: 'You have ascended — click Next to learn about Arcana.',
-    setupFen: 'rnbqkbnr/ppppp1pp/4P3/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+      'Arcana cards appear at the bottom of your screen. Hover over a card to see its effect. Click a card to activate it BEFORE making your move. Some cards need a target (a piece or square to affect).',
+    instruction: 'Try clicking on the "Shield Pawn" card below to see how card activation works.',
+    setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
-    resetPosition: false,
+    showCards: true,
+    demoCard: 'shield_pawn',
   },
   {
     id: 9,
-    title: 'Arcana Cards',
+    title: 'Card Targeting',
     description:
-      'Arcana cards appear at the bottom of the screen after Ascension. Hover to preview and click to activate before you move — timing matters!',
-    instruction: 'Try activating a card in a later game. For now, click Next.',
-    setupFen: 'rnbqkbnr/ppppp1pp/4P3/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
-    highlightSquares: [],
-    requireMove: null,
-    resetPosition: false,
+      'Some cards require selecting a target. Shield Pawn protects the piece behind a pawn you select. Valid targets glow when you activate a card.',
+    instruction: 'With Shield Pawn selected, click on your pawn at d2 to protect the queen behind it.',
+    setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+    highlightSquares: ['d2'],
+    requireMove: { select: 'd2' },
+    showCards: true,
+    demoCard: 'shield_pawn',
+    cardTargeting: true,
   },
   {
     id: 10,
-    title: 'Check',
+    title: 'Card Variety',
     description:
-      'A king in check is under attack and must respond immediately: block, capture, or move the king.',
-    instruction: 'Deliver check by moving your queen from d1 to h5.',
-    setupFen: 'rnbqkbnr/pppp1ppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
-    highlightSquares: ['d1', 'h5'],
-    requireMove: { from: 'd1', to: 'h5' },
-    resetPosition: true,
+      'There are many types of cards: Defense (protect pieces), Movement (special moves), Offense (attack), and Utility (vision, card draw). Card rarity affects how often they appear.',
+    instruction: 'Each card has unique strategic value. Click Next to continue.',
+    setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+    highlightSquares: [],
+    requireMove: null,
+    showCards: true,
   },
   {
     id: 11,
-    title: 'Checkmate Example',
+    title: 'Winning the Game',
     description:
-      'Checkmate ends the game when the king cannot escape check. Study patterns to recognize mating nets.',
-    instruction: 'Click Next to proceed to practice.',
-    setupFen: 'rnb1kbnr/pppp1ppp/8/4P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
-    highlightSquares: [],
-    requireMove: null,
+      'The goal is checkmate: trap the enemy king so it cannot escape. Check means the king is under attack. Checkmate means check with no legal escape.',
+    instruction: 'Move the queen from d1 to h5 to put the black king in check!',
+    setupFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
+    highlightSquares: ['d1', 'h5'],
+    requireMove: { from: 'd1', to: 'h5' },
     resetPosition: true,
+    showCards: false,
   },
   {
     id: 12,
-    title: 'Practice Sandbox',
+    title: 'Practice Mode',
     description:
-      'This sandbox lets you try moves and Arcana freely. Use Reset to restore the example position and Skip when you are done.',
-    instruction: "Experiment with moves or click Finish when you're ready.",
+      'Try moves freely in this sandbox. Practice piece movement and imagine using cards strategically. Reset restores the position.',
+    instruction: 'Experiment! Click Finish when ready to play a real game.',
     setupFen: 'rnbqkbnr/pppppppp/8/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
     isSandbox: true,
+    showCards: true,
+  },
+  {
+    id: 13,
+    title: 'Card Draw & Cooldown',
+    description:
+      'You can draw Arcana cards on your turn. To keep gameplay balanced, draws have a cooldown: after you draw, two full turns must pass before you can draw again.',
+    instruction: 'Remember: draw strategically — you cannot draw again for two full turns.',
+    setupFen: null,
+    highlightSquares: [],
+    requireMove: null,
+    showCards: false,
+  },
+  {
+    id: 14,
+    title: 'Hidden Opponent Draws',
+    description:
+      'When your opponent draws a card, you are informed that they drew, but the actual card remains hidden. This preserves secrecy while keeping you aware of game state.',
+    instruction: 'No action required — this is informational.',
+    setupFen: null,
+    highlightSquares: [],
+    requireMove: null,
+    showCards: false,
+  },
+  {
+    id: 15,
+    title: 'Peek Card',
+    description:
+      'Some cards let you peek at an opponent card. Activating Peek opens a selection of face-down cards; choose one to reveal only to you.',
+    instruction: 'When you see a peek prompt, select a face-down card to reveal it privately.',
+    setupFen: null,
+    highlightSquares: [],
+    requireMove: null,
+    showCards: true,
+    demoCard: 'peek_card',
+  },
+  {
+    id: 16,
+    title: 'Use-card Animation & Fade',
+    description:
+      'Card activations show a cinematic animation. After the effect, the screen gently fades back to normal — background and particles disappear cleanly.',
+    instruction: 'Observe the animation when you activate a card during a game.',
+    setupFen: null,
+    highlightSquares: [],
+    requireMove: null,
+    showCards: false,
   },
 ];
 
@@ -153,6 +222,9 @@ export function Tutorial({ onBack }) {
   const [legalTargets, setLegalTargets] = useState([]);
   const [feedback, setFeedback] = useState('');
   const [hasAscended, setHasAscended] = useState(false);
+  const [selectedCard, setSelectedCard] = useState(null);
+  const [cardTargets, setCardTargets] = useState([]);
+  const [cardActivated, setCardActivated] = useState(false);
 
   const step = TUTORIAL_STEPS[currentStep];
 
@@ -228,11 +300,22 @@ export function Tutorial({ onBack }) {
     setSelectedSquare(null);
     setLegalTargets([]);
     setFeedback('');
+    setSelectedCard(null);
+    setCardTargets([]);
+    setCardActivated(false);
+
+    // Trigger ascension visual at specific step
+    if (step.triggerAscension) {
+      setHasAscended(true);
+      setTimeout(() => setHasAscended(false), 2500);
+    }
 
     // Ascension overlay: visible after ascension & Arcana explanation
     if (step.id >= 10) {
       setHasAscended(true);
-    } else if (step.id < 9) {
+      // Auto-hide after 2.5 seconds
+      setTimeout(() => setHasAscended(false), 2500);
+    } else if (step.id < 7) {
       setHasAscended(false);
     }
   }, [step.id, step.setupFen]);
@@ -254,8 +337,99 @@ export function Tutorial({ onBack }) {
     return [file - 3.5, 0.15, rank - 3.5];
   };
 
+  // Calculate valid card targets (for demo: pawns for shield_pawn)
+  const calculateCardTargets = (cardId) => {
+    if (!chess) return [];
+    const targets = [];
+    
+    if (cardId === 'shield_pawn') {
+      // Find all white pawns
+      for (let file = 0; file < 8; file++) {
+        for (let rank = 0; rank < 8; rank++) {
+          const square = `${'abcdefgh'[file]}${8 - rank}`;
+          const piece = chess.get(square);
+          if (piece && piece.type === 'p' && piece.color === 'w') {
+            targets.push(square);
+          }
+        }
+      }
+    } else if (cardId === 'soft_push') {
+      // Any enemy piece
+      for (let file = 0; file < 8; file++) {
+        for (let rank = 0; rank < 8; rank++) {
+          const square = `${'abcdefgh'[file]}${8 - rank}`;
+          const piece = chess.get(square);
+          if (piece && piece.color === 'b') {
+            targets.push(square);
+          }
+        }
+      }
+    } else if (cardId === 'execution') {
+      // Any friendly non-king piece
+      for (let file = 0; file < 8; file++) {
+        for (let rank = 0; rank < 8; rank++) {
+          const square = `${'abcdefgh'[file]}${8 - rank}`;
+          const piece = chess.get(square);
+          if (piece && piece.color === 'w' && piece.type !== 'k') {
+            targets.push(square);
+          }
+        }
+      }
+    }
+    return targets;
+  };
+
+  // Handle card click for demo
+  const handleCardClick = (card) => {
+    if (!card) return;
+    
+    if (selectedCard?.id === card.id) {
+      // Deselect
+      setSelectedCard(null);
+      setCardTargets([]);
+      setFeedback('Card deselected.');
+      return;
+    }
+    
+    setSelectedCard(card);
+    const targets = calculateCardTargets(card.id);
+    setCardTargets(targets);
+    
+    try {
+      soundManager.play('cardPlay');
+    } catch { /* ignore */ }
+    
+    if (step.demoCard === card.id && !step.cardTargeting) {
+      setFeedback(`✓ ${card.name} activated! Hover over cards to see their effects. Click Next to continue.`);
+      setCardActivated(true);
+    } else if (targets.length > 0) {
+      setFeedback(`${card.name} selected. Valid targets are highlighted in purple. Click a target to apply the effect.`);
+    } else {
+      setFeedback(`${card.name} selected. This card affects gameplay when conditions are met.`);
+    }
+  };
+
   const handleTileClick = (square) => {
     if (!chess || !step.requireMove) return;
+
+    // Handle card targeting mode
+    if (selectedCard && cardTargets.includes(square)) {
+      // Card target selected!
+      try {
+        soundManager.play('cardPlay');
+      } catch { /* ignore */ }
+      
+      if (step.cardTargeting && step.demoCard === selectedCard.id) {
+        setFeedback(`✓ ${selectedCard.name} applied to ${square}! The piece behind this pawn is now protected. Click Next to continue.`);
+        setCardActivated(true);
+      } else {
+        setFeedback(`✓ ${selectedCard.name} effect demonstrated on ${square}!`);
+      }
+      
+      setSelectedCard(null);
+      setCardTargets([]);
+      return;
+    }
 
     // If this step expects a capture but the destination is already empty,
     // treat the task as completed to avoid softlocks.
@@ -354,6 +528,8 @@ export function Tutorial({ onBack }) {
             if (step.id === 9 && move.captured) {
               // Ascension capture
               setHasAscended(true);
+              // Auto-hide after 2.5 seconds
+              setTimeout(() => setHasAscended(false), 2500);
               setFeedback(
                 '✓ ⚡ ASCENSION! Arcana powers unlocked! Click Next to continue.'
               );
@@ -413,7 +589,7 @@ export function Tutorial({ onBack }) {
     }
   };
 
-  const canProceed = !step.requireMove || feedback.includes('✓');
+  const canProceed = !step.requireMove || feedback.includes('✓') || (step.demoCard && cardActivated);
 
   return (
     <div style={styles.container}>
@@ -442,6 +618,7 @@ export function Tutorial({ onBack }) {
                 selectedSquare={selectedSquare}
                 legalTargets={legalTargets}
                 highlightSquares={step.highlightSquares}
+                cardTargets={cardTargets}
                 onTileClick={handleTileClick}
               />
               <group>
@@ -525,6 +702,8 @@ export function Tutorial({ onBack }) {
                   setSelectedSquare(null);
                   setLegalTargets([]);
                   setFeedback('Sandbox reset');
+                  setSelectedCard(null);
+                  setCardTargets([]);
 
                   const initial = parseFenPieces(fen);
                   const withUids = initial.map((p) => {
@@ -542,6 +721,39 @@ export function Tutorial({ onBack }) {
           )}
         </div>
 
+        {/* Demo Cards Display */}
+        {step.showCards && DEMO_CARDS.length > 0 && (
+          <div style={styles.cardsSection}>
+            <div style={styles.cardsSectionTitle}>
+              {step.id >= 7 ? '⚡ Your Arcana Cards' : 'Arcana Cards Preview'}
+            </div>
+            <div style={styles.cardsContainer}>
+              {DEMO_CARDS.map((card) => (
+                <div
+                  key={card.id}
+                  style={{
+                    ...styles.cardWrapper,
+                    transform: selectedCard?.id === card.id ? 'scale(1.1) translateY(-10px)' : 'scale(1)',
+                    boxShadow: selectedCard?.id === card.id 
+                      ? '0 0 20px rgba(136, 192, 208, 0.8)' 
+                      : 'none',
+                  }}
+                  onClick={() => handleCardClick(card)}
+                  title={`${card.name}: ${card.description}`}
+                >
+                  <ArcanaCard card={card} isSelected={selectedCard?.id === card.id} />
+                </div>
+              ))}
+            </div>
+            {selectedCard && (
+              <div style={styles.cardDescription}>
+                <strong style={{ color: '#88c0d0' }}>{selectedCard.name}</strong>
+                <span style={{ color: '#d8dee9', marginLeft: 8 }}>{selectedCard.description}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           style={{ ...styles.buttonSecondary, ...styles.skipButton }}
           onClick={onBack}
@@ -557,6 +769,7 @@ function TutorialBoard({
   selectedSquare,
   legalTargets,
   highlightSquares,
+  cardTargets = [],
   onTileClick,
 }) {
   const tiles = [];
@@ -572,8 +785,10 @@ function TutorialBoard({
       const isHighlighted = highlightSquares.includes(sq);
       const isSelected = selectedSquare === sq;
       const isLegal = legalTargets.includes(sq);
+      const isCardTarget = cardTargets.includes(sq);
 
       let color = baseColor;
+      if (isCardTarget) color = '#b48ead'; // Purple for card targets
       if (isHighlighted) color = '#ebcb8b';
       if (isSelected) color = '#4db8ff';
       else if (isLegal) color = '#4cd964';
@@ -754,5 +969,38 @@ const styles = {
       '0 0 20px #5e81ac, 0 0 40px #5e81ac, 0 0 60px rgba(94,129,172,0.5)',
     letterSpacing: '0.2em',
     animation: 'pulse 1.5s ease-in-out infinite',
+  },
+  cardsSection: {
+    marginTop: 20,
+    padding: 16,
+    background: 'rgba(136, 192, 208, 0.1)',
+    borderRadius: 8,
+    border: '1px solid rgba(136, 192, 208, 0.3)',
+  },
+  cardsSectionTitle: {
+    color: '#88c0d0',
+    fontSize: '0.9rem',
+    fontWeight: 600,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  cardsContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  cardWrapper: {
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    borderRadius: 8,
+  },
+  cardDescription: {
+    marginTop: 12,
+    padding: 10,
+    background: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 6,
+    fontSize: '0.85rem',
+    lineHeight: 1.5,
   },
 };

@@ -8,7 +8,7 @@ import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
-import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget } from '../game/arcana/arcanaSimulation.js';
+import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget, getValidTargetSquares, getTargetTypeForArcana } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
@@ -49,6 +49,7 @@ export function CardBalancingToolV2({ onBack }) {
   // Move history for testing
   const [moveHistory, setMoveHistory] = useState([]);
   const [legalTargets, setLegalTargets] = useState([]);
+  const [validTargetSquares, setValidTargetSquares] = useState([]); // Squares that are valid targets for the current card
   
   // Multiplayer test
   const [multiplayerMode, setMultiplayerMode] = useState(false);
@@ -129,6 +130,7 @@ export function CardBalancingToolV2({ onBack }) {
     setActiveVisualArcana(null);
     setHighlightedSquares([]);
     setHighlightColor('#88c0d0');
+    setValidTargetSquares([]);
     setValidationChecklist({ logic: false, visuals: false, sound: false, cutscene: false, server: false });
     setServerTestActive(false);
     setServerTestResult(null);
@@ -196,9 +198,41 @@ export function CardBalancingToolV2({ onBack }) {
 
     // Check if card needs a target
     if (needsTargetSquare(selectedCard.id)) {
+      const colorChar = playerColor === 'white' ? 'w' : 'b';
+      const gameStateForTargeting = { 
+        activeEffects: activeEffects || {},
+        pawnShields
+      };
+      
+      // Get valid target squares for this card
+      const validSquares = getValidTargetSquares(chess, selectedCard.id, colorChar, gameStateForTargeting);
+      setValidTargetSquares(validSquares);
+      
+      if (validSquares.length === 0) {
+        addLog(`No valid targets for ${selectedCard.name}`, 'error');
+        return;
+      }
+      
       setTargetingMode(true);
       setTargetSquare(null);
-      addLog(`Click on a piece to target for ${selectedCard.name}`, 'info');
+      
+      const targetType = getTargetTypeForArcana(selectedCard.id);
+      const targetDescription = {
+        'pawn': 'pawn',
+        'piece': 'piece',
+        'pieceNoKing': 'piece (not king)',
+        'pieceNoQueenKing': 'piece (not queen or king)',
+        'pieceWithMoves': 'piece that has legal moves',
+        'pieceWithPushTarget': 'piece that can be pushed',
+        'knight': 'knight',
+        'bishop': 'bishop',
+        'enemyPiece': 'enemy piece',
+        'enemyRook': 'enemy rook',
+        'poisoned': 'poisoned piece',
+        'square': 'square'
+      }[targetType] || 'target';
+      
+      addLog(`Select a ${targetDescription} for ${selectedCard.name} (${validSquares.length} valid targets highlighted)`, 'info');
     } else {
       // Apply immediately for cards that don't need targets
       const colorChar = playerColor === 'white' ? 'w' : 'b';
@@ -212,11 +246,16 @@ export function CardBalancingToolV2({ onBack }) {
       pawnShields, 
       shieldTurnCounter, 
       moveHistory,
-      activeEffects: activeEffects || {}
+      activeEffects: { ...activeEffects } || {}
     };
 
     // Use shared simulation logic
     const result = simulateArcanaEffect(testChess, card.id, params, colorChar, testGameState);
+
+    // Update activeEffects from the simulation result
+    if (testGameState.activeEffects) {
+      setActiveEffects(testGameState.activeEffects);
+    }
 
     // Play sound if specified
     if (result.soundEffect) {
@@ -229,10 +268,13 @@ export function CardBalancingToolV2({ onBack }) {
     }
 
     // Handle highlighted squares for Line of Sight, Vision, Map Fragments, etc
-    if (result.highlightSquares && result.highlightSquares.length > 0) {
+    // Always update highlights - clear them if empty, set them if populated
+    if (result.highlightSquares) {
       setHighlightedSquares(result.highlightSquares);
       setHighlightColor(result.highlightColor || '#88c0d0');
-      // Highlights persist until the next action or turn change
+    } else {
+      // Clear highlights if this card doesn't produce any
+      setHighlightedSquares([]);
     }
 
     // Trigger visual effect via activeVisualArcana (same as in-game)
@@ -323,10 +365,32 @@ export function CardBalancingToolV2({ onBack }) {
     const rankNum = 8 - rankIndex;
     const square = `${fileChar}${rankNum}`;
 
-    // If we're in targeting mode for a card test, set target square and apply card
+    // If we're in targeting mode for a card test, validate and set target square
     if (targetingMode && selectedCard) {
+      // Check if this is a valid target
+      if (!validTargetSquares.includes(square)) {
+        const targetType = getTargetTypeForArcana(selectedCard.id);
+        const targetDescription = {
+          'pawn': 'one of your pawns',
+          'piece': 'one of your pieces',
+          'pieceNoKing': 'one of your pieces (not king)',
+          'pieceNoQueenKing': 'one of your pieces (not queen or king)',
+          'pieceWithMoves': 'one of your pieces that has legal moves',
+          'pieceWithPushTarget': 'one of your pieces that can be pushed',
+          'knight': 'one of your knights',
+          'bishop': 'one of your bishops',
+          'enemyPiece': 'an enemy piece',
+          'enemyRook': 'an enemy rook',
+          'poisoned': 'a poisoned piece',
+          'square': 'any square'
+        }[targetType] || 'a valid target';
+        addLog(`Invalid target! Please select ${targetDescription}`, 'error');
+        return;
+      }
+      
       setTargetSquare(square);
       setTargetingMode(false);
+      setValidTargetSquares([]);
       addLog(`Targeting ${square} for ${selectedCard.name}`, 'info');
       
       const colorChar = playerColor === 'white' ? 'w' : 'b';
@@ -340,32 +404,80 @@ export function CardBalancingToolV2({ onBack }) {
       setSelectedSquare(square);
       const piece = chess.get(square);
       if (piece) {
-        const moves = chess.moves({ square, verbose: true });
-        setLegalTargets(moves.map(m => m.to));
-        addLog(`Selected square: ${square} (${moves.length} legal moves)`, 'info');
+        // Get both standard and arcana-enhanced moves
+        const colorChar = playerColor === 'white' ? 'w' : 'b';
+        const standardMoves = chess.moves({ square, verbose: true });
+        const arcanaMoves = getArcanaEnhancedMoves(chess, square, colorChar, activeEffects || {});
+        
+        // Merge moves, avoiding duplicates
+        const allMoveTargets = new Set(standardMoves.map(m => m.to));
+        arcanaMoves.forEach(m => allMoveTargets.add(m.to));
+        
+        setLegalTargets([...allMoveTargets]);
+        addLog(`Selected square: ${square} (${allMoveTargets.size} legal moves)`, 'info');
       } else {
         addLog(`Selected square: ${square} (empty)`, 'info');
       }
     } else if (legalTargets.includes(square)) {
-      // Make a move
+      // Make a move - try standard first, then arcana
+      const colorChar = playerColor === 'white' ? 'w' : 'b';
+      let move = null;
+      let capturedPiece = null;
+      
       try {
-        const move = chess.move({ from: selectedSquare, to: square });
-        const capturedPiece = move.captured;
+        move = chess.move({ from: selectedSquare, to: square });
+        capturedPiece = move?.captured;
+      } catch (standardErr) {
+        // If standard move fails, try arcana-enhanced move
+        const arcanaMoves = getArcanaEnhancedMoves(chess, selectedSquare, colorChar, activeEffects || {});
+        const arcanaMove = arcanaMoves.find(m => m.to === square);
         
+        if (arcanaMove) {
+          // Execute the arcana move manually
+          const pieceAtFrom = chess.get(selectedSquare);
+          const pieceAtTo = chess.get(square);
+          capturedPiece = pieceAtTo?.type;
+          
+          chess.remove(selectedSquare);
+          if (capturedPiece) chess.remove(square);
+          chess.put({ type: pieceAtFrom.type, color: pieceAtFrom.color }, square);
+          
+          move = {
+            from: selectedSquare,
+            to: square,
+            piece: pieceAtFrom.type,
+            color: pieceAtFrom.color,
+            captured: capturedPiece,
+            san: `${pieceAtFrom.type.toUpperCase()}${capturedPiece ? 'x' : ''}${square}`,
+            arcana: true
+          };
+          
+          // Create new chess instance with updated position
+          const newChess = new Chess(chess.fen());
+          setChess(newChess);
+        } else {
+          addLog(`Invalid move: ${standardErr.message}`, 'error');
+          setSelectedSquare(null);
+          setLegalTargets([]);
+          return;
+        }
+      }
+      
+      if (move) {
         // Check if trying to capture a shielded pawn
         const opponentColor = move.color === 'w' ? 'b' : 'w';
         const opponentShield = pawnShields[opponentColor];
         if (capturedPiece === 'p' && opponentShield?.square === square && shieldTurnCounter[opponentColor] > 0) {
           addLog(`Cannot capture shielded pawn at ${square}!`, 'error');
-          chess.undo();
+          if (!move.arcana) chess.undo();
           return;
         }
         
         soundManager.play(capturedPiece ? 'capture' : 'move');
         setMoveHistory(prev => [...prev, { ...move, fen: chess.fen() }]);
-        setChess(new Chess(chess.fen()));
+        if (!move.arcana) setChess(new Chess(chess.fen()));
         setFen(chess.fen());
-        addLog(`Move: ${move.san}`, 'success');
+        addLog(`Move: ${move.san}${move.arcana ? ' (Arcana)' : ''}`, 'success');
         
         // Check if shield should follow pawn when it moves
         const myColorChar = move.color;
@@ -387,10 +499,6 @@ export function CardBalancingToolV2({ onBack }) {
         
         setSelectedSquare(null);
         setLegalTargets([]);
-      } catch (err) {
-        addLog(`Invalid move: ${err.message}`, 'error');
-        setSelectedSquare(null);
-        setLegalTargets([]);
       }
     } else {
       // Clicking a different square - select it instead
@@ -398,9 +506,16 @@ export function CardBalancingToolV2({ onBack }) {
       setLegalTargets([]);
       const piece = chess.get(square);
       if (piece) {
-        const moves = chess.moves({ square, verbose: true });
-        setLegalTargets(moves.map(m => m.to));
-        addLog(`Selected square: ${square} (${moves.length} legal moves)`, 'info');
+        // Get both standard and arcana-enhanced moves
+        const colorChar = playerColor === 'white' ? 'w' : 'b';
+        const standardMoves = chess.moves({ square, verbose: true });
+        const arcanaMoves = getArcanaEnhancedMoves(chess, square, colorChar, activeEffects || {});
+        
+        const allMoveTargets = new Set(standardMoves.map(m => m.to));
+        arcanaMoves.forEach(m => allMoveTargets.add(m.to));
+        
+        setLegalTargets([...allMoveTargets]);
+        addLog(`Selected square: ${square} (${allMoveTargets.size} legal moves)`, 'info');
       } else {
         addLog(`Selected square: ${square} (empty)`, 'info');
       }
@@ -511,12 +626,12 @@ export function CardBalancingToolV2({ onBack }) {
               <Environment preset="night" />
               <OrbitControls enablePan={false} minDistance={8} maxDistance={20} />
 
-              {/* Board squares */}
+              {/* Board squares - matches GameScene styling */}
               <group>
                 {Array.from({ length: 64 }).map((_, i) => {
                   const file = i % 8;
                   const rank = Math.floor(i / 8);
-                  const isLight = (file + rank) % 2 === 0;
+                  const isDark = (file + rank) % 2 === 1;
                   const x = file - 3.5;
                   const z = rank - 3.5;
                   const square = String.fromCharCode(97 + file) + (8 - rank);
@@ -524,25 +639,49 @@ export function CardBalancingToolV2({ onBack }) {
                   const isTarget = targetSquare === square;
                   const isLegal = legalTargets.includes(square);
                   const isHighlighted = highlightedSquares.includes(square);
+                  const isValidTarget = validTargetSquares.includes(square);
+                  const isLastMove = moveHistory.length > 0 && 
+                    (moveHistory[moveHistory.length - 1].from === square || 
+                     moveHistory[moveHistory.length - 1].to === square);
+                  const isShielded = pawnShields.w?.square === square || pawnShields.b?.square === square;
+
+                  // Match GameScene board colors exactly: dark=#3b4252, light=#d8dee9
+                  const baseColor = isDark ? '#3b4252' : '#d8dee9';
+                  
+                  // Determine square color based on state - matches GameScene logic
+                  let squareColor = baseColor;
+                  let squareOpacity = 1;
+                  
+                  if (targetingMode) {
+                    if (isValidTarget) {
+                      // Highlight valid targets during targeting mode
+                      squareColor = '#00ff88';
+                      squareOpacity = 1;
+                    } else {
+                      // Dim non-valid squares during targeting - match GameScene dims
+                      squareColor = isDark ? '#2a2f3a' : '#9a9eab';
+                      squareOpacity = 0.7;
+                    }
+                  } else {
+                    if (isLastMove) squareColor = '#ffd27f';
+                    if (isSelected) squareColor = '#4db8ff';
+                    else if (isLegal) squareColor = '#4cd964';
+                    else if (isTarget) squareColor = '#ff8800';
+                    else if (isHighlighted) squareColor = highlightColor || '#88c0d0';
+                    if (isShielded) squareColor = '#b48ead';
+                  }
 
                   return (
                     <mesh
                       key={i}
                       position={[x, 0, z]}
-                      rotation={[-Math.PI / 2, 0, 0]}
+                      receiveShadow
                       onClick={() => handleSquareClick(file, rank)}
                     >
-                      <planeGeometry args={[1, 1]} />
+                      <boxGeometry args={[1, 0.1, 1]} />
                       <meshStandardMaterial
-                        color={
-                          targetingMode ? '#00ddff' :
-                          isSelected ? '#ffff00' :
-                          isTarget ? '#ff8800' :
-                          isLegal ? '#88ff88' :
-                          isHighlighted ? highlightColor :
-                          isLight ? '#f0d9b5' : '#b58863'
-                        }
-                        opacity={targetingMode ? 0.8 : 0.9}
+                        color={squareColor}
+                        opacity={squareOpacity}
                         transparent
                       />
                     </mesh>

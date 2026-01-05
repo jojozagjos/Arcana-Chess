@@ -43,6 +43,16 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
         Effects.SquireSupportEffect ? <Effects.SquireSupportEffect key={`squire-${i}`} square={s.square} /> : null
       ))}
 
+      {/* Sanctuary indicators */}
+      {active.sanctuaries && active.sanctuaries.map((s, i) => (
+        Effects.SanctuaryIndicatorEffect ? <Effects.SanctuaryIndicatorEffect key={`sanctuary-${i}`} square={s.square} /> : null
+      ))}
+
+      {/* Cursed square indicators */}
+      {active.cursedSquares && active.cursedSquares.map((c, i) => (
+        Effects.CursedSquareIndicatorEffect ? <Effects.CursedSquareIndicatorEffect key={`cursed-${i}`} square={c.square} turnsLeft={c.turns} /> : null
+      ))}
+
       {/* Pawn shields (display for both colors if present) */}
       {pawnShields?.w && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
       {pawnShields?.b && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}

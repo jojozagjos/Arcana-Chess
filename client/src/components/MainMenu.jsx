@@ -267,6 +267,7 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
                   onChange={(e) => handleSettingChange('gameMode', e.target.value)}
                 >
                   <option value="Ascendant">Ascendant (Arcana unlock after capture)</option>
+                  <option value="Classic">Classic Chess (no Arcana cards)</option>
                 </select>
               </label>
 
@@ -356,7 +357,8 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
           value={gameMode}
           onChange={(e) => setGameMode(e.target.value)}
         >
-          <option value="Ascendant">Ascendant (Arcana unlock after capture)</option>
+          <option value="Ascendant">Ascendant (Arcana enabled)</option>
+          <option value="Classic">Classic Chess (no Arcana)</option>
         </select>
       </label>
 
@@ -412,7 +414,8 @@ function AIGameForm() {
           value={gameMode}
           onChange={(e) => setGameMode(e.target.value)}
         >
-          <option value="Ascendant">Ascendant</option>
+          <option value="Ascendant">Ascendant (Arcana enabled)</option>
+          <option value="Classic">Classic Chess (no Arcana)</option>
         </select>
       </label>
 

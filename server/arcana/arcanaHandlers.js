@@ -295,13 +295,14 @@ function applyShieldPawn({ chess, gameState, moverColor, moveResult, params }) {
   if (targetSquare) {
     const targetPiece = chess.get(targetSquare);
     if (targetPiece && targetPiece.type === 'p' && targetPiece.color === moverColor) {
-      gameState.pawnShields[moverColor] = { square: targetSquare };
+      // shieldType 'pawn' means the pawn itself is protected
+      gameState.pawnShields[moverColor] = { square: targetSquare, shieldType: 'pawn' };
       return { params: { square: targetSquare, color: moverColor } };
     }
   } else if (moveResult && moveResult.piece === 'p') {
     const shieldColor = moveResult.color;
     const shieldSquare = moveResult.to;
-    gameState.pawnShields[shieldColor] = { square: shieldSquare };
+    gameState.pawnShields[shieldColor] = { square: shieldSquare, shieldType: 'pawn' };
     return { params: { square: shieldSquare, color: shieldColor } };
   }
   return null;
@@ -336,7 +337,9 @@ function applyPawnGuard({ chess, gameState, moverColor, params }) {
   }
   
   if (foundPiece && foundSquare) {
-    gameState.pawnShields[moverColor] = { square: foundSquare };
+    // shieldType 'behind' means the piece behind the pawn is protected (not the pawn)
+    // Store pawnSquare so we know which pawn is providing the guard
+    gameState.pawnShields[moverColor] = { square: foundSquare, shieldType: 'behind', pawnSquare: targetSquare };
     return { params: { pawnSquare: targetSquare, protectedSquare: foundSquare, color: moverColor } };
   }
   
@@ -438,7 +441,8 @@ function applyRoyalSwap({ chess, moverColor, params }) {
   if (params?.targetSquare && moverColor) {
     const kingSquare = findKing(chess, moverColor);
     const targetPiece = chess.get(params.targetSquare);
-    if (kingSquare && targetPiece && targetPiece.color === moverColor) {
+    // Royal Swap: king can only swap with a pawn (per card description)
+    if (kingSquare && targetPiece && targetPiece.type === 'p' && targetPiece.color === moverColor) {
       chess.remove(kingSquare);
       chess.remove(params.targetSquare);
       chess.put({ type: 'k', color: moverColor }, params.targetSquare);
@@ -482,10 +486,24 @@ function applyTemporalEcho({ gameState, moverColor }) {
 
 // ============ OFFENSE CARDS ============
 
-function applyDoubleStrike({ gameState, moverColor }) {
-  if (moverColor) {
-    gameState.activeEffects.doubleStrike[moverColor] = true;
-    return { params: { color: moverColor } };
+// Double Strike: After capturing with any non-king/non-queen piece, get one more capture if target is NOT adjacent to first kill
+function applyDoubleStrike({ gameState, moverColor, moveResult }) {
+  // Works with any piece except king and queen (per card description)
+  const validPieces = ['p', 'n', 'b', 'r']; // pawn, knight, bishop, rook
+  if (moveResult && moveResult.captured && validPieces.includes(moveResult.piece)) {
+    // Enable double strike mode - can capture again if target is not adjacent to this capture
+    gameState.activeEffects.doubleStrike = gameState.activeEffects.doubleStrike || { w: null, b: null };
+    gameState.activeEffects.doubleStrike[moverColor] = {
+      active: true,
+      firstKillSquare: moveResult.to,
+      usedSecondKill: false
+    };
+    // Also set doubleStrikeActive for the extra move check
+    gameState.activeEffects.doubleStrikeActive = {
+      color: moverColor,
+      from: moveResult.to
+    };
+    return { params: { firstKillSquare: moveResult.to, color: moverColor } };
   }
   return null;
 }
@@ -529,10 +547,22 @@ function applySharpshooter({ gameState, moverColor }) {
   return null;
 }
 
-function applyBerserkerRage({ chess, moverColor, moveResult }) {
-  if (moveResult && moveResult.piece === 'r') {
-    const damaged = applyBerserkerPath(chess, moveResult.from, moveResult.to, moverColor);
-    return { params: { from: moveResult.from, to: moveResult.to, damaged } };
+// Berserker Rage: After capturing a piece, get one more capture if target is NOT adjacent to first kill
+function applyBerserkerRage({ gameState, moverColor, moveResult }) {
+  if (moveResult && moveResult.captured) {
+    // Enable berserker mode - can capture again if target is not adjacent to this capture
+    gameState.activeEffects.berserkerRage = gameState.activeEffects.berserkerRage || { w: null, b: null };
+    gameState.activeEffects.berserkerRage[moverColor] = {
+      active: true,
+      firstKillSquare: moveResult.to,  // Where the first capture happened
+      usedSecondKill: false
+    };
+    // Also set berserkerRageActive for the extra move check (allows another turn)
+    gameState.activeEffects.berserkerRageActive = {
+      color: moverColor,
+      firstKillSquare: moveResult.to
+    };
+    return { params: { firstKillSquare: moveResult.to, color: moverColor } };
   }
   return null;
 }
@@ -548,30 +578,21 @@ function applyExecution({ chess, moverColor, params }) {
   return null;
 }
 
-function applyChainLightning({ chess, moverColor, moveResult }) {
-  if (moveResult?.captured && moveResult.to) {
-    const chained = chainLightningEffect(chess, moveResult.to, moverColor, 1);
-    return { params: { origin: moveResult.to, chained } };
-  }
-  return null;
+function applyChainLightning({ gameState, moverColor }) {
+  // Enable chain lightning effect for this turn - will trigger on next capture
+  gameState.activeEffects.chainLightning = gameState.activeEffects.chainLightning || { w: false, b: false };
+  gameState.activeEffects.chainLightning[moverColor] = true;
+  return { params: { color: moverColor } };
 }
 
-function applyCastleBreaker({ chess, moverColor, params }) {
+function applyCastleBreaker({ chess, gameState, moverColor }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
   
-  // If targetSquare is specified, destroy that specific rook
-  if (params?.targetSquare) {
-    const piece = chess.get(params.targetSquare);
-    if (piece && piece.type === 'r' && piece.color === opponentColor) {
-      chess.remove(params.targetSquare);
-      return { params: { destroyed: params.targetSquare } };
-    }
-    return null; // Invalid target
-  }
+  // Disable opponent's castling rights for 3 turns
+  gameState.activeEffects.castleBroken = gameState.activeEffects.castleBroken || { w: 0, b: 0 };
+  gameState.activeEffects.castleBroken[opponentColor] = 3; // Lasts 3 turns
   
-  // Fallback: destroy first rook found
-  const destroyed = destroyRook(chess, opponentColor);
-  return { params: { destroyed } };
+  return { params: { disabledColor: opponentColor, turns: 3 } };
 }
 
 // ============ RESURRECTION / TRANSFORMATION ============
@@ -611,7 +632,8 @@ function applyMetamorphosis({ chess, moverColor, params }) {
   const targetSquare = params?.targetSquare || params?.pieceSquare;
   if (targetSquare && params?.newType) {
     const piece = chess.get(targetSquare);
-    if (piece && piece.color === moverColor && params.newType !== 'k') {
+    // Cannot transform into king or queen (per card description)
+    if (piece && piece.color === moverColor && params.newType !== 'k' && params.newType !== 'q') {
       chess.remove(targetSquare);
       chess.put({ type: params.newType, color: moverColor }, targetSquare);
       return { params: { square: targetSquare, from: piece.type, to: params.newType } };
@@ -626,6 +648,9 @@ function applyMirrorImage({ chess, gameState, moverColor, params }) {
   
   const piece = chess.get(targetSquare);
   if (!piece || piece.color !== moverColor) return null;
+  
+  // Cannot use on king
+  if (piece.type === 'k') return null;
   
   // Find an adjacent free square for the duplicate
   const adjacentSquares = getAdjacentSquares(targetSquare);
@@ -654,12 +679,13 @@ function applySacrifice({ chess, gameState, socketId, moverColor, params }) {
   const targetSquare = params?.targetSquare || params?.pieceSquare;
   if (targetSquare) {
     const piece = chess.get(targetSquare);
-    if (piece && piece.color === moverColor) {
+    // Can sacrifice any piece EXCEPT king (game would end immediately)
+    if (piece && piece.color === moverColor && piece.type !== 'k') {
       chess.remove(targetSquare);
       const card1 = pickWeightedArcana();
       const card2 = pickWeightedArcana();
       gameState.arcanaByPlayer[socketId].push(card1, card2);
-      return { params: { sacrificed: targetSquare, gained: [card1.id, card2.id] } };
+      return { params: { sacrificed: targetSquare, pieceType: piece.type, gained: [card1.id, card2.id] } };
     }
   }
   return null;
@@ -792,16 +818,48 @@ function applyMapFragments({ chess, moverColor }) {
   return { params: { predictedSquares: likelySquares } };
 }
 
-function applyPeekCard({ gameState, socketId }) {
-  // Reveal one opponent card
-  const opponentId = gameState.playerIds.find(id => id !== socketId);
+function applyPeekCard({ gameState, socketId, params, io }) {
+  // Peek card is a two-step process:
+  // 1. If no cardIndex in params, send opponent's card count to client
+  // 2. Client picks a card by index, server reveals it
+  
+  const opponentId = gameState.playerIds.find(id => id !== socketId && !id.startsWith('AI-'));
   if (!opponentId) return null;
   
   const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
   if (opponentCards.length === 0) return null;
   
-  const randomCard = opponentCards[Math.floor(Math.random() * opponentCards.length)];
-  return { params: { revealedCard: randomCard.id, opponentId } };
+  // If cardIndex is provided, reveal that specific card
+  if (params && params.cardIndex !== undefined) {
+    const cardIndex = parseInt(params.cardIndex);
+    if (cardIndex >= 0 && cardIndex < opponentCards.length) {
+      const revealedCard = opponentCards[cardIndex];
+      // Send the revealed card only to the peeker
+      if (io) {
+        io.to(socketId).emit('peekCardRevealed', {
+          card: revealedCard,
+          cardIndex,
+        });
+      }
+      // Clear any pending peek for this player
+      if (gameState.pendingPeek) delete gameState.pendingPeek[socketId];
+      return { params: { revealedCard: revealedCard.id, cardIndex } };
+    }
+  }
+  
+  // Initial activation: send opponent's card count to client for selection
+  if (io) {
+    io.to(socketId).emit('peekCardSelection', {
+      cardCount: opponentCards.length,
+      opponentId,
+    });
+  }
+  
+  // Mark pending peek so the server can later resolve the selection
+  gameState.pendingPeek ||= {};
+  gameState.pendingPeek[socketId] = { opponentId, cardCount: opponentCards.length, ts: Date.now() };
+
+  return { params: { awaitingSelection: true, cardCount: opponentCards.length } };
 }
 
 function applyAntidote({ gameState, params }) {
@@ -852,23 +910,36 @@ function applySoftPush({ chess, moverColor, params }) {
   const piece = chess.get(targetSquare);
   if (!piece || piece.color !== moverColor) return null;
   
-  // Calculate push direction toward center (d4/d5/e4/e5 are center squares)
   const file = targetSquare.charCodeAt(0) - 97; // 0-7
   const rank = parseInt(targetSquare[1]); // 1-8
   
-  // Center is between files d(3) and e(4), ranks 4 and 5
-  let targetFile = file;
-  let targetRank = rank;
+  let destSquare;
   
-  // Horizontal: push toward files d(3) or e(4)
-  if (file < 3) targetFile = file + 1; // Move toward d
-  else if (file > 4) targetFile = file - 1; // Move toward e
+  // For pawns: push forward one square (not sideways!)
+  if (piece.type === 'p') {
+    const direction = moverColor === 'w' ? 1 : -1;
+    const newRank = rank + direction;
+    // Can't push pawn off the board or to promotion rank
+    if (newRank < 2 || newRank > 7) {
+      return null; // Can't push this pawn forward
+    }
+    destSquare = `${targetSquare[0]}${newRank}`;
+  } else {
+    // For other pieces: push toward center
+    let targetFile = file;
+    let targetRank = rank;
+    
+    // Horizontal: push toward center files d(3) or e(4)
+    if (file < 3) targetFile = file + 1;
+    else if (file > 4) targetFile = file - 1;
+    
+    // Vertical: push toward center ranks 4 or 5
+    if (rank < 4) targetRank = rank + 1;
+    else if (rank > 5) targetRank = rank - 1;
+    
+    destSquare = String.fromCharCode(97 + targetFile) + targetRank;
+  }
   
-  // Vertical: push toward ranks 4 or 5
-  if (rank < 4) targetRank = rank + 1; // Move toward 4
-  else if (rank > 5) targetRank = rank - 1; // Move toward 5
-  
-  const destSquare = String.fromCharCode(97 + targetFile) + targetRank;
   const destPiece = chess.get(destSquare);
   
   // Cannot push to same square (already at center)
@@ -900,7 +971,7 @@ function applyCursedSquare({ gameState, moverColor, params }) {
   if (params?.targetSquare) {
     gameState.activeEffects.cursedSquares.push({
       square: params.targetSquare,
-      turns: 5,
+      turns: 2,  // Lasts for 2 turns
       setter: moverColor,
     });
     return { params: { square: params.targetSquare } };
