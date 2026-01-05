@@ -228,15 +228,20 @@ function validateEnPassantMaster(chess, from, to, color) {
   const fileDiff = Math.abs(toFile - fromFile);
   const rankDiff = Math.abs(toRank - fromRank);
 
+  // En passant master allows capturing adjacent pawns diagonally forward
   if (fileDiff !== 1 || rankDiff !== 1) return null;
 
   const direction = color === 'w' ? 1 : -1;
   if (toRank !== fromRank + direction) return null;
 
+  // The pawn to capture must be on the same rank as the source (adjacent horizontally)
   const adjacentSquare = String.fromCharCode(toFile) + fromRank;
   const adjacentPiece = chess.get(adjacentSquare);
 
+  // Can only capture if there's an enemy pawn on the adjacent square
+  // AND the destination square is EMPTY (the pawn moves diagonally forward to empty square)
   if (adjacentPiece && adjacentPiece.type === 'p' && adjacentPiece.color !== color) {
+    // Make sure destination is empty (standard en passant rule)
     if (!chess.get(to)) {
       return { from, to, piece: 'p', color, flags: 'e', captured: 'p' };
     }

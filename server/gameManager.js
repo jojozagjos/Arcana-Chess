@@ -393,6 +393,18 @@ export class GameManager {
       return true;
     });
 
+    // Additional validation: pawns cannot capture on the same rank (prevents capture of adjacent pawns)
+    if (candidate && candidate.piece === 'p' && candidate.captured) {
+      const fromRank = parseInt(candidate.from[1]);
+      const toRank = parseInt(candidate.to[1]);
+      
+      // Pawn captures must move forward (rank must change), not sideways
+      if (fromRank === toRank) {
+        // This is an invalid pawn move - can't capture on same rank
+        candidate = null;
+      }
+    }
+
     // If not a standard legal move, check if it's an arcana-enhanced move
     if (!candidate && gameState.activeEffects) {
       candidate = validateArcanaMove(chess, move, gameState.activeEffects, moverColor);

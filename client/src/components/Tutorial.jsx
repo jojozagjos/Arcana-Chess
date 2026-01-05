@@ -79,7 +79,7 @@ const TUTORIAL_STEPS = [
     description:
       'Rooks move in straight lines (files/ranks). The queen combines rook and bishop movement - the most powerful piece!',
     instruction: 'Move the rook from a1 to a3.',
-    setupFen: 'rnbqkbnr/pppppppp/8/8/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 1',
+    setupFen: 'rnbqkbnr/pppppppp/8/8/2B1P3/5N2/1PPP1PPP/R1BQK2R w KQkq - 0 1',
     highlightSquares: ['a1', 'a3'],
     requireMove: { from: 'a1', to: 'a3' },
     showCards: false,
