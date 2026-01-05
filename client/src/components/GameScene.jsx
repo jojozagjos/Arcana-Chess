@@ -156,25 +156,18 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
       soundManager.play('cardDraw');
-      // Block card actions during animation
-      setIsCardAnimationPlaying(true);
       
       // Only stay until click for YOUR draws, auto-dismiss opponent draws
       const isMyDraw = data.playerId === socket?.id;
       
-      // For opponent draws, show a generic card back instead of revealing the card
-      const displayArcana = isMyDraw ? data.arcana : {
-        id: 'hidden',
-        name: 'Hidden Card',
-        description: 'Your opponent drew a card',
-        rarity: 'common'
-      };
-      
-      setCardReveal({ arcana: displayArcana, playerId: data.playerId, type: 'draw', stayUntilClick: isMyDraw, isHidden: !isMyDraw });
-      if (!isMyDraw) {
-        // Auto-dismiss opponent draws after 2.5 seconds
-        setTimeout(() => setCardReveal(null), 2500);
-        setTimeout(() => setIsCardAnimationPlaying(false), 2500);
+      if (isMyDraw) {
+        // Block card actions during animation for your own draws
+        setIsCardAnimationPlaying(true);
+        setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'draw', stayUntilClick: true, isHidden: false });
+      } else {
+        // For opponent draws, just show a simple text notification
+        setPendingMoveError('Your opponent drew a card');
+        setTimeout(() => setPendingMoveError(''), 2000);
       }
     };
 
@@ -1672,20 +1665,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         {/* Use animation effects - flowing energy */}
         {type === 'use' && (
           <>
-            {/* Central energy burst on dissolve */}
-            {usePhase >= 2 && (
-              <div style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                width: 150,
-                height: 150,
-                borderRadius: '50%',
-                background: `radial-gradient(circle, ${colors.inner} 0%, ${colors.glow} 40%, transparent 70%)`,
-                animation: 'energyBurst 1.5s ease-out forwards',
-                pointerEvents: 'none',
-              }} />
-            )}
+            {/* Central energy burst on dissolve - removed circle */}
             
             {/* Expanding energy waves - only during glow phase */}
             {usePhase === 1 && [...Array(4)].map((_, i) => (
@@ -1706,31 +1686,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
               />
             ))}
             
-            {/* Floating energy orbs */}
-            {usePhase >= 2 && [...Array(12)].map((_, i) => {
-              const angle = (i / 12) * Math.PI * 2;
-              const distance = 80 + Math.random() * 60;
-              return (
-                <div
-                  key={`orb-${i}`}
-                  style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    width: 12 + Math.random() * 8,
-                    height: 12 + Math.random() * 8,
-                    borderRadius: '50%',
-                    background: `radial-gradient(circle, white 0%, ${colors.inner} 50%, transparent 100%)`,
-                    boxShadow: `0 0 15px ${colors.glow}`,
-                    '--ox': `${Math.cos(angle) * distance}px`,
-                    '--oy': `${Math.sin(angle) * distance}px`,
-                    animation: `orbFloat ${1.5 + Math.random() * 0.5}s ease-out forwards`,
-                    animationDelay: `${Math.random() * 0.3}s`,
-                    pointerEvents: 'none',
-                  }}
-                />
-              );
-            })}
+            {/* Floating energy orbs - removed circles */}
             
             {/* Sparks that fly outward */}
             {usePhase >= 2 && [...Array(20)].map((_, i) => {

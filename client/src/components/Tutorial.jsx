@@ -12,6 +12,7 @@ const DEMO_CARDS = [
   ARCANA_DEFINITIONS.find(c => c.id === 'shield_pawn'),
   ARCANA_DEFINITIONS.find(c => c.id === 'soft_push'),
   ARCANA_DEFINITIONS.find(c => c.id === 'execution'),
+  ARCANA_DEFINITIONS.find(c => c.id === 'peek_card'),
 ].filter(Boolean);
 
 // Reworked tutorial: Interactive demonstrations with visual card effects
@@ -741,7 +742,7 @@ export function Tutorial({ onBack }) {
                   onClick={() => handleCardClick(card)}
                   title={`${card.name}: ${card.description}`}
                 >
-                  <ArcanaCard card={card} isSelected={selectedCard?.id === card.id} />
+                  <ArcanaCard arcana={card} isSelected={selectedCard?.id === card.id} />
                 </div>
               ))}
             </div>

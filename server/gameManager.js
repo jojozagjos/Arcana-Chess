@@ -221,6 +221,11 @@ export class GameManager {
       gameState.arcanaByPlayer[socket.id].push(newCard);
       gameState.lastDrawTurn[turnColor] = currentPly;
       
+      // Clear arcana used flag when drawing (ending turn)
+      if (gameState.arcanaUsedThisTurn) {
+        delete gameState.arcanaUsedThisTurn[socket.id];
+      }
+      
       // Pass turn by manipulating FEN (swap active color)
       const chess = gameState.chess;
       const fen = chess.fen();
@@ -332,6 +337,11 @@ export class GameManager {
       const shouldEndTurn = arcanaUsed.some(use => turnEndingCards.includes(use.arcanaId));
       
       if (shouldEndTurn) {
+        // Clear arcana used flag when turn-ending card is used
+        if (gameState.arcanaUsedThisTurn) {
+          delete gameState.arcanaUsedThisTurn[socket.id];
+        }
+        
         // Pass turn by swapping active color
         const fen = chess.fen();
         const fenParts = fen.split(' ');
@@ -501,7 +511,65 @@ export class GameManager {
     gameState.moveHistory.push(chess.fen());
     if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
 
-    const result = chess.move(candidate);
+    // Execute the move
+    let result;
+    
+    // For arcana-enhanced moves that chess.js can't execute natively, manually execute them
+    const isArcanaMove = !legalMoves.find(m => m.from === candidate.from && m.to === candidate.to && (!candidate.promotion || m.promotion === candidate.promotion));
+    
+    if (isArcanaMove) {
+      // Manually execute arcana move (e.g., spectral march through pieces)
+      const movingPiece = chess.get(candidate.from);
+      const capturedPiece = chess.get(candidate.to);
+      
+      if (!movingPiece) {
+        throw new Error(`Invalid move: No piece at ${candidate.from}`);
+      }
+      
+      // Remove pieces
+      chess.remove(candidate.from);
+      if (capturedPiece) chess.remove(candidate.to);
+      
+      // Place piece at destination
+      chess.put(movingPiece, candidate.to);
+      
+      // Manually construct result object similar to chess.js move result
+      result = {
+        color: movingPiece.color,
+        from: candidate.from,
+        to: candidate.to,
+        piece: movingPiece.type,
+        captured: capturedPiece?.type,
+        san: `${movingPiece.type.toUpperCase()}${candidate.to}`, // Simplified SAN
+        flags: candidate.flags || ''
+      };
+      
+      // Manually toggle turn
+      const fen = chess.fen();
+      const fenParts = fen.split(' ');
+      fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w'; // Swap turn
+      fenParts[3] = '-'; // Clear en passant
+      // Increment halfmove clock or reset on capture
+      if (capturedPiece || movingPiece.type === 'p') {
+        fenParts[4] = '0';
+      } else {
+        fenParts[4] = String(parseInt(fenParts[4] || 0) + 1);
+      }
+      // Increment fullmove number if black just moved
+      if (movingPiece.color === 'b') {
+        fenParts[5] = String(parseInt(fenParts[5] || 1) + 1);
+      }
+      chess.load(fenParts.join(' '));
+    } else {
+      // Use chess.js for standard moves
+      const moveInput = { from: candidate.from, to: candidate.to };
+      if (candidate.promotion) moveInput.promotion = candidate.promotion;
+      
+      result = chess.move(moveInput);
+      if (!result) {
+        throw new Error(`Invalid move: ${JSON.stringify({ from: candidate.from, to: candidate.to, piece: candidate.piece, captured: candidate.captured, color: candidate.color })}`);
+      }
+    }
 
     // Check if a king was captured (should end game immediately)
     const kingCaptured = result.captured === 'k';

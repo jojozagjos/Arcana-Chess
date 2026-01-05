@@ -146,6 +146,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       moverColor,
       moveResult,
       params: use.params,
+      io,
     });
 
     if (result) {
@@ -184,7 +185,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
  * Apply a single arcana effect
  */
 function applyArcanaEffect(arcanaId, context) {
-  const { chess, gameState, socketId, moverColor, moveResult, params } = context;
+  const { chess, gameState, socketId, moverColor, moveResult, params, io } = context;
 
   switch (arcanaId) {
     // === DEFENSE CARDS ===
