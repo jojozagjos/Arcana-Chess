@@ -158,25 +158,6 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
           USED
         </div>
       )}
-      {isSelected && !isUsed && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 6,
-            right: 6,
-            fontSize: '0.5rem',
-            padding: '2px 6px',
-            borderRadius: 999,
-            border: '1px solid #2f6fed',
-            background: 'rgba(47,111,237,0.8)',
-            textTransform: 'uppercase',
-            zIndex: 3,
-            color: '#fff',
-          }}
-        >
-          READY
-        </div>
-      )}
 
       {/* Hover tooltip for quick description (used in-game) */}
       {hoverInfo && hovered && (

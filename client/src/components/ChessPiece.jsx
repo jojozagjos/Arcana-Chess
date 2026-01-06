@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 
-export function ChessPiece({ type, isWhite, targetPosition, square }) {
+export function ChessPiece({ type, isWhite, targetPosition, square, onClickSquare }) {
   const color = isWhite ? '#eceff4' : '#2e3440';
   const emissive = isWhite ? '#d8dee9' : '#1a1d28';
   const groupRef = useRef();
@@ -22,7 +22,15 @@ export function ChessPiece({ type, isWhite, targetPosition, square }) {
   });
 
   return (
-    <group ref={groupRef} position={currentPos.current} castShadow>
+    <group
+      ref={groupRef}
+      position={currentPos.current}
+      castShadow
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        if (typeof onClickSquare === 'function') onClickSquare(square);
+      }}
+    >
       {type === 'p' && <PawnGeometry color={color} emissive={emissive} />}
       {type === 'r' && <RookGeometry color={color} emissive={emissive} />}
       {type === 'n' && <KnightGeometry color={color} emissive={emissive} isWhite={isWhite} />}

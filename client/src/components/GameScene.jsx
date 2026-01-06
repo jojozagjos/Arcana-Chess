@@ -1495,19 +1495,19 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           100% { opacity: 0; transform: translateY(-20px); }
         }
         
-        @keyframes energyBurst {
-          0% { 
-            transform: translate(-50%, -50%) scale(0);
-            opacity: 0.9;
-          }
-          50% {
-            opacity: 0.6;
-          }
-          100% { 
-            transform: translate(-50%, -50%) scale(3);
-            opacity: 0;
-          }
-        }
+        // @keyframes energyBurst {
+        //   0% { 
+        //     transform: translate(-50%, -50%) scale(0);
+        //     opacity: 0.9;
+        //   }
+        //   50% {
+        //     opacity: 0.6;
+        //   }
+        //   100% { 
+        //     transform: translate(-50%, -50%) scale(3);
+        //     opacity: 0;
+        //   }
+        // }
         
         @keyframes energyWave {
           0% { 
@@ -1680,6 +1680,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
                   borderRadius: '50%',
                   border: `2px solid ${colors.inner}`,
                   boxShadow: `0 0 20px ${colors.glow}, inset 0 0 20px ${colors.glow}`,
+                  transform: 'translate(-50%, -50%)',
                   animation: `energyWave 2s ease-out ${i * 0.35}s infinite`,
                   pointerEvents: 'none',
                 }}

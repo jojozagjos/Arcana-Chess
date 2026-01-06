@@ -6,14 +6,10 @@ import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { soundManager } from '../game/soundManager.js';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
+import { ShieldGlowEffect } from '../game/arcana/arcanaVisuals.jsx';
 
-// Sample arcana cards for demonstration
-const DEMO_CARDS = [
-  ARCANA_DEFINITIONS.find(c => c.id === 'shield_pawn'),
-  ARCANA_DEFINITIONS.find(c => c.id === 'soft_push'),
-  ARCANA_DEFINITIONS.find(c => c.id === 'execution'),
-  ARCANA_DEFINITIONS.find(c => c.id === 'peek_card'),
-].filter(Boolean);
+// Sample arcana card for demonstration (just one)
+const DEMO_CARD = ARCANA_DEFINITIONS.find(c => c.id === 'shield_pawn');
 
 // Reworked tutorial: Interactive demonstrations with visual card effects
 const TUTORIAL_STEPS = [
@@ -102,52 +98,42 @@ const TUTORIAL_STEPS = [
     title: '⚡ Ascension!',
     description:
       'Your first capture triggers ASCENSION! This unlocks Arcana cards - magical abilities that add a new dimension to chess.',
-    instruction: 'You have ascended! Look at the cards that appear below. Click Next to learn how they work.',
+    instruction: 'You have ascended! Look at the bar that appeared below. Click Next to learn how it works.',
     setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
     resetPosition: false,
-    showCards: true,
+    showCards: false,
     triggerAscension: true,
   },
   {
     id: 8,
-    title: 'Using Arcana Cards',
+    title: 'Drawing Arcana Cards',
     description:
-      'Arcana cards appear at the bottom of your screen. Hover over a card to see its effect. Click a card to activate it BEFORE making your move. Some cards need a target (a piece or square to affect).',
-    instruction: 'Try clicking on the "Shield Pawn" card below to see how card activation works.',
+      'After ascension, you can draw Arcana cards on your turn by clicking the "Draw Card" button. Drawing a card ends your turn and you must wait 2 full turns before drawing again.',
+    instruction: 'Click the "Draw Card" button below to draw your first Arcana card.',
     setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
-    showCards: true,
-    demoCard: 'shield_pawn',
+    showCards: false,
+    showDrawButton: true,
+    requireDraw: true,
   },
   {
     id: 9,
     title: 'Card Targeting',
     description:
-      'Some cards require selecting a target. Shield Pawn protects the piece behind a pawn you select. Valid targets glow when you activate a card.',
-    instruction: 'With Shield Pawn selected, click on your pawn at d2 to protect the queen behind it.',
+      'Some cards require selecting a target. Shield Pawn needs you to select which pawn to protect. Valid targets will glow when the card is active.',
+    instruction: 'With Shield Pawn selected, click on your pawn at d2 to protect it from capture.',
     setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
-    highlightSquares: ['d2'],
-    requireMove: { select: 'd2' },
+    highlightSquares: [],
+    requireMove: null,
     showCards: true,
     demoCard: 'shield_pawn',
     cardTargeting: true,
   },
   {
     id: 10,
-    title: 'Card Variety',
-    description:
-      'There are many types of cards: Defense (protect pieces), Movement (special moves), Offense (attack), and Utility (vision, card draw). Card rarity affects how often they appear.',
-    instruction: 'Each card has unique strategic value. Click Next to continue.',
-    setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
-    highlightSquares: [],
-    requireMove: null,
-    showCards: true,
-  },
-  {
-    id: 11,
     title: 'Winning the Game',
     description:
       'The goal is checkmate: trap the enemy king so it cannot escape. Check means the king is under attack. Checkmate means check with no legal escape.',
@@ -159,58 +145,12 @@ const TUTORIAL_STEPS = [
     showCards: false,
   },
   {
-    id: 12,
-    title: 'Practice Mode',
+    id: 11,
+    title: 'Ready to Play!',
     description:
-      'Try moves freely in this sandbox. Practice piece movement and imagine using cards strategically. Reset restores the position.',
-    instruction: 'Experiment! Click Finish when ready to play a real game.',
-    setupFen: 'rnbqkbnr/pppppppp/8/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1',
-    highlightSquares: [],
-    requireMove: null,
-    isSandbox: true,
-    showCards: true,
-  },
-  {
-    id: 13,
-    title: 'Card Draw & Cooldown',
-    description:
-      'You can draw Arcana cards on your turn. To keep gameplay balanced, draws have a cooldown: after you draw, two full turns must pass before you can draw again.',
-    instruction: 'Remember: draw strategically — you cannot draw again for two full turns.',
-    setupFen: null,
-    highlightSquares: [],
-    requireMove: null,
-    showCards: false,
-  },
-  {
-    id: 14,
-    title: 'Hidden Opponent Draws',
-    description:
-      'When your opponent draws a card, you are informed that they drew, but the actual card remains hidden. This preserves secrecy while keeping you aware of game state.',
-    instruction: 'No action required — this is informational.',
-    setupFen: null,
-    highlightSquares: [],
-    requireMove: null,
-    showCards: false,
-  },
-  {
-    id: 15,
-    title: 'Peek Card',
-    description:
-      'Some cards let you peek at an opponent card. Activating Peek opens a selection of face-down cards; choose one to reveal only to you.',
-    instruction: 'When you see a peek prompt, select a face-down card to reveal it privately.',
-    setupFen: null,
-    highlightSquares: [],
-    requireMove: null,
-    showCards: true,
-    demoCard: 'peek_card',
-  },
-  {
-    id: 16,
-    title: 'Use-card Animation & Fade',
-    description:
-      'Card activations show a cinematic animation. After the effect, the screen gently fades back to normal — background and particles disappear cleanly.',
-    instruction: 'Observe the animation when you activate a card during a game.',
-    setupFen: null,
+      'You now know the basics: move pieces, capture to ascend, draw cards (with a 2-turn cooldown), use one card per turn, and aim for checkmate. There are many more powerful cards to discover!',
+    instruction: 'Click Finish to start playing Arcana Chess!',
+    setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
     showCards: false,
@@ -226,6 +166,11 @@ export function Tutorial({ onBack }) {
   const [selectedCard, setSelectedCard] = useState(null);
   const [cardTargets, setCardTargets] = useState([]);
   const [cardActivated, setCardActivated] = useState(false);
+  const [hoveredCard, setHoveredCard] = useState(null);
+  const [pawnShields, setPawnShields] = useState({ w: null, b: null });
+  const [demoCardAvailable, setDemoCardAvailable] = useState(false);
+  const [isCardAnimationPlaying, setIsCardAnimationPlaying] = useState(false);
+  const [cardReveal, setCardReveal] = useState(null);
 
   const step = TUTORIAL_STEPS[currentStep];
 
@@ -304,19 +249,15 @@ export function Tutorial({ onBack }) {
     setSelectedCard(null);
     setCardTargets([]);
     setCardActivated(false);
+    setDemoCardAvailable(false);
+    setIsCardAnimationPlaying(false);
+    setPawnShields({ w: null, b: null });
 
-    // Trigger ascension visual at specific step
+    // Trigger ascension visual only at the ascension step
     if (step.triggerAscension) {
       setHasAscended(true);
       setTimeout(() => setHasAscended(false), 2500);
-    }
-
-    // Ascension overlay: visible after ascension & Arcana explanation
-    if (step.id >= 10) {
-      setHasAscended(true);
-      // Auto-hide after 2.5 seconds
-      setTimeout(() => setHasAscended(false), 2500);
-    } else if (step.id < 7) {
+    } else {
       setHasAscended(false);
     }
   }, [step.id, step.setupFen]);
@@ -332,13 +273,8 @@ export function Tutorial({ onBack }) {
     return c;
   }, [localFen]);
 
-  const squareToPosition = (sq) => {
-    const file = 'abcdefgh'.indexOf(sq[0]);
-    const rank = 8 - parseInt(sq[1], 10);
-    return [file - 3.5, 0.15, rank - 3.5];
-  };
-
   // Calculate valid card targets (for demo: pawns for shield_pawn)
+  // Defined after chess so it uses the current chess value
   const calculateCardTargets = (cardId) => {
     if (!chess) return [];
     const targets = [];
@@ -380,6 +316,22 @@ export function Tutorial({ onBack }) {
     return targets;
   };
 
+  // Separate effect: Auto-select card for targeting after chess is ready
+  useEffect(() => {
+    if (chess && step.cardTargeting && step.demoCard && DEMO_CARD && (step.showCards || demoCardAvailable)) {
+      setSelectedCard(DEMO_CARD);
+      const targets = calculateCardTargets(DEMO_CARD.id);
+      setCardTargets(targets);
+      setFeedback(`${DEMO_CARD.name} selected. Valid targets are highlighted. Click a target to apply the effect.`);
+    }
+  }, [chess, step.id, demoCardAvailable]);
+
+  const squareToPosition = (sq) => {
+    const file = 'abcdefgh'.indexOf(sq[0]);
+    const rank = 8 - parseInt(sq[1], 10);
+    return [file - 3.5, 0.15, rank - 3.5];
+  };
+
   // Handle card click for demo
   const handleCardClick = (card) => {
     if (!card) return;
@@ -397,32 +349,43 @@ export function Tutorial({ onBack }) {
     setCardTargets(targets);
     
     try {
-      soundManager.play('cardPlay');
+      soundManager.play('cardDraw');
     } catch { /* ignore */ }
     
     if (step.demoCard === card.id && !step.cardTargeting) {
       setFeedback(`✓ ${card.name} activated! Hover over cards to see their effects. Click Next to continue.`);
       setCardActivated(true);
     } else if (targets.length > 0) {
-      setFeedback(`${card.name} selected. Valid targets are highlighted in purple. Click a target to apply the effect.`);
+      setFeedback(`${card.name} selected. Valid targets are highlighted. Click a target to apply the effect.`);
     } else {
       setFeedback(`${card.name} selected. This card affects gameplay when conditions are met.`);
     }
   };
 
   const handleTileClick = (square) => {
-    if (!chess || !step.requireMove) return;
+    if (!chess) return;
 
-    // Handle card targeting mode
+    // Handle card targeting mode first (highest priority, works even without step.requireMove)
     if (selectedCard && cardTargets.includes(square)) {
       // Card target selected!
-      try {
-        soundManager.play('cardPlay');
-      } catch { /* ignore */ }
-      
       if (step.cardTargeting && step.demoCard === selectedCard.id) {
-        setFeedback(`✓ ${selectedCard.name} applied to ${square}! The piece behind this pawn is now protected. Click Next to continue.`);
-        setCardActivated(true);
+        // Trigger use animation for the card
+        try { soundManager.play('arcana:shield_pawn'); } catch {}
+        setCardReveal({ arcana: selectedCard, type: 'use' });
+        setIsCardAnimationPlaying(true);
+        
+        // Shield Pawn protects the pawn itself
+        if (selectedCard.id === 'shield_pawn') {
+          setPawnShields({ w: { square }, b: null });
+        }
+        
+        // After animation completes, set feedback and mark as activated
+        setTimeout(() => {
+          setCardReveal(null);
+          setIsCardAnimationPlaying(false);
+          setFeedback(`✓ ${selectedCard.name} applied to ${square}! This pawn is now protected from capture. Click Next to continue.`);
+          setCardActivated(true);
+        }, 3500);
       } else {
         setFeedback(`✓ ${selectedCard.name} effect demonstrated on ${square}!`);
       }
@@ -431,6 +394,9 @@ export function Tutorial({ onBack }) {
       setCardTargets([]);
       return;
     }
+
+    // All other interactions require step.requireMove
+    if (!step.requireMove) return;
 
     // If this step expects a capture but the destination is already empty,
     // treat the task as completed to avoid softlocks.
@@ -590,7 +556,7 @@ export function Tutorial({ onBack }) {
     }
   };
 
-  const canProceed = !step.requireMove || feedback.includes('✓') || (step.demoCard && cardActivated);
+  const canProceed = !step.requireMove || feedback.includes('✓') || (step.demoCard && cardActivated) || (step.requireDraw && cardActivated) || (step.cardTargeting && cardActivated);
 
   return (
     <div style={styles.container}>
@@ -620,6 +586,7 @@ export function Tutorial({ onBack }) {
                 legalTargets={legalTargets}
                 highlightSquares={step.highlightSquares}
                 cardTargets={cardTargets}
+                pawnShields={pawnShields}
                 onTileClick={handleTileClick}
               />
               <group>
@@ -630,9 +597,17 @@ export function Tutorial({ onBack }) {
                     isWhite={p.isWhite}
                     targetPosition={p.targetPosition}
                     square={p.square}
+                    onClickSquare={handleTileClick}
                   />
                 ))}
               </group>
+              {/* Shield effect visuals */}
+              {pawnShields.w?.square && (
+                <ShieldGlowEffect square={pawnShields.w.square} />
+              )}
+              {pawnShields.b?.square && (
+                <ShieldGlowEffect square={pawnShields.b.square} />
+              )}
             </>
           )}
           <OrbitControls
@@ -642,7 +617,167 @@ export function Tutorial({ onBack }) {
             maxDistance={20}
           />
         </Canvas>
+        
+        {/* Arcana Cards Bar - Overlay on Canvas */}
+        {(step.showDrawButton || step.showCards || step.triggerAscension) && (
+          <div style={{
+            position: 'absolute',
+            bottom: 12,
+            left: 12,
+            right: 12,
+            background: 'rgba(5, 6, 10, 0.92)',
+            borderRadius: 10,
+            padding: 12,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            fontFamily: 'system-ui, sans-serif',
+            fontSize: '0.85rem',
+            boxShadow: '0 -4px 20px rgba(0,0,0,0.6)',
+            zIndex: 10,
+            maxWidth: 600,
+            margin: '0 auto',
+          }}>
+            {/* Header with Draw button */}
+            <div style={{
+              fontWeight: 600,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              paddingBottom: 8,
+              borderBottom: '1px solid rgba(136,192,208,0.2)',
+              color: '#eceff4',
+            }}>
+              <span>Arcana</span>
+              {step.showDrawButton && (
+                <button
+                  style={{
+                    padding: '4px 8px',
+                    fontSize: '0.75rem',
+                    borderRadius: 4,
+                    border: '1px solid rgba(136,192,208,0.4)',
+                    background: cardActivated ? 'rgba(136,192,208,0.05)' : 'rgba(136,192,208,0.15)',
+                    color: '#88c0d0',
+                    cursor: cardActivated ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s',
+                    opacity: cardActivated ? 0.5 : 1,
+                  }}
+                  onClick={() => {
+                    if (!cardActivated && !isCardAnimationPlaying) {
+                      setIsCardAnimationPlaying(true);
+                      setFeedback('Drawing card...');
+                      try { soundManager.play('cardDraw'); } catch {}
+                      setCardReveal({ arcana: DEMO_CARD, type: 'draw' });
+                      // Auto-complete draw after animation even if overlay isn't clicked
+                      setTimeout(() => {
+                        if (!demoCardAvailable) setDemoCardAvailable(true);
+                        if (!cardActivated) setCardActivated(true);
+                        setIsCardAnimationPlaying(false);
+                        setFeedback('✓ Card drawn! In a real game, this would end your turn. Click Next to continue.');
+                      }, 1200);
+                    }
+                  }}
+                  disabled={cardActivated || isCardAnimationPlaying}
+                >
+                  {isCardAnimationPlaying ? 'Drawing...' : cardActivated ? 'Drawn' : '+ Draw'}
+                </button>
+              )}
+            </div>
+            
+            {/* Card row */}
+            <div style={{
+              display: 'flex',
+              gap: 12,
+              justifyContent: 'center',
+              paddingBottom: 4,
+              alignItems: 'flex-end',
+            }}>
+              {!step.showCards && !demoCardAvailable && step.showDrawButton && (
+                <div style={{ color: '#88c0d0', fontSize: '0.85rem', opacity: 0.7 }}>No Arcana available. Draw a card!</div>
+              )}
+              {(step.showCards || demoCardAvailable) && DEMO_CARD && (
+                <div
+                  style={{ position: 'relative' }}
+                  onMouseEnter={() => setHoveredCard(DEMO_CARD.id)}
+                  onMouseLeave={() => setHoveredCard(null)}
+                >
+                  <ArcanaCard
+                    arcana={DEMO_CARD}
+                    size="small"
+                    isSelected={selectedCard?.id === DEMO_CARD.id}
+                    onClick={() => handleCardClick(DEMO_CARD)}
+                  />
+                  {hoveredCard === DEMO_CARD.id && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '100%',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      marginBottom: 8,
+                      padding: 10,
+                      background: 'rgba(11, 16, 32, 0.98)',
+                      border: '1px solid rgba(136,192,208,0.4)',
+                      borderRadius: 8,
+                      minWidth: 200,
+                      maxWidth: 280,
+                      color: '#eceff4',
+                      fontSize: '0.85rem',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                      zIndex: 100,
+                      pointerEvents: 'none',
+                    }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>{DEMO_CARD.name}</div>
+                      <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>{DEMO_CARD.description}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Selected indicator */}
+            {selectedCard && (step.showCards || demoCardAvailable) && (
+              <div style={{
+                fontSize: '0.8rem',
+                color: '#88c0d0',
+                textAlign: 'center',
+                paddingTop: 4,
+              }}>
+                Selected: {selectedCard.name}
+              </div>
+            )}
+            
+            {/* Targeting indicator */}
+            {selectedCard && cardTargets.length > 0 && (
+              <div style={{
+                fontSize: '0.8rem',
+                color: '#ebcb8b',
+                textAlign: 'center',
+                background: 'rgba(235, 203, 139, 0.15)',
+                borderRadius: 4,
+                padding: '4px 8px',
+                marginTop: 4,
+              }}>
+                🎯 Select a pawn to protect with {selectedCard.name}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Card Reveal Animation */}
+      {cardReveal && (
+        <CardRevealAnimation
+          arcana={cardReveal.arcana}
+          type={cardReveal.type}
+          onDismiss={() => {
+            setCardReveal(null);
+            setIsCardAnimationPlaying(false);
+            setDemoCardAvailable(true);
+            setCardActivated(true);
+            setFeedback('✓ Card drawn! In a real game, this would end your turn. Click Next to continue.');
+          }}
+        />
+      )}
 
       {/* Tutorial Panel */}
       <div style={styles.panel}>
@@ -688,7 +823,7 @@ export function Tutorial({ onBack }) {
           <button
             style={{ ...styles.button, ...styles.buttonPrimary }}
             onClick={handleNext}
-            disabled={!canProceed && step.requireMove && !step.isSandbox}
+            disabled={!canProceed && (step.requireMove || step.requireDraw || step.cardTargeting) && !step.isSandbox}
           >
             {currentStep === TUTORIAL_STEPS.length - 1 ? 'Finish' : 'Next'}
           </button>
@@ -722,39 +857,6 @@ export function Tutorial({ onBack }) {
           )}
         </div>
 
-        {/* Demo Cards Display */}
-        {step.showCards && DEMO_CARDS.length > 0 && (
-          <div style={styles.cardsSection}>
-            <div style={styles.cardsSectionTitle}>
-              {step.id >= 7 ? '⚡ Your Arcana Cards' : 'Arcana Cards Preview'}
-            </div>
-            <div style={styles.cardsContainer}>
-              {DEMO_CARDS.map((card) => (
-                <div
-                  key={card.id}
-                  style={{
-                    ...styles.cardWrapper,
-                    transform: selectedCard?.id === card.id ? 'scale(1.1) translateY(-10px)' : 'scale(1)',
-                    boxShadow: selectedCard?.id === card.id 
-                      ? '0 0 20px rgba(136, 192, 208, 0.8)' 
-                      : 'none',
-                  }}
-                  onClick={() => handleCardClick(card)}
-                  title={`${card.name}: ${card.description}`}
-                >
-                  <ArcanaCard arcana={card} isSelected={selectedCard?.id === card.id} />
-                </div>
-              ))}
-            </div>
-            {selectedCard && (
-              <div style={styles.cardDescription}>
-                <strong style={{ color: '#88c0d0' }}>{selectedCard.name}</strong>
-                <span style={{ color: '#d8dee9', marginLeft: 8 }}>{selectedCard.description}</span>
-              </div>
-            )}
-          </div>
-        )}
-
         <button
           style={{ ...styles.buttonSecondary, ...styles.skipButton }}
           onClick={onBack}
@@ -771,9 +873,22 @@ function TutorialBoard({
   legalTargets,
   highlightSquares,
   cardTargets = [],
+  pawnShields = { w: null, b: null },
   onTileClick,
 }) {
   const tiles = [];
+
+  const shieldSquares = [];
+  if (pawnShields.w?.square) shieldSquares.push(pawnShields.w.square);
+  if (pawnShields.b?.square) shieldSquares.push(pawnShields.b.square);
+
+  const isShieldSquare = (fileIndex, rankIndex) => {
+    if (!shieldSquares.length) return false;
+    const fileChar = 'abcdefgh'[fileIndex];
+    const rankNum = 8 - rankIndex;
+    const sq = `${fileChar}${rankNum}`;
+    return shieldSquares.includes(sq);
+  };
 
   for (let file = 0; file < 8; file++) {
     for (let rank = 0; rank < 8; rank++) {
@@ -789,16 +904,21 @@ function TutorialBoard({
       const isCardTarget = cardTargets.includes(sq);
 
       let color = baseColor;
-      if (isCardTarget) color = '#b48ead'; // Purple for card targets
+      if (isCardTarget) color = '#00ff88'; // Bright green for card targets (matches GameScene)
       if (isHighlighted) color = '#ebcb8b';
       if (isSelected) color = '#4db8ff';
       else if (isLegal) color = '#4cd964';
+      const shielded = isShieldSquare(file, rank);
+      if (shielded) color = '#b48ead';
 
       tiles.push(
         <mesh
           key={`${file}-${rank}`}
           position={[file - 3.5, 0, rank - 3.5]}
-          onPointerDown={() => onTileClick(sq)}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onTileClick(sq);
+          }}
         >
           <boxGeometry args={[1, 0.1, 1]} />
           <meshStandardMaterial color={color} />
@@ -845,6 +965,304 @@ function TutorialPieces({ fen }) {
   }
 
   return <group>{pieces}</group>;
+}
+
+function CardRevealAnimation({ arcana, type, onDismiss }) {
+  const [usePhase, setUsePhase] = React.useState(0);
+  
+  React.useEffect(() => {
+    if (type === 'use') {
+      const t1 = setTimeout(() => setUsePhase(1), 800);
+      const t2 = setTimeout(() => setUsePhase(2), 1800);
+      return () => { clearTimeout(t1); clearTimeout(t2); };
+    }
+  }, [type]);
+  
+  const rarityColors = {
+    common: { glow: 'rgba(200, 200, 200, 0.8)', inner: '#c8c8c8' },
+    uncommon: { glow: 'rgba(76, 175, 80, 0.8)', inner: '#4caf50' },
+    rare: { glow: 'rgba(33, 150, 243, 0.8)', inner: '#2196f3' },
+    epic: { glow: 'rgba(156, 39, 176, 0.8)', inner: '#9c27b0' },
+    legendary: { glow: 'rgba(255, 193, 7, 0.9)', inner: '#ffc107' },
+  };
+  const colors = rarityColors[arcana.rarity] || { glow: 'rgba(136, 192, 208, 0.8)', inner: '#88c0d0' };
+
+  return (
+    <>
+      {/* Inject animation keyframes */}
+      <style>{`
+        @keyframes cardDrawIn {
+          0% { 
+            transform: translateY(100vh) rotateY(180deg) scale(0.3);
+            opacity: 0;
+          }
+          40% {
+            transform: translateY(-30px) rotateY(90deg) scale(1.1);
+            opacity: 1;
+          }
+          60% {
+            transform: translateY(0) rotateY(0deg) scale(1.15);
+          }
+          100% {
+            transform: translateY(0) rotateY(0deg) scale(1);
+          }
+        }
+        @keyframes useAppear {
+          0% { 
+            transform: scale(0.8) rotateX(10deg);
+            opacity: 0;
+          }
+          100% { 
+            transform: scale(1) rotateX(0deg);
+            opacity: 1;
+          }
+        }
+        @keyframes usePulse {
+          0%, 100% { 
+            transform: scale(1);
+            filter: brightness(1);
+          }
+          50% { 
+            transform: scale(1.03);
+            filter: brightness(1.1);
+          }
+        }
+        @keyframes useGlow {
+          0% { 
+            filter: brightness(1) saturate(1);
+            transform: scale(1);
+          }
+          50% { 
+            filter: brightness(1.4) saturate(1.3);
+            transform: scale(1.05);
+          }
+          100% { 
+            filter: brightness(1.8) saturate(1.5);
+            transform: scale(1.08);
+          }
+        }
+        @keyframes useDissolve {
+          0% { 
+            opacity: 1;
+            transform: scale(1.08);
+            filter: brightness(1.8) blur(0px);
+          }
+          30% {
+            opacity: 0.9;
+            transform: scale(1.12);
+            filter: brightness(2.2) blur(2px);
+          }
+          60% {
+            opacity: 0.5;
+            transform: scale(1.2);
+            filter: brightness(3) blur(6px);
+          }
+          100% { 
+            opacity: 0;
+            transform: scale(1.4);
+            filter: brightness(4) blur(15px);
+          }
+        }
+        @keyframes textFadeOut {
+          0% { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(-20px); }
+        }
+        @keyframes overlayFadeOut {
+          0% { background: rgba(0, 0, 0, 0.85); }
+          100% { background: rgba(0, 0, 0, 0); }
+        }
+        @keyframes energyWave {
+          0% { 
+            transform: translate(-50%, -50%) scale(0.3);
+            opacity: 0;
+            border-width: 3px;
+          }
+          20% {
+            opacity: 0.8;
+          }
+          70% {
+            opacity: 0.6;
+          }
+          100% { 
+            transform: translate(-50%, -50%) scale(1.2);
+            opacity: 0;
+            border-width: 1px;
+          }
+        }
+        @keyframes sparkFloat {
+          0% { 
+            transform: translate(0, 0) scale(1);
+            opacity: 1;
+          }
+          100% { 
+            transform: translate(var(--tx), var(--ty)) scale(0);
+            opacity: 0;
+          }
+        }
+        @keyframes innerGlow {
+          0%, 100% { 
+            filter: drop-shadow(0 0 15px ${colors.inner}) drop-shadow(0 0 30px ${colors.glow});
+          }
+          50% { 
+            filter: drop-shadow(0 0 25px ${colors.inner}) drop-shadow(0 0 50px ${colors.glow});
+          }
+        }
+        @keyframes textReveal {
+          0% { opacity: 0; transform: translateY(20px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes floatCard {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-8px); }
+        }
+      `}</style>
+      <div 
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.85)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          cursor: type === 'draw' ? 'pointer' : 'default',
+          animation: type === 'use' && usePhase >= 2 ? 'overlayFadeOut 1s ease-out forwards' : 'none',
+        }}
+        onClick={type === 'draw' ? onDismiss : undefined}
+      >
+        {/* Header text */}
+        <div style={{
+          position: 'absolute',
+          top: '12%',
+          left: 0,
+          right: 0,
+          display: 'flex',
+          justifyContent: 'center',
+          animation: type === 'use' && usePhase >= 2 
+            ? 'textFadeOut 0.8s ease-out forwards'
+            : 'textReveal 0.5s ease-out forwards',
+        }}>
+          <div style={{
+            fontSize: 'clamp(1.4rem, 4vw, 2rem)',
+            fontWeight: 700,
+            color: '#eceff4',
+            textShadow: `0 0 20px ${colors.glow}, 0 2px 20px rgba(0,0,0,0.8)`,
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            textAlign: 'center',
+          }}>
+            {type === 'draw' ? 'You drew an Arcana!' : 'You used an Arcana!'}
+          </div>
+        </div>
+        
+        {/* Card container */}
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          animation: type === 'draw' 
+            ? 'cardDrawIn 1s ease-out forwards'
+            : usePhase === 0
+              ? 'useAppear 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards'
+              : usePhase === 1
+                ? 'usePulse 0.8s ease-in-out infinite, useGlow 1s ease-in-out forwards'
+                : 'useDissolve 1.5s ease-out forwards',
+          transformStyle: 'preserve-3d',
+        }}>
+          <div style={{
+            position: 'relative',
+            animation: type === 'draw' ? 'innerGlow 2s ease-in-out infinite, floatCard 3s ease-in-out infinite' : 'none',
+            filter: type === 'use' ? `drop-shadow(0 0 ${20 + usePhase * 15}px ${colors.glow})` : 'none',
+            transition: 'filter 0.5s ease-out',
+          }}>
+            <ArcanaCard arcana={arcana} size="large" />
+          </div>
+        </div>
+        
+        {/* Use animation effects */}
+        {type === 'use' && usePhase === 1 && [...Array(4)].map((_, i) => (
+          <div
+            key={`wave-${i}`}
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              width: 120,
+              height: 120,
+              borderRadius: '50%',
+              border: `2px solid ${colors.inner}`,
+              boxShadow: `0 0 20px ${colors.glow}, inset 0 0 20px ${colors.glow}`,
+              transform: 'translate(-50%, -50%)',
+              animation: `energyWave 2s ease-out ${i * 0.35}s infinite`,
+              pointerEvents: 'none',
+            }}
+          />
+        ))}
+        {type === 'use' && usePhase >= 2 && [...Array(20)].map((_, i) => {
+          const angle = Math.random() * Math.PI * 2;
+          const distance = 60 + Math.random() * 80;
+          return (
+            <div
+              key={`spark-${i}`}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                width: 4,
+                height: 4,
+                borderRadius: '50%',
+                background: colors.inner,
+                boxShadow: `0 0 8px ${colors.glow}`,
+                '--tx': `${Math.cos(angle) * distance}px`,
+                '--ty': `${Math.sin(angle) * distance}px`,
+                animation: `sparkFloat ${1 + Math.random() * 0.8}s ease-out forwards`,
+                animationDelay: `${Math.random() * 0.2}s`,
+                pointerEvents: 'none',
+              }}
+            />
+          );
+        })}
+        
+        {/* Description text */}
+        <div style={{
+          position: 'absolute',
+          bottom: '15%',
+          left: 0,
+          right: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          animation: type === 'use' && usePhase >= 2
+            ? 'textFadeOut 0.8s ease-out forwards'
+            : 'textReveal 0.6s ease-out 0.5s forwards',
+          opacity: 0,
+        }}>
+          <div style={{
+            fontSize: 'clamp(0.95rem, 2.5vw, 1.15rem)',
+            color: '#d8dee9',
+            lineHeight: 1.6,
+            textShadow: '0 2px 10px rgba(0,0,0,0.8)',
+            padding: '0 20px',
+            maxWidth: 550,
+            textAlign: 'center',
+          }}>
+            {arcana.description}
+          </div>
+          {type === 'draw' && (
+            <div style={{
+              marginTop: 16,
+              fontSize: '0.9rem',
+              color: '#88c0d0',
+              opacity: 0.8,
+            }}>
+              Click anywhere to continue
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
 }
 
 const styles = {
