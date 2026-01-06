@@ -636,6 +636,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                 isWhite={p.isWhite}
                 targetPosition={p.targetPosition}
                 square={p.square}
+                onClickSquare={(sq) => {
+                  const fileIndex = 'abcdefgh'.indexOf(sq[0]);
+                  const rankIndex = 8 - parseInt(sq[1], 10);
+                  handleTileClick(fileIndex, rankIndex);
+                }}
               />
             );
           })}
@@ -1054,7 +1059,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           type={cardReveal.type}
           mySocketId={mySocketId}
           stayUntilClick={cardReveal.stayUntilClick}
-          onDismiss={() => setCardReveal(null)}
+          onDismiss={() => {
+            setCardReveal(null);
+            // Unlock interactions after draw/use animation ends
+            setIsCardAnimationPlaying(false);
+          }}
         />
       )}
 

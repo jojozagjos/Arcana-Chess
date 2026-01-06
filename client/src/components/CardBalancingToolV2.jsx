@@ -697,6 +697,11 @@ export function CardBalancingToolV2({ onBack }) {
                   isWhite={p.isWhite}
                   targetPosition={p.targetPosition}
                   square={p.square}
+                  onClickSquare={(sq) => {
+                    const file = 'abcdefgh'.indexOf(sq[0]);
+                    const rank = 8 - parseInt(sq[1], 10);
+                    handleSquareClick(file, rank);
+                  }}
                 />
               ))}
 

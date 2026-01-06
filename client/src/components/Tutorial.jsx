@@ -931,7 +931,7 @@ function TutorialBoard({
 
 // Currently unused in the main flow, but kept for compatibility if you want
 // a simpler FEN-driven piece renderer later.
-function TutorialPieces({ fen }) {
+function TutorialPieces({ fen, onClickSquare }) {
   if (!fen) return null;
   const [placement] = fen.split(' ');
   const rows = placement.split('/');
@@ -956,6 +956,7 @@ function TutorialPieces({ fen }) {
             isWhite={isWhite}
             targetPosition={[x, 0.15, z]}
             square={square}
+            onClickSquare={onClickSquare}
           />
         );
 
