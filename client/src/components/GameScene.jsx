@@ -188,7 +188,43 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const handleArcanaTriggered = (payload) => {
       // Play sound effect for arcana activation (soundManager handles null gracefully)
       soundManager.play(payload.soundKey);
-      // Visual effects are already handled by ArcanaEffects component
+      
+      // Client-side highlights for utility cards
+      const { arcanaId, params } = payload || {};
+      if (!arcanaId) return;
+      
+      switch (arcanaId) {
+        case 'line_of_sight': {
+          const squares = params?.legalMoves || [];
+          setHighlightedSquares(Array.isArray(squares) ? squares : []);
+          setHighlightColor('#88c0d0');
+          break;
+        }
+        case 'map_fragments': {
+          const squares = params?.predictedSquares || [];
+          setHighlightedSquares(Array.isArray(squares) ? squares : []);
+          setHighlightColor('#bf616a');
+          break;
+        }
+        case 'quiet_thought': {
+          const squares = params?.threats || [];
+          setHighlightedSquares(Array.isArray(squares) ? squares : []);
+          setHighlightColor('#ff4444');
+          break;
+        }
+        case 'vision': {
+          // Vision stores opponent moves on client via hasVision effect; fallback to payload if provided
+          const squares = params?.moves || [];
+          if (Array.isArray(squares) && squares.length) {
+            setHighlightedSquares(squares);
+            setHighlightColor('#bf616a');
+          }
+          break;
+        }
+        default:
+          break;
+      }
+      // Highlights auto-clear on turn change via useEffect above
     };
     
     const handlePeekCardSelection = (data) => {
@@ -1310,6 +1346,9 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       case 'pieceWithMoves': return 'Select a piece with legal moves';
       case 'pieceWithPushTarget': return 'Select a piece that can be pushed';
       case 'knight': return 'Select a knight';
+      case 'bishop': return 'Select a bishop';
+      case 'pieceNoQueenKing': return 'Select a piece (no king/queen)';
+      case 'pieceNoKing': return 'Select a piece (no king)';
       case 'enemyPiece': return 'Select an enemy piece';
       case 'enemyRook': return 'Select an enemy rook';
       case 'square': return 'Select a square';
