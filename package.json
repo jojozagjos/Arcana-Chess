@@ -24,8 +24,6 @@
     "three": "0.151.2",
     "@react-three/fiber": "8.15.16",
     "@react-three/drei": "9.99.4",
-    "@react-three/postprocessing": "2.14.2",
-    "postprocessing": "6.33.3",
     "@tsparticles/react": "3.0.0",
     "@tsparticles/slim": "3.7.1"
   },

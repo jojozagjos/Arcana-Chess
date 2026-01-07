@@ -261,53 +261,6 @@ export const confettiPreset = (colors = ['#88c0d0', '#ffd54f', '#ce93d8', '#a3be
 });
 
 /**
- * Magic dust - subtle ambient particles
- */
-export const magicDustPreset = (color = '#88c0d0') => ({
-  fullScreen: false,
-  background: { color: { value: 'transparent' } },
-  fpsLimit: 60,
-  particles: {
-    number: { value: 30 },
-    color: { value: [color, '#ffffff'] },
-    shape: { type: 'circle' },
-    opacity: {
-      value: { min: 0.1, max: 0.5 },
-      animation: {
-        enable: true,
-        speed: 0.5,
-        minimumValue: 0.1,
-        sync: false,
-      },
-    },
-    size: {
-      value: { min: 1, max: 3 },
-      animation: {
-        enable: true,
-        speed: 1,
-        minimumValue: 0.5,
-        sync: false,
-      },
-    },
-    move: {
-      enable: true,
-      speed: 0.5,
-      direction: 'none',
-      random: true,
-      straight: false,
-      outModes: { default: 'bounce' },
-    },
-    twinkle: {
-      particles: {
-        enable: true,
-        frequency: 0.05,
-        opacity: 1,
-      },
-    },
-  },
-});
-
-/**
  * Dissolve effect - particles scatter and fade
  */
 export const dissolvePreset = (color = '#88c0d0') => ({
@@ -394,33 +347,3 @@ export const rarityColors = {
   },
 };
 
-/**
- * Get particle preset based on card rarity
- */
-export function getCardDrawPreset(rarity = 'common') {
-  const colors = rarityColors[rarity] || rarityColors.common;
-  return cardDrawPreset(colors.primary);
-}
-
-export function getCardUsePreset(rarity = 'common') {
-  const colors = rarityColors[rarity] || rarityColors.common;
-  return cardUsePreset(colors.primary);
-}
-
-export function getEnergyRingPreset(rarity = 'common') {
-  const colors = rarityColors[rarity] || rarityColors.common;
-  return energyRingPreset(colors.primary);
-}
-
-export default {
-  cardDrawPreset,
-  cardUsePreset,
-  energyRingPreset,
-  confettiPreset,
-  magicDustPreset,
-  dissolvePreset,
-  rarityColors,
-  getCardDrawPreset,
-  getCardUsePreset,
-  getEnergyRingPreset,
-};

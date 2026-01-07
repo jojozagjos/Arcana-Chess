@@ -178,6 +178,8 @@ export function Tutorial({ onBack }) {
   const [demoCardAvailable, setDemoCardAvailable] = useState(false);
   const [isCardAnimationPlaying, setIsCardAnimationPlaying] = useState(false);
   const [cardReveal, setCardReveal] = useState(null);
+  const [hasDrawnCard, setHasDrawnCard] = useState(false);
+  const [showAscensionParticles, setShowAscensionParticles] = useState(false);
 
   const step = TUTORIAL_STEPS[currentStep];
 
@@ -259,13 +261,20 @@ export function Tutorial({ onBack }) {
     setDemoCardAvailable(false);
     setIsCardAnimationPlaying(false);
     setPawnShields({ w: null, b: null });
+    setHasDrawnCard(false);
 
-    // Trigger ascension visual only at the ascension step
+    // Trigger ascension visual only at the ascension step (persist through the step)
     if (step.triggerAscension) {
       setHasAscended(true);
-      setTimeout(() => setHasAscended(false), 2500);
+      setShowAscensionParticles(true);
     } else {
+      setShowAscensionParticles(false);
       setHasAscended(false);
+    }
+
+    // For targeting step, prompt the player to click the card first
+    if (step.cardTargeting && DEMO_CARD) {
+      setFeedback('Click the Shield Pawn card, then click your pawn at d2 to protect it.');
     }
   }, [step.id, step.setupFen]);
 
@@ -323,9 +332,16 @@ export function Tutorial({ onBack }) {
     return targets;
   };
 
-  // Separate effect: Auto-select card for targeting after chess is ready
+  // Separate effect: for non-targeting demos, auto-select the card when available (skip draw step)
   useEffect(() => {
-    if (chess && step.cardTargeting && step.demoCard && DEMO_CARD && (step.showCards || demoCardAvailable)) {
+    if (
+      chess &&
+      !step.cardTargeting &&
+      !step.requireDraw &&
+      step.demoCard &&
+      DEMO_CARD &&
+      (step.showCards || demoCardAvailable)
+    ) {
       setSelectedCard(DEMO_CARD);
       const targets = calculateCardTargets(DEMO_CARD.id);
       setCardTargets(targets);
@@ -342,6 +358,10 @@ export function Tutorial({ onBack }) {
   // Handle card click for demo
   const handleCardClick = (card) => {
     if (!card) return;
+    if (step.requireDraw) {
+      setFeedback('Card use unlocks next step. Click Next to continue.');
+      return;
+    }
     
     if (selectedCard?.id === card.id) {
       // Deselect
@@ -563,7 +583,11 @@ export function Tutorial({ onBack }) {
     }
   };
 
-  const canProceed = !step.requireMove || feedback.includes('✓') || (step.demoCard && cardActivated) || (step.requireDraw && cardActivated) || (step.cardTargeting && cardActivated);
+  const canProceed = !step.requireMove
+    || feedback.includes('✓')
+    || (step.demoCard && cardActivated)
+    || (step.requireDraw && hasDrawnCard)
+    || (step.cardTargeting && cardActivated);
 
   return (
     <div style={styles.container}>
@@ -572,6 +596,11 @@ export function Tutorial({ onBack }) {
         {hasAscended && (
           <div style={styles.ascensionOverlay}>
             <div style={styles.ascensionText}>⚡ ASCENDED ⚡</div>
+          </div>
+        )}
+        {showAscensionParticles && (
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 11 }}>
+            <ParticleOverlay type="confetti" rarity="legendary" active />
           </div>
         )}
         <Canvas camera={{ position: [8, 10, 8], fov: 40 }}>
@@ -667,14 +696,14 @@ export function Tutorial({ onBack }) {
                     fontSize: '0.75rem',
                     borderRadius: 4,
                     border: '1px solid rgba(136,192,208,0.4)',
-                    background: cardActivated ? 'rgba(136,192,208,0.05)' : 'rgba(136,192,208,0.15)',
+                    background: demoCardAvailable ? 'rgba(136,192,208,0.05)' : 'rgba(136,192,208,0.15)',
                     color: '#88c0d0',
-                    cursor: cardActivated ? 'not-allowed' : 'pointer',
+                    cursor: demoCardAvailable ? 'not-allowed' : 'pointer',
                     transition: 'all 0.2s',
-                    opacity: cardActivated ? 0.5 : 1,
+                    opacity: demoCardAvailable ? 0.5 : 1,
                   }}
                   onClick={() => {
-                    if (!cardActivated && !isCardAnimationPlaying) {
+                    if (!demoCardAvailable && !isCardAnimationPlaying) {
                       setIsCardAnimationPlaying(true);
                       setFeedback('Drawing card...');
                       try { soundManager.play('cardDraw'); } catch {}
@@ -682,15 +711,15 @@ export function Tutorial({ onBack }) {
                       // Auto-complete draw after animation even if overlay isn't clicked
                       setTimeout(() => {
                         if (!demoCardAvailable) setDemoCardAvailable(true);
-                        if (!cardActivated) setCardActivated(true);
                         setIsCardAnimationPlaying(false);
-                        setFeedback('✓ Card drawn! In a real game, this would end your turn. Click Next to continue.');
+                        setFeedback('Card drawn! Click Next to continue.');
+                        setHasDrawnCard(true);
                       }, 1200);
                     }
                   }}
-                  disabled={cardActivated || isCardAnimationPlaying}
+                  disabled={demoCardAvailable || isCardAnimationPlaying}
                 >
-                  {isCardAnimationPlaying ? 'Drawing...' : cardActivated ? 'Drawn' : '+ Draw'}
+                  {isCardAnimationPlaying ? 'Drawing...' : demoCardAvailable ? 'Drawn' : '+ Draw'}
                 </button>
               )}
             </div>
@@ -708,7 +737,7 @@ export function Tutorial({ onBack }) {
               )}
               {(step.showCards || demoCardAvailable) && DEMO_CARD && (
                 <div
-                  style={{ position: 'relative' }}
+                  style={{ position: 'relative', pointerEvents: step.requireDraw ? 'none' : 'auto', opacity: step.requireDraw ? 0.9 : 1 }}
                   onMouseEnter={() => setHoveredCard(DEMO_CARD.id)}
                   onMouseLeave={() => setHoveredCard(null)}
                 >
@@ -784,8 +813,8 @@ export function Tutorial({ onBack }) {
             setCardReveal(null);
             setIsCardAnimationPlaying(false);
             setDemoCardAvailable(true);
-            setCardActivated(true);
-            setFeedback('✓ Card drawn! In a real game, this would end your turn. Click Next to continue.');
+            setHasDrawnCard(true);
+            setFeedback('Card drawn! Click Next to continue.');
           }}
         />
       )}

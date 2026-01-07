@@ -3,62 +3,20 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { squareToPosition } from './sharedHelpers.jsx';
 
-// Import GPU particle system
+// Import GPU particle system (only used components)
 import {
-  ParticleSystem,
-  ParticleBurst,
-  ParticleRing,
-  ParticleSparkles,
   ParticleShield,
   ParticlePoison,
-  ParticleLightning,
-  ParticleFire,
-  ParticleHeal,
-  ParticleIce,
-  ParticleCurse,
-  ParticleVortex,
-  CardUseEffect,
-  AscensionEffect,
 } from './particleSystem.jsx';
-
-// Re-export particle components for convenience
-export {
-  ParticleSystem,
-  ParticleBurst,
-  ParticleRing,
-  ParticleSparkles,
-  ParticleShield,
-  ParticlePoison,
-  ParticleLightning,
-  ParticleFire,
-  ParticleHeal,
-  ParticleIce,
-  ParticleCurse,
-  ParticleVortex,
-  CardUseEffect,
-  AscensionEffect,
-};
 
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
 
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-const easeInOutSine = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
 const easeOutElastic = (t) => {
   const c4 = (2 * Math.PI) / 3;
   return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
-};
-
-// Generate points on a sphere
-const spherePoint = (u, v) => {
-  const theta = u * Math.PI * 2;
-  const phi = v * Math.PI;
-  return [
-    Math.sin(phi) * Math.cos(theta),
-    Math.cos(phi),
-    Math.sin(phi) * Math.sin(theta)
-  ];
 };
 
 // ============================================================================
@@ -169,36 +127,6 @@ export function ShieldGlowEffect({ square }) {
       {/* GPU particle sparkles - replaces manual Sparkle components */}
       <ParticleShield color="#4fc3f7" radius={0.4} count={40} />
     </group>
-  );
-}
-
-// Helper component for rising sparkle particles
-function Sparkle({ position, color, speed = 1, delay = 0 }) {
-  const ref = useRef();
-  const startY = 0.1;
-  const endY = 1.2;
-  
-  useFrame((state) => {
-    if (ref.current) {
-      const t = ((state.clock.elapsedTime * speed + delay) % 1.5) / 1.5;
-      ref.current.position.y = startY + (endY - startY) * t;
-      ref.current.material.opacity = t < 0.2 ? t * 5 : t > 0.8 ? (1 - t) * 5 : 1;
-      const scale = 0.03 + Math.sin(t * Math.PI) * 0.02;
-      ref.current.scale.set(scale, scale, scale);
-    }
-  });
-  
-  return (
-    <mesh ref={ref} position={[position[0], startY, position[2]]}>
-      <sphereGeometry args={[1, 8, 8]} />
-      <meshStandardMaterial
-        emissive={color}
-        emissiveIntensity={4}
-        color={color}
-        transparent
-        opacity={0.8}
-      />
-    </mesh>
   );
 }
 
