@@ -6,6 +6,10 @@ import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { soundManager } from '../game/soundManager.js';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
+
+// Load particle overlay for 2D effects
+import { ParticleOverlay } from '../game/arcana/ParticleOverlay.jsx';
+
 // Load ShieldGlowEffect lazily to match other dynamic imports and enable code-splitting
 const ShieldGlowEffect = React.lazy(() =>
   import('../game/arcana/arcanaVisuals.jsx').then((m) => ({ default: m.ShieldGlowEffect }))
@@ -977,12 +981,30 @@ function TutorialPieces({ fen, onClickSquare }) {
 
 function CardRevealAnimation({ arcana, type, onDismiss }) {
   const [usePhase, setUsePhase] = React.useState(0);
+  const [useProgress, setUseProgress] = React.useState(0); // 0..1 ramp between phase 1 and 2
   
   React.useEffect(() => {
     if (type === 'use') {
-      const t1 = setTimeout(() => setUsePhase(1), 800);
-      const t2 = setTimeout(() => setUsePhase(2), 1800);
-      return () => { clearTimeout(t1); clearTimeout(t2); };
+      // Shorter, tighter timing so the effect starts sooner and finishes cleanly
+      const t1 = setTimeout(() => setUsePhase(1), 600);
+      const t2 = setTimeout(() => setUsePhase(2), 1400);
+
+      // Smooth progress ramp between t1 and t2 (600ms -> 1400ms)
+      const start = performance.now();
+      let rafId = null;
+      const tick = (now) => {
+        const elapsed = now - start;
+        const tStart = 600;
+        const tEnd = 1400;
+        let p = 0;
+        if (elapsed >= tStart) p = Math.min(1, (elapsed - tStart) / (tEnd - tStart));
+        setUseProgress(p);
+        // stop requesting frames shortly after tEnd
+        if (elapsed < tEnd + 200) rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+
+      return () => { clearTimeout(t1); clearTimeout(t2); if (rafId) cancelAnimationFrame(rafId); };
     }
   }, [type]);
   
@@ -1080,19 +1102,20 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
           100% { background: rgba(0, 0, 0, 0); }
         }
         @keyframes energyWave {
-          0% { 
-            transform: translate(-50%, -50%) scale(0.3);
+          0% {
+            transform: translate(-50%, -50%) scale(0.6);
             opacity: 0;
             border-width: 3px;
           }
-          20% {
-            opacity: 0.8;
+          40% {
+            opacity: 0.9;
+            transform: translate(-50%, -50%) scale(1.05);
           }
-          70% {
-            opacity: 0.6;
+          80% {
+            opacity: 0.3;
           }
-          100% { 
-            transform: translate(-50%, -50%) scale(1.2);
+          100% {
+            transform: translate(-50%, -50%) scale(1.6);
             opacity: 0;
             border-width: 1px;
           }
@@ -1179,34 +1202,37 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
           transformStyle: 'preserve-3d',
         }}>
           <div style={{
-            position: 'relative',
-            animation: type === 'draw' ? 'innerGlow 2s ease-in-out infinite, floatCard 3s ease-in-out infinite' : 'none',
-            filter: type === 'use' ? `drop-shadow(0 0 ${20 + usePhase * 15}px ${colors.glow})` : 'none',
-            transition: 'filter 0.5s ease-out',
+              position: 'relative',
+              animation: type === 'draw' ? 'innerGlow 2s ease-in-out infinite, floatCard 3s ease-in-out infinite' : 'none',
+              // Smooth the glow intensity using useProgress (ramps 0..1 between phases)
+              filter: type === 'use'
+                ? `drop-shadow(0 0 ${20 + useProgress * 60}px ${colors.glow})`
+                : 'none',
+              transition: 'filter 0.25s linear, transform 0.25s linear, opacity 0.25s linear',
           }}>
             <ArcanaCard arcana={arcana} size="large" />
           </div>
         </div>
         
-        {/* Use animation effects */}
-        {type === 'use' && usePhase === 1 && [...Array(4)].map((_, i) => (
-          <div
-            key={`wave-${i}`}
-            style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              width: 120,
-              height: 120,
-              borderRadius: '50%',
-              border: `2px solid ${colors.inner}`,
-              boxShadow: `0 0 20px ${colors.glow}, inset 0 0 20px ${colors.glow}`,
-              transform: 'translate(-50%, -50%)',
-              animation: `energyWave 2s ease-out ${i * 0.35}s infinite`,
-              pointerEvents: 'none',
-            }}
+        {/* Use animation effects - GPU particle system */}
+        {type === 'use' && usePhase >= 1 && (
+          <ParticleOverlay
+            type={usePhase === 1 ? 'ring' : 'dissolve'}
+            rarity={arcana.rarity || 'common'}
+            active={true}
           />
-        ))}
+        )}
+        
+        {/* Draw animation particles */}
+        {type === 'draw' && (
+          <ParticleOverlay
+            type="draw"
+            rarity={arcana.rarity || 'common'}
+            active={true}
+          />
+        )}
+        
+        {/* Dissolve sparks during phase 2 */}
         {type === 'use' && usePhase >= 2 && [...Array(20)].map((_, i) => {
           const angle = Math.random() * Math.PI * 2;
           const distance = 60 + Math.random() * 80;

@@ -3,6 +3,42 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { squareToPosition } from './sharedHelpers.jsx';
 
+// Import GPU particle system
+import {
+  ParticleSystem,
+  ParticleBurst,
+  ParticleRing,
+  ParticleSparkles,
+  ParticleShield,
+  ParticlePoison,
+  ParticleLightning,
+  ParticleFire,
+  ParticleHeal,
+  ParticleIce,
+  ParticleCurse,
+  ParticleVortex,
+  CardUseEffect,
+  AscensionEffect,
+} from './particleSystem.jsx';
+
+// Re-export particle components for convenience
+export {
+  ParticleSystem,
+  ParticleBurst,
+  ParticleRing,
+  ParticleSparkles,
+  ParticleShield,
+  ParticlePoison,
+  ParticleLightning,
+  ParticleFire,
+  ParticleHeal,
+  ParticleIce,
+  ParticleCurse,
+  ParticleVortex,
+  CardUseEffect,
+  AscensionEffect,
+};
+
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
@@ -130,20 +166,8 @@ export function ShieldGlowEffect({ square }) {
         />
       </mesh>
       
-      {/* Rising sparkles */}
-      {[...Array(12)].map((_, i) => {
-        const angle = (i / 12) * Math.PI * 2;
-        const radius = 0.3 + Math.random() * 0.2;
-        return (
-          <Sparkle
-            key={i}
-            position={[Math.cos(angle) * radius, 0, Math.sin(angle) * radius]}
-            color="#e1f5fe"
-            speed={0.8 + Math.random() * 0.4}
-            delay={i * 0.1}
-          />
-        );
-      })}
+      {/* GPU particle sparkles - replaces manual Sparkle components */}
+      <ParticleShield color="#4fc3f7" radius={0.4} count={40} />
     </group>
   );
 }
@@ -273,6 +297,9 @@ export function PoisonedPieceEffect({ square, turnsLeft }) {
           opacity={0.25}
         />
       </mesh>
+      
+      {/* GPU particle poison bubbles */}
+      <ParticlePoison color={baseColor} intensity={urgency} count={30} />
     </group>
   );
 }

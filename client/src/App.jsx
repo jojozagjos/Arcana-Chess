@@ -8,16 +8,26 @@ import { CardBalancingToolV2 } from './components/CardBalancingToolV2.jsx';
 import { socket } from './game/socket.js';
 
 export function App() {
+  const SETTINGS_KEY = 'arcanaChess.settings';
+
   const [screen, setScreen] = useState('main-menu');
   const [gameState, setGameState] = useState(null);
   const [ascendedInfo, setAscendedInfo] = useState(null);
   const [lastArcanaEvent, setLastArcanaEvent] = useState(null);
   const [gameEndOutcome, setGameEndOutcome] = useState(null);
   const [devMode, setDevMode] = useState(false);
-  const [globalSettings, setGlobalSettings] = useState({
-    audio: { master: 0.8, music: 0.5, sfx: 0.8 },
-    graphics: { quality: 'medium', postProcessing: true, shadows: true },
-    gameplay: { showLegalMoves: true, highlightLastMove: true },
+  const [globalSettings, setGlobalSettings] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {
+      // ignore parse errors and fall back to defaults
+    }
+    return {
+      audio: { master: 0.8, music: 0.5, sfx: 0.8 },
+      graphics: { quality: 'medium', postProcessing: true, shadows: true },
+      gameplay: { showLegalMoves: true, highlightLastMove: true },
+    };
   });
 
   useEffect(() => {
@@ -68,10 +78,18 @@ export function App() {
   }, [ascendedInfo]);
 
   const handleSettingsChange = (patch) => {
-    setGlobalSettings((prev) => ({
-      ...prev,
-      ...patch,
-    }));
+    setGlobalSettings((prev) => {
+      const next = {
+        ...prev,
+        ...patch,
+      };
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+      } catch (e) {
+        // ignore storage errors (e.g., private mode)
+      }
+      return next;
+    });
   };
 
   const handleBackToMenu = () => {

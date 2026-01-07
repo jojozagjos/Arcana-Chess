@@ -13,6 +13,7 @@ import { squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
+import { ParticleOverlay } from '../game/arcana/ParticleOverlay.jsx';
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
 // ArcanaVisualHost renders all effects using the shared arcanaVisuals module
 
@@ -1444,6 +1445,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
 
   // For use animation, we need state to track phases
   const [usePhase, setUsePhase] = React.useState(0);
+  const [useProgress, setUseProgress] = React.useState(0);
   
   React.useEffect(() => {
     if (type === 'use') {
@@ -1452,7 +1454,22 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
       // Phase 3: Card dissolves into energy (2-3.5s)
       const t1 = setTimeout(() => setUsePhase(1), 800);
       const t2 = setTimeout(() => setUsePhase(2), 1800);
-      return () => { clearTimeout(t1); clearTimeout(t2); };
+      
+      // Progress tracking for smooth particle transitions
+      const startTime = Date.now();
+      const duration = 2000; // 2 second glow phase
+      const progressInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(1, elapsed / duration);
+        setUseProgress(progress);
+        if (progress >= 1) clearInterval(progressInterval);
+      }, 50);
+      
+      return () => { 
+        clearTimeout(t1); 
+        clearTimeout(t2);
+        clearInterval(progressInterval);
+      };
     }
   }, [type]);
 
@@ -1710,59 +1727,22 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           </div>
         </div>
         
-        {/* Use animation effects - flowing energy */}
-        {type === 'use' && (
-          <>
-            {/* Central energy burst on dissolve - removed circle */}
-            
-            {/* Expanding energy waves - only during glow phase */}
-            {usePhase === 1 && [...Array(4)].map((_, i) => (
-              <div
-                key={`wave-${i}`}
-                style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  width: 120,
-                  height: 120,
-                  borderRadius: '50%',
-                  border: `2px solid ${colors.inner}`,
-                  boxShadow: `0 0 20px ${colors.glow}, inset 0 0 20px ${colors.glow}`,
-                  transform: 'translate(-50%, -50%)',
-                  animation: `energyWave 2s ease-out ${i * 0.35}s infinite`,
-                  pointerEvents: 'none',
-                }}
-              />
-            ))}
-            
-            {/* Floating energy orbs - removed circles */}
-            
-            {/* Sparks that fly outward */}
-            {usePhase >= 2 && [...Array(20)].map((_, i) => {
-              const angle = Math.random() * Math.PI * 2;
-              const distance = 60 + Math.random() * 80;
-              return (
-                <div
-                  key={`spark-${i}`}
-                  style={{
-                    position: 'absolute',
-                    top: '50%',
-                    left: '50%',
-                    width: 4,
-                    height: 4,
-                    borderRadius: '50%',
-                    background: colors.inner,
-                    boxShadow: `0 0 8px ${colors.glow}`,
-                    '--tx': `${Math.cos(angle) * distance}px`,
-                    '--ty': `${Math.sin(angle) * distance}px`,
-                    animation: `sparkFloat ${1 + Math.random() * 0.8}s ease-out forwards`,
-                    animationDelay: `${Math.random() * 0.2}s`,
-                    pointerEvents: 'none',
-                  }}
-                />
-              );
-            })}
-          </>
+        {/* Use animation effects - GPU-accelerated particles */}
+        {type === 'use' && usePhase >= 1 && useProgress > 0.05 && (
+          <ParticleOverlay
+            type={usePhase === 1 ? 'ring' : 'dissolve'}
+            rarity={arcana.rarity || 'common'}
+            active={true}
+          />
+        )}
+        
+        {/* Draw animation particles */}
+        {type === 'draw' && (
+          <ParticleOverlay
+            type="draw"
+            rarity={arcana.rarity || 'common'}
+            active={true}
+          />
         )}
       </div>
     </>
