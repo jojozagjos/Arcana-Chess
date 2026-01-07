@@ -178,7 +178,6 @@ export function Tutorial({ onBack }) {
   const [demoCardAvailable, setDemoCardAvailable] = useState(false);
   const [isCardAnimationPlaying, setIsCardAnimationPlaying] = useState(false);
   const [cardReveal, setCardReveal] = useState(null);
-  const [hasDrawnCard, setHasDrawnCard] = useState(false);
 
   const step = TUTORIAL_STEPS[currentStep];
 
@@ -260,7 +259,6 @@ export function Tutorial({ onBack }) {
     setDemoCardAvailable(false);
     setIsCardAnimationPlaying(false);
     setPawnShields({ w: null, b: null });
-    setHasDrawnCard(false);
 
     // Trigger ascension visual only at the ascension step
     if (step.triggerAscension) {
@@ -268,11 +266,6 @@ export function Tutorial({ onBack }) {
       setTimeout(() => setHasAscended(false), 2500);
     } else {
       setHasAscended(false);
-    }
-
-    // For targeting step, prompt the player to click the card first
-    if (step.cardTargeting && DEMO_CARD) {
-      setFeedback('Click the Shield Pawn card, then click your pawn at d2 to protect it.');
     }
   }, [step.id, step.setupFen]);
 
@@ -330,16 +323,9 @@ export function Tutorial({ onBack }) {
     return targets;
   };
 
-  // Separate effect: for non-targeting demos, auto-select the card when available (skip draw step)
+  // Separate effect: Auto-select card for targeting after chess is ready
   useEffect(() => {
-    if (
-      chess &&
-      !step.cardTargeting &&
-      !step.requireDraw &&
-      step.demoCard &&
-      DEMO_CARD &&
-      (step.showCards || demoCardAvailable)
-    ) {
+    if (chess && step.cardTargeting && step.demoCard && DEMO_CARD && (step.showCards || demoCardAvailable)) {
       setSelectedCard(DEMO_CARD);
       const targets = calculateCardTargets(DEMO_CARD.id);
       setCardTargets(targets);
@@ -356,10 +342,6 @@ export function Tutorial({ onBack }) {
   // Handle card click for demo
   const handleCardClick = (card) => {
     if (!card) return;
-    if (step.requireDraw) {
-      setFeedback('Card use unlocks next step. Click Next to continue.');
-      return;
-    }
     
     if (selectedCard?.id === card.id) {
       // Deselect
@@ -391,11 +373,11 @@ export function Tutorial({ onBack }) {
     if (!chess) return;
 
     // Handle card targeting mode first (highest priority, works even without step.requireMove)
-        if (selectedCard && cardTargets.includes(square)) {
+    if (selectedCard && cardTargets.includes(square)) {
       // Card target selected!
       if (step.cardTargeting && step.demoCard === selectedCard.id) {
         // Trigger use animation for the card
-            try { soundManager.play('arcana:shield_pawn'); } catch {}
+        try { soundManager.play('arcana:shield_pawn'); } catch {}
         setCardReveal({ arcana: selectedCard, type: 'use' });
         setIsCardAnimationPlaying(true);
         
@@ -581,11 +563,7 @@ export function Tutorial({ onBack }) {
     }
   };
 
-  const canProceed = !step.requireMove
-    || feedback.includes('✓')
-    || (step.demoCard && cardActivated)
-    || (step.requireDraw && hasDrawnCard)
-    || (step.cardTargeting && cardActivated);
+  const canProceed = !step.requireMove || feedback.includes('✓') || (step.demoCard && cardActivated) || (step.requireDraw && cardActivated) || (step.cardTargeting && cardActivated);
 
   return (
     <div style={styles.container}>
@@ -689,14 +667,14 @@ export function Tutorial({ onBack }) {
                     fontSize: '0.75rem',
                     borderRadius: 4,
                     border: '1px solid rgba(136,192,208,0.4)',
-                    background: demoCardAvailable ? 'rgba(136,192,208,0.05)' : 'rgba(136,192,208,0.15)',
+                    background: cardActivated ? 'rgba(136,192,208,0.05)' : 'rgba(136,192,208,0.15)',
                     color: '#88c0d0',
-                    cursor: demoCardAvailable ? 'not-allowed' : 'pointer',
+                    cursor: cardActivated ? 'not-allowed' : 'pointer',
                     transition: 'all 0.2s',
-                    opacity: demoCardAvailable ? 0.5 : 1,
+                    opacity: cardActivated ? 0.5 : 1,
                   }}
                   onClick={() => {
-                    if (!demoCardAvailable && !isCardAnimationPlaying) {
+                    if (!cardActivated && !isCardAnimationPlaying) {
                       setIsCardAnimationPlaying(true);
                       setFeedback('Drawing card...');
                       try { soundManager.play('cardDraw'); } catch {}
@@ -704,15 +682,15 @@ export function Tutorial({ onBack }) {
                       // Auto-complete draw after animation even if overlay isn't clicked
                       setTimeout(() => {
                         if (!demoCardAvailable) setDemoCardAvailable(true);
+                        if (!cardActivated) setCardActivated(true);
                         setIsCardAnimationPlaying(false);
-                        setFeedback('Card drawn! Click Next to continue.');
-                        setHasDrawnCard(true);
+                        setFeedback('✓ Card drawn! In a real game, this would end your turn. Click Next to continue.');
                       }, 1200);
                     }
                   }}
-                  disabled={demoCardAvailable || isCardAnimationPlaying}
+                  disabled={cardActivated || isCardAnimationPlaying}
                 >
-                  {isCardAnimationPlaying ? 'Drawing...' : demoCardAvailable ? 'Drawn' : '+ Draw'}
+                  {isCardAnimationPlaying ? 'Drawing...' : cardActivated ? 'Drawn' : '+ Draw'}
                 </button>
               )}
             </div>
@@ -730,7 +708,7 @@ export function Tutorial({ onBack }) {
               )}
               {(step.showCards || demoCardAvailable) && DEMO_CARD && (
                 <div
-                  style={{ position: 'relative', pointerEvents: step.requireDraw ? 'none' : 'auto', opacity: step.requireDraw ? 0.9 : 1 }}
+                  style={{ position: 'relative' }}
                   onMouseEnter={() => setHoveredCard(DEMO_CARD.id)}
                   onMouseLeave={() => setHoveredCard(null)}
                 >
@@ -806,8 +784,8 @@ export function Tutorial({ onBack }) {
             setCardReveal(null);
             setIsCardAnimationPlaying(false);
             setDemoCardAvailable(true);
-            setHasDrawnCard(true);
-            setFeedback('Card drawn! Click Next to continue.');
+            setCardActivated(true);
+            setFeedback('✓ Card drawn! In a real game, this would end your turn. Click Next to continue.');
           }}
         />
       )}
@@ -1004,7 +982,6 @@ function TutorialPieces({ fen, onClickSquare }) {
 function CardRevealAnimation({ arcana, type, onDismiss }) {
   const [usePhase, setUsePhase] = React.useState(0);
   const [useProgress, setUseProgress] = React.useState(0); // 0..1 ramp between phase 1 and 2
-  const [sparkSeed, setSparkSeed] = React.useState(0);
   
   React.useEffect(() => {
     if (type === 'use') {
@@ -1030,13 +1007,7 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
       return () => { clearTimeout(t1); clearTimeout(t2); if (rafId) cancelAnimationFrame(rafId); };
     }
   }, [type]);
-
-  // When entering phase 2, create a stable seed so sparks are generated once
-  React.useEffect(() => {
-    if (usePhase === 2) setSparkSeed(Math.random());
-  }, [usePhase]);
-
-  // Memoize sparks so they are created only once per seed and don't re-render on RAF ticks
+  
   const rarityColors = {
     common: { glow: 'rgba(200, 200, 200, 0.8)', inner: '#c8c8c8' },
     uncommon: { glow: 'rgba(76, 175, 80, 0.8)', inner: '#4caf50' },
@@ -1045,38 +1016,6 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
     legendary: { glow: 'rgba(255, 193, 7, 0.9)', inner: '#ffc107' },
   };
   const colors = rarityColors[arcana.rarity] || { glow: 'rgba(136, 192, 208, 0.8)', inner: '#88c0d0' };
-
-  // Memoize sparks so they are created only once per seed and don't re-render on RAF ticks
-  const sparks = React.useMemo(() => {
-    if (usePhase < 2) return null;
-    const count = 10; // reduced from 20 to lower CPU cost
-    return [...Array(count)].map((_, i) => {
-      const rnd = Math.abs(Math.sin(sparkSeed * (i + 1)));
-      const angle = rnd * Math.PI * 2;
-      const distance = 60 + rnd * 80;
-      const delay = Math.random() * 0.2;
-      return (
-        <div
-          key={`spark-${sparkSeed}-${i}`}
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            width: 4,
-            height: 4,
-            borderRadius: '50%',
-            background: colors.inner,
-            boxShadow: `0 0 8px ${colors.glow}`,
-            '--tx': `${Math.cos(angle) * distance}px`,
-            '--ty': `${Math.sin(angle) * distance}px`,
-            animation: `sparkFloat ${1 + Math.random() * 0.8}s ease-out forwards`,
-            animationDelay: `${delay}s`,
-            pointerEvents: 'none',
-          }}
-        />
-      );
-    });
-  }, [sparkSeed, usePhase, arcana.rarity]);
 
   return (
     <>
@@ -1283,23 +1222,6 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
             active={true}
           />
         )}
-        {/* Energy wave visual (CSS keyframes) */}
-        {type === 'use' && usePhase >= 1 && (
-          <div style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: usePhase === 1 ? 220 : 360,
-            height: usePhase === 1 ? 220 : 420,
-            borderRadius: '50%',
-            border: `3px solid ${colors.inner}`,
-            boxShadow: `0 0 30px ${colors.glow}`,
-            pointerEvents: 'none',
-            animation: 'energyWave 900ms ease-out forwards',
-            zIndex: 2,
-          }} />
-        )}
         
         {/* Draw animation particles */}
         {type === 'draw' && (
@@ -1310,8 +1232,31 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
           />
         )}
         
-        {/* Dissolve sparks during phase 2 (memoized) */}
-        {type === 'use' && usePhase >= 2 && sparks}
+        {/* Dissolve sparks during phase 2 */}
+        {type === 'use' && usePhase >= 2 && [...Array(20)].map((_, i) => {
+          const angle = Math.random() * Math.PI * 2;
+          const distance = 60 + Math.random() * 80;
+          return (
+            <div
+              key={`spark-${i}`}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                width: 4,
+                height: 4,
+                borderRadius: '50%',
+                background: colors.inner,
+                boxShadow: `0 0 8px ${colors.glow}`,
+                '--tx': `${Math.cos(angle) * distance}px`,
+                '--ty': `${Math.sin(angle) * distance}px`,
+                animation: `sparkFloat ${1 + Math.random() * 0.8}s ease-out forwards`,
+                animationDelay: `${Math.random() * 0.2}s`,
+                pointerEvents: 'none',
+              }}
+            />
+          );
+        })}
         
         {/* Description text */}
         <div style={{

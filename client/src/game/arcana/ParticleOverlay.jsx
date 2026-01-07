@@ -3,7 +3,7 @@
  * Renders tsparticles effects for UI overlays (card draw/use screens)
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Particles from '@tsparticles/react';
 import { loadSlim } from '@tsparticles/slim';
 import {
@@ -36,16 +36,17 @@ export function ParticleOverlay({
   rarity = 'common',
   active = true,
   style = {},
+  density = 1, // 0.5=low, 1=normal, 1.5=high
   onComplete,
 }) {
   const [isReady, setIsReady] = useState(engineInitialized);
-  const [instanceId] = useState(() => `particles-${type}-${Math.random().toString(36).slice(2)}`);
+  const idRef = useRef(`particles-${Math.random().toString(36).slice(2, 9)}`);
 
   // Get color based on rarity
   const color = rarityColors[rarity]?.primary || rarityColors.common.primary;
 
-  // Select preset based on type
-  const getOptions = useCallback(() => {
+  // Select preset based on type (memoized to avoid recreating options each render)
+  const baseOptions = useMemo(() => {
     switch (type) {
       case 'draw':
         return cardDrawPreset(color);
@@ -62,8 +63,19 @@ export function ParticleOverlay({
     }
   }, [type, color]);
 
-  // Memoize options to avoid recreating and remounting the particle system every render
-  const options = useMemo(() => getOptions(), [getOptions]);
+  // Apply density scaling to emitter quantities (non-destructive copy)
+  const options = useMemo(() => {
+    const opt = JSON.parse(JSON.stringify(baseOptions));
+    const f = Math.max(0.2, Math.min(3, Number(density) || 1));
+    if (Array.isArray(opt.emitters)) {
+      opt.emitters.forEach((em) => {
+        if (em?.rate && typeof em.rate.quantity === 'number') {
+          em.rate.quantity = Math.max(1, Math.round(em.rate.quantity * f));
+        }
+      });
+    }
+    return opt;
+  }, [baseOptions, density]);
 
   // Initialize engine on mount
   const particlesInit = useCallback(async (engine) => {
@@ -105,7 +117,7 @@ export function ParticleOverlay({
       }}
     >
       <Particles
-        id={instanceId}
+        id={idRef.current}
         init={particlesInit}
         options={options}
         style={{

@@ -100,7 +100,12 @@ export function CardBalancingToolV2({ onBack }) {
 
   // Load effects module (shared with GameScene)
   useEffect(() => {
-    import('../game/arcana/arcanaVisuals.jsx').then(m => setEffectsModule(m)).catch(() => {});
+    import('../game/arcana/arcanaVisuals.jsx')
+      .then(m => setEffectsModule(m))
+      .catch((err) => {
+        console.warn('Failed to load arcanaVisuals.jsx in Balancing Tool, continuing without visuals', err);
+        setEffectsModule({});
+      });
   }, []);
 
   const addLog = (message, type = 'info') => {
@@ -138,6 +143,7 @@ export function CardBalancingToolV2({ onBack }) {
   };
 
   // Server validation: creates a test game, applies arcana, verifies behavior
+  const SERVER_TEST_TIMEOUT_MS = 5000; // make configurable later via settings
   const testWithServer = async () => {
     if (!selectedCard) {
       addLog('Select a card first to test with server', 'warning');
@@ -170,14 +176,14 @@ export function CardBalancingToolV2({ onBack }) {
         }
       });
 
-      // Timeout after 5 seconds
+      // Timeout guard
       setTimeout(() => {
         if (serverTestActive) {
           setServerTestActive(false);
-          addLog('Server test timed out', 'error');
+          addLog(`Server test timed out after ${SERVER_TEST_TIMEOUT_MS}ms`, 'error');
           setServerTestResult({ success: false, error: 'Timeout' });
         }
-      }, 5000);
+      }, SERVER_TEST_TIMEOUT_MS);
 
     } catch (err) {
       setServerTestActive(false);
