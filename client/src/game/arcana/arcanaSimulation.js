@@ -390,7 +390,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
               result.success = true;
               result.message = `Pawn Guard: Protected piece at ${protectedSquare}`;
               result.visualEffect = 'shield';
-              result.soundEffect = 'arcana:shield';
+              result.soundEffect = 'arcana:pawn_guard';
             } else {
               result.message = 'Pawn Guard: No friendly piece behind this pawn';
             }

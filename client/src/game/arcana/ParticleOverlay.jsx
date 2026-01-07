@@ -3,7 +3,7 @@
  * Renders tsparticles effects for UI overlays (card draw/use screens)
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Particles from '@tsparticles/react';
 import { loadSlim } from '@tsparticles/slim';
 import {
@@ -39,6 +39,7 @@ export function ParticleOverlay({
   onComplete,
 }) {
   const [isReady, setIsReady] = useState(engineInitialized);
+  const [instanceId] = useState(() => `particles-${type}-${Math.random().toString(36).slice(2)}`);
 
   // Get color based on rarity
   const color = rarityColors[rarity]?.primary || rarityColors.common.primary;
@@ -60,6 +61,9 @@ export function ParticleOverlay({
         return cardDrawPreset(color);
     }
   }, [type, color]);
+
+  // Memoize options to avoid recreating and remounting the particle system every render
+  const options = useMemo(() => getOptions(), [getOptions]);
 
   // Initialize engine on mount
   const particlesInit = useCallback(async (engine) => {
@@ -101,9 +105,9 @@ export function ParticleOverlay({
       }}
     >
       <Particles
-        id={`particles-${type}-${Date.now()}`}
+        id={instanceId}
         init={particlesInit}
-        options={getOptions()}
+        options={options}
         style={{
           position: 'absolute',
           inset: 0,

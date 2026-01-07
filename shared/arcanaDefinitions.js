@@ -8,7 +8,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select a pawn to grant temporary protection: it cannot be captured for one enemy turn.',
     visual: { particles: false, animation: false, cutscene: false },
     visualLifecycle: { mode: 'untilTurnEnd', autoClearOnServerTurnEnd: true },
-    soundKey: 'arcana:shield',
+    soundKey: 'arcana:shield_pawn',
   },
     /* 'pawn_wall' removed: functionality replaced by 'pawn_guard' which now
       shields only the first friendly piece immediately behind a pawn for 1 turn */
@@ -28,7 +28,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Select a pawn. The first friendly piece immediately behind it in the same column is shielded for 1 turn (only that piece is protected).',
     visual: { particles: false, animation: true, cutscene: false },
-    soundKey: 'arcana:shield',
+    soundKey: 'arcana:pawn_guard',
   },
   {
     id: 'iron_fortress',
