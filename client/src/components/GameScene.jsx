@@ -1520,7 +1520,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         
         @keyframes energyWave {
           0% { 
-            transform: translate(-50%, -50%) scale(0.3);
+            transform: translate(-50%, -50%) scale(1);
             opacity: 0;
             border-width: 3px;
           }
@@ -1531,8 +1531,8 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
             opacity: 0.6;
           }
           100% { 
-            transform: translate(-50%, -50%) scale(1.2);
-            opacity: 0;
+            transform: translate(-50%, -50%) scale(5);
+            opacity: 1;
             border-width: 1px;
           }
         }

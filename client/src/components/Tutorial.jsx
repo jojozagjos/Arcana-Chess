@@ -6,7 +6,10 @@ import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { soundManager } from '../game/soundManager.js';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
-import { ShieldGlowEffect } from '../game/arcana/arcanaVisuals.jsx';
+// Load ShieldGlowEffect lazily to match other dynamic imports and enable code-splitting
+const ShieldGlowEffect = React.lazy(() =>
+  import('../game/arcana/arcanaVisuals.jsx').then((m) => ({ default: m.ShieldGlowEffect }))
+);
 
 // Sample arcana card for demonstration (just one)
 const DEMO_CARD = ARCANA_DEFINITIONS.find(c => c.id === 'shield_pawn');
@@ -110,7 +113,7 @@ const TUTORIAL_STEPS = [
     id: 8,
     title: 'Drawing Arcana Cards',
     description:
-      'After ascension, you can draw Arcana cards on your turn by clicking the "Draw Card" button. Drawing a card ends your turn and you must wait 2 full turns before drawing again.',
+      'After ascension, you can draw Arcana cards on your turn by clicking the "Draw Card" button. Drawing a card ends your turn — you cannot draw on your immediate next turn, but may draw again on the following turn.',
     instruction: 'Click the "Draw Card" button below to draw your first Arcana card.',
     setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
@@ -603,10 +606,14 @@ export function Tutorial({ onBack }) {
               </group>
               {/* Shield effect visuals */}
               {pawnShields.w?.square && (
-                <ShieldGlowEffect square={pawnShields.w.square} />
+                <React.Suspense fallback={null}>
+                  <ShieldGlowEffect square={pawnShields.w.square} />
+                </React.Suspense>
               )}
               {pawnShields.b?.square && (
-                <ShieldGlowEffect square={pawnShields.b.square} />
+                <React.Suspense fallback={null}>
+                  <ShieldGlowEffect square={pawnShields.b.square} />
+                </React.Suspense>
               )}
             </>
           )}

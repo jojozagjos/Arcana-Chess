@@ -212,9 +212,11 @@ export class GameManager {
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
       const lastDrawPly = gameState.lastDrawTurn[turnColor];
       console.log('[drawArcana] player', socket.id, 'color', turnColor, 'currentPly', currentPly, 'lastDrawPly', lastDrawPly, 'diff', currentPly - lastDrawPly);
-      // Require at least 4 plies between draws (2 full turn cycles)
-      if (currentPly - lastDrawPly < 4) {
-        throw new Error('Must wait 2 turns between draws');
+      // Require at least 2 plies between draws (opponent move + your next turn blocked,
+      // then allowed on the following turn). i.e. you cannot draw on your immediate
+      // next turn, but you can draw on the one after that.
+      if (currentPly - lastDrawPly < 2) {
+        throw new Error('Must wait 1 full turn between draws');
       }
 
       const newCard = pickWeightedArcana();
