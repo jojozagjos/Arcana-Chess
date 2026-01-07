@@ -14,6 +14,7 @@ import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
 import { ParticleOverlay } from '../game/arcana/ParticleOverlay.jsx';
+import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
 // ArcanaVisualHost renders all effects using the shared arcanaVisuals module
 
@@ -173,7 +174,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     };
 
     const handleArcanaUsed = (data) => {
-      soundManager.play('cardUse');
+      try {
+        // Prefer playing the arcana-specific sound (e.g. 'arcana:shield_pawn'),
+        // fallback to the generic cardUse SFX if absent.
+        const key = data?.arcana?.soundKey || (data?.arcana?.id ? `arcana:${data.arcana.id}` : null);
+        if (key) soundManager.play(key);
+        else soundManager.play('cardUse');
+      } catch (e) {
+        try { soundManager.play('cardUse'); } catch {}
+      }
       // Block card actions during animation
       setIsCardAnimationPlaying(true);
       // For uses, auto-dismiss after slower animation (3s animation)
@@ -478,6 +487,115 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     return pieces;
   };
 
+  function CardRevealOverlay({ arcana, type = 'use', stayUntilClick = false, onDismiss = () => {} }) {
+    const [usePhase, setUsePhase] = useState(0);
+    const [useProgress, setUseProgress] = useState(0);
+    const [sparkSeed, setSparkSeed] = useState(0);
+
+    useEffect(() => {
+      if (type === 'use') {
+        const t1 = setTimeout(() => setUsePhase(1), 600);
+        const t2 = setTimeout(() => setUsePhase(2), 1400);
+        const start = performance.now();
+        let rafId = null;
+        const tick = (now) => {
+          const elapsed = now - start;
+          const tStart = 600;
+          const tEnd = 1400;
+          let p = 0;
+          if (elapsed >= tStart) p = Math.min(1, (elapsed - tStart) / (tEnd - tStart));
+          setUseProgress(p);
+          if (elapsed < tEnd + 200) rafId = requestAnimationFrame(tick);
+        };
+        rafId = requestAnimationFrame(tick);
+        return () => { clearTimeout(t1); clearTimeout(t2); if (rafId) cancelAnimationFrame(rafId); };
+      }
+      return undefined;
+    }, [type]);
+
+    useEffect(() => { if (usePhase === 2) setSparkSeed(Math.random()); }, [usePhase]);
+
+    const rarityColors = {
+      common: { glow: 'rgba(200, 200, 200, 0.8)', inner: '#c8c8c8' },
+      uncommon: { glow: 'rgba(76, 175, 80, 0.8)', inner: '#4caf50' },
+      rare: { glow: 'rgba(33, 150, 243, 0.8)', inner: '#2196f3' },
+      epic: { glow: 'rgba(156, 39, 176, 0.8)', inner: '#9c27b0' },
+      legendary: { glow: 'rgba(255, 193, 7, 0.9)', inner: '#ffc107' },
+    };
+    const colors = rarityColors[arcana?.rarity] || { glow: 'rgba(136, 192, 208, 0.8)', inner: '#88c0d0' };
+
+    const sparks = React.useMemo(() => {
+      if (usePhase < 2) return null;
+      const count = 10;
+      return [...Array(count)].map((_, i) => {
+        const rnd = Math.abs(Math.sin(sparkSeed * (i + 1)));
+        const angle = rnd * Math.PI * 2;
+        const distance = 60 + rnd * 80;
+        const delay = Math.random() * 0.2;
+        return (
+          <div
+            key={`spark-${sparkSeed}-${i}`}
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              width: 4,
+              height: 4,
+              borderRadius: '50%',
+              background: colors.inner,
+              boxShadow: `0 0 8px ${colors.glow}`,
+              '--tx': `${Math.cos(angle) * distance}px`,
+              '--ty': `${Math.sin(angle) * distance}px`,
+              animation: `sparkFloat ${1 + Math.random() * 0.8}s ease-out forwards`,
+              animationDelay: `${delay}s`,
+              pointerEvents: 'none',
+            }}
+          />
+        );
+      });
+    }, [sparkSeed, usePhase, arcana?.rarity]);
+
+    return (
+      <div
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+          cursor: type === 'draw' && stayUntilClick ? 'pointer' : 'default',
+        }}
+        onClick={type === 'draw' && stayUntilClick ? onDismiss : undefined}
+      >
+        <style>{`
+          @keyframes energyWave { 0%{transform:translate(-50%,-50%) scale(0.6); opacity:0} 40%{opacity:0.9; transform:translate(-50%,-50%) scale(1.05)} 80%{opacity:0.3} 100%{transform:translate(-50%,-50%) scale(1.6); opacity:0}
+          } @keyframes sparkFloat { 0%{transform:translate(0,0);opacity:1} 100%{transform:translate(var(--tx),var(--ty)) scale(0);opacity:0} }
+        `}</style>
+
+        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div style={{ fontSize: 'clamp(1.4rem, 3vw, 1.6rem)', color: '#eceff4', fontWeight: 700, marginBottom: 8 }}>{type === 'draw' ? 'You drew an Arcana!' : 'Arcana Activated'}</div>
+          <div style={{ position: 'relative', animation: type === 'draw' ? 'none' : (usePhase === 0 ? 'none' : (usePhase === 1 ? 'none' : 'none')) }}>
+            <div style={{ position: 'relative', transformStyle: 'preserve-3d' }}>
+              <ArcanaCard arcana={arcana} size="large" />
+            </div>
+          </div>
+        </div>
+
+        {type === 'use' && usePhase >= 1 && (
+          <ParticleOverlay type={usePhase === 1 ? 'ring' : 'dissolve'} rarity={arcana?.rarity || 'common'} active={true} />
+        )}
+
+        {type === 'use' && usePhase >= 1 && (
+          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: usePhase === 1 ? 220 : 360, height: usePhase === 1 ? 220 : 420, borderRadius: '50%', border: `3px solid ${colors.inner}`, boxShadow: `0 0 30px ${colors.glow}`, pointerEvents: 'none', animation: 'energyWave 900ms ease-out forwards', zIndex: 2 }} />
+        )}
+
+        {type === 'draw' && (
+          <ParticleOverlay type="draw" rarity={arcana?.rarity || 'common'} active={true} />
+        )}
+
+        {type === 'use' && usePhase >= 2 && sparks}
+
+        <div style={{ position: 'absolute', bottom: '12%', left: 0, right: 0, textAlign: 'center', color: '#d8dee9' }}>{arcana?.description}</div>
+      </div>
+    );
+  }
+
   // Counter to ensure unique UIDs for promoted/new pieces
   const uidCounterRef = useRef(0);
 
@@ -703,6 +821,19 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         
         <OrbitControls ref={controlsRef} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
       </Canvas>
+
+      {/* Card reveal/use overlay (matches Tutorial visuals) */}
+      {cardReveal && (
+        <CardRevealOverlay
+          arcana={cardReveal.arcana}
+          type={cardReveal.type}
+          stayUntilClick={cardReveal.stayUntilClick}
+          onDismiss={() => {
+            setCardReveal(null);
+            setIsCardAnimationPlaying(false);
+          }}
+        />
+      )}
 
       <div style={styles.hud}>
         <div>Turn: {gameState?.turn === 'w' ? 'White' : 'Black'}</div>
