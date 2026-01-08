@@ -188,13 +188,21 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     };
 
     const handleArcanaUsed = (data) => {
-      soundManager.play('cardUse');
-      // Block card actions during animation
-      setIsCardAnimationPlaying(true);
-      // For uses, auto-dismiss after slower animation (3s animation)
-      setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'use', stayUntilClick: false });
-      setTimeout(() => setCardReveal(null), 3500);
-      setTimeout(() => setIsCardAnimationPlaying(false), 3500);
+      const isMyUse = data.playerId === socket?.id;
+      
+      if (isMyUse) {
+        soundManager.play('cardUse');
+        // Block card actions during animation
+        setIsCardAnimationPlaying(true);
+        // For uses, auto-dismiss after slower animation (3s animation)
+        setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'use', stayUntilClick: false });
+        setTimeout(() => setCardReveal(null), 3500);
+        setTimeout(() => setIsCardAnimationPlaying(false), 3500);
+      } else {
+        // Opponent used a card - just show text notification
+        setPendingMoveError(`Your opponent used ${data.arcana.name}`);
+        setTimeout(() => setPendingMoveError(''), 2000);
+      }
     };
 
     const handleAscended = () => {
@@ -205,9 +213,13 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       // Play sound effect for arcana activation (soundManager handles null gracefully)
       soundManager.play(payload.soundKey);
       
-      // Client-side highlights for utility cards
-      const { arcanaId, params } = payload || {};
+      // Client-side highlights for utility cards - ONLY show if YOU used the card
+      const { arcanaId, params, owner } = payload || {};
       if (!arcanaId) return;
+      
+      // Only process client-side highlights if this player is the owner of the effect
+      const isMyCard = owner === socket?.id;
+      if (!isMyCard) return; // Don't show opponent's card highlights
       
       switch (arcanaId) {
         case 'line_of_sight': {

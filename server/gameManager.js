@@ -64,7 +64,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       cursedSquares: [],  // [{ square, turns, setter }]
       sanctuaries: [],    // [{ square, turns }]
       fogOfWar: { w: false, b: false },
-      vision: { w: false, b: false },  // reveals opponent's legal moves
+      vision: { w: null, b: null },  // stores socketId of player who activated vision
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
@@ -317,15 +317,6 @@ export class GameManager {
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
           this.io.to(pid).emit('gameUpdated', serialised);
-        }
-      }
-
-      // Emit arcana triggered event for visuals
-      for (const use of appliedArcana) {
-        for (const pid of gameState.playerIds) {
-          if (!pid.startsWith('AI-')) {
-            this.io.to(pid).emit('arcanaTriggered', use);
-          }
         }
       }
 
@@ -1411,7 +1402,11 @@ export class GameManager {
     effects.ironFortress = { w: false, b: false };
     effects.bishopsBlessing = { w: null, b: null };
     effects.fogOfWar = { w: false, b: false };
-    effects.vision = { w: false, b: false };
+    // Only clear vision for the color whose turn just ended
+    const endingColor = gameState.chess.turn() === 'w' ? 'b' : 'w'; // The color that just finished
+    if (effects.vision[endingColor]) {
+      effects.vision[endingColor] = null;
+    }
     effects.focusFire = effects.focusFire || { w: false, b: false };
     // Keep structure consistent: doubleStrike stores objects or nulls per color
     effects.doubleStrike = { w: null, b: null };

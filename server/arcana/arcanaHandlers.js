@@ -157,22 +157,33 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     gameState.usedArcanaIdsByPlayer[socketId].push(defIndex);
     appliedDefs.push({ def, params });
 
-    // Notify both players if io is provided
+    // Notify players; send full params only to the owner to avoid leaking private info
     if (io) {
+      const ownerPayload = {
+        gameId: gameState.id,
+        arcanaId: def.id,
+        owner: socketId,
+        params,
+        soundKey: def.soundKey,
+        visual: def.visual,
+      };
+      const redactedPayload = {
+        gameId: gameState.id,
+        arcanaId: def.id,
+        owner: socketId,
+        params: null,
+        soundKey: def.soundKey,
+        visual: def.visual,
+      };
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
           io.to(pid).emit('arcanaUsed', {
             playerId: socketId,
             arcana: def,
           });
-          io.to(pid).emit('arcanaTriggered', {
-            gameId: gameState.id,
-            arcanaId: def.id,
-            owner: socketId,
-            params,
-            soundKey: def.soundKey,
-            visual: def.visual,
-          });
+          // Full payload to the owner, redacted payload to others
+          const payload = pid === socketId ? ownerPayload : redactedPayload;
+          io.to(pid).emit('arcanaTriggered', payload);
         }
       }
     }
@@ -716,15 +727,16 @@ function getMovesForColor(chess, color) {
   return moves;
 }
 
-function applyVision({ chess, gameState, moverColor }) {
+function applyVision({ chess, gameState, moverColor, socketId }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
   const opponentMoves = getMovesForColor(chess, opponentColor);
   
-  // Store vision state so client can display opponent moves
+  // Store vision state with the socketId so it only clears after the user's turn ends
   if (!gameState.activeEffects.vision) {
-    gameState.activeEffects.vision = { w: false, b: false };
+    gameState.activeEffects.vision = { w: null, b: null };
   }
-  gameState.activeEffects.vision[moverColor] = true;
+  // Store the socketId of who activated it, so we can check later
+  gameState.activeEffects.vision[moverColor] = socketId;
   
   return { params: { color: moverColor, revealedMoves: opponentMoves.length, moves: opponentMoves.map(m => m.to) } };
 }
