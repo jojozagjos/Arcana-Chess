@@ -221,6 +221,14 @@ export function Tutorial({ onBack }) {
     });
   });
 
+  // Tutorial music: start on mount, stop on unmount
+  useEffect(() => {
+    soundManager.playMusic('music:tutorial');
+    return () => {
+      soundManager.stopMusic();
+    };
+  }, []);
+
   useEffect(() => {
     const shouldReset = step.resetPosition !== false;
 

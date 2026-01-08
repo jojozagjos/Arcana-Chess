@@ -89,6 +89,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const opponentColorChar = opponentColor === 'white' ? 'w' : 'b';
   const hasVision = gameState?.activeEffects?.vision?.[myColor === 'white' ? 'w' : 'b'];
 
+  // In-game music: start on mount, stop on unmount
+  useEffect(() => {
+    soundManager.playMusic('music:ingame');
+    return () => {
+      soundManager.stopMusic();
+    };
+  }, []);
+
   useEffect(() => {
     if (hasVision && chess) {
       // Get all legal moves for opponent

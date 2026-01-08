@@ -6,11 +6,12 @@ import { Settings } from './components/Settings.jsx';
 import { ArcanaCompendium } from './components/ArcanaCompendium.jsx';
 import { CardBalancingToolV2 } from './components/CardBalancingToolV2.jsx';
 import { socket } from './game/socket.js';
+import { soundManager } from './game/soundManager.js';
 
 export function App() {
   const SETTINGS_KEY = 'arcanaChess.settings';
 
-  const [screen, setScreen] = useState('main-menu');
+  const [screen, setScreen] = useState('intro');
   const [gameState, setGameState] = useState(null);
   const [ascendedInfo, setAscendedInfo] = useState(null);
   const [lastArcanaEvent, setLastArcanaEvent] = useState(null);
@@ -24,11 +25,33 @@ export function App() {
       // ignore parse errors and fall back to defaults
     }
     return {
-      audio: { master: 0.8, music: 0.5, sfx: 0.8 },
+      audio: { master: 0.8, music: 0.5, sfx: 0.8, muted: false },
       graphics: { quality: 'medium', postProcessing: true, shadows: true },
       gameplay: { showLegalMoves: true, highlightLastMove: true },
     };
   });
+
+  // Ensure audio defaults include mute flag if loaded settings are missing it
+  useEffect(() => {
+    setGlobalSettings((prev) => ({
+      ...prev,
+      audio: {
+        master: prev.audio?.master ?? 0.8,
+        music: prev.audio?.music ?? 0.5,
+        sfx: prev.audio?.sfx ?? 0.8,
+        muted: prev.audio?.muted ?? false,
+      },
+      graphics: {
+        quality: prev.graphics?.quality ?? 'medium',
+        postProcessing: prev.graphics?.postProcessing ?? true,
+        shadows: prev.graphics?.shadows ?? true,
+      },
+      gameplay: {
+        showLegalMoves: prev.gameplay?.showLegalMoves ?? true,
+        highlightLastMove: prev.gameplay?.highlightLastMove ?? true,
+      },
+    }));
+  }, []);
 
   useEffect(() => {
     const handleGameStarted = (state) => {
@@ -77,6 +100,17 @@ export function App() {
     };
   }, [ascendedInfo]);
 
+  // Global music routing: play menu music on any menu-like screen; stop when entering gameplay/tutorial
+  useEffect(() => {
+    const menuScreens = ['intro', 'main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing'];
+    const isMenu = menuScreens.includes(screen);
+    if (isMenu) {
+      soundManager.playMusic('music:menu', { crossfadeMs: 600 });
+    } else {
+      soundManager.stopMusic({ fadeMs: 400 });
+    }
+  }, [screen]);
+
   const handleSettingsChange = (patch) => {
     setGlobalSettings((prev) => {
       const next = {
@@ -113,8 +147,35 @@ export function App() {
     }
   };
 
+  const IntroScreen = ({ onContinue }) => {
+    return (
+      <div style={introStyles.container}>
+        <div style={introStyles.backdrop} />
+        <div style={introStyles.card}>
+          <div style={introStyles.logo}>Arcana Chess</div>
+          <div style={introStyles.tagline}>Ascend. Command. Checkmate.</div>
+          <div style={introStyles.meta}>Immersive 3D chess with magical Arcana.</div>
+          <button style={introStyles.cta} onClick={onContinue}>
+            Click to continue ▸
+          </button>
+          <div style={introStyles.hint}>Audio will start after you continue.</div>
+        </div>
+        <div style={introStyles.glow1} />
+        <div style={introStyles.glow2} />
+      </div>
+    );
+  };
+
   return (
     <div style={{ width: '100vw', height: '100vh', backgroundColor: '#05060a', color: 'white' }}>
+      {screen === 'intro' && (
+        <IntroScreen
+          onContinue={() => {
+            try { soundManager.setEnabled(true); } catch (e) {}
+            setScreen('main-menu');
+          }}
+        />
+      )}
       {screen === 'main-menu' && (
         <MainMenu
           mode="root"
@@ -170,3 +231,89 @@ export function App() {
     </div>
   );
 }
+
+const introStyles = {
+  container: {
+    position: 'relative',
+    width: '100vw',
+    height: '100vh',
+    overflow: 'hidden',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'radial-gradient(circle at 20% 20%, #182033, #080a12)',
+    color: '#e5e9f0',
+    fontFamily: 'system-ui, sans-serif',
+  },
+  backdrop: {
+    position: 'absolute',
+    inset: 0,
+    background: 'linear-gradient(135deg, rgba(76,111,255,0.08), rgba(143,148,251,0.04))',
+    mixBlendMode: 'screen',
+  },
+  card: {
+    position: 'relative',
+    padding: '32px 38px',
+    borderRadius: 18,
+    background: 'rgba(5, 6, 10, 0.82)',
+    border: '1px solid rgba(255,255,255,0.06)',
+    boxShadow: '0 30px 80px rgba(0,0,0,0.65)',
+    textAlign: 'center',
+    zIndex: 2,
+  },
+  logo: {
+    fontSize: '2.6rem',
+    letterSpacing: '0.14em',
+    textTransform: 'uppercase',
+    marginBottom: 12,
+  },
+  tagline: {
+    fontSize: '1.2rem',
+    color: '#c7d2fe',
+    marginBottom: 8,
+  },
+  meta: {
+    fontSize: '0.95rem',
+    color: 'rgba(229,233,240,0.75)',
+    marginBottom: 24,
+  },
+  cta: {
+    padding: '12px 22px',
+    borderRadius: 999,
+    border: 'none',
+    background: 'linear-gradient(135deg, #4c6fff, #8f94fb)',
+    color: '#fdfdfd',
+    fontWeight: 700,
+    letterSpacing: '0.04em',
+    cursor: 'pointer',
+    fontSize: '1rem',
+    boxShadow: '0 12px 30px rgba(76,111,255,0.35)',
+  },
+  hint: {
+    marginTop: 10,
+    fontSize: '0.85rem',
+    color: 'rgba(229,233,240,0.65)',
+  },
+  glow1: {
+    position: 'absolute',
+    width: 320,
+    height: 320,
+    borderRadius: '50%',
+    background: 'radial-gradient(circle, rgba(76,111,255,0.35), rgba(76,111,255,0))',
+    top: '12%',
+    left: '14%',
+    filter: 'blur(40px)',
+    zIndex: 1,
+  },
+  glow2: {
+    position: 'absolute',
+    width: 280,
+    height: 280,
+    borderRadius: '50%',
+    background: 'radial-gradient(circle, rgba(143,148,251,0.3), rgba(143,148,251,0))',
+    bottom: '10%',
+    right: '12%',
+    filter: 'blur(45px)',
+    zIndex: 1,
+  },
+};

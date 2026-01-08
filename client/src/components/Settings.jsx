@@ -1,4 +1,5 @@
 import React from 'react';
+import { soundManager } from '../game/soundManager.js';
 
 export function Settings({ settings, onChange, onBack }) {
   const handleAudioChange = (key, value) => {
@@ -8,6 +9,20 @@ export function Settings({ settings, onChange, onBack }) {
         [key]: value,
       },
     });
+
+    // Apply audio changes immediately to sound system
+    try {
+      if (key === 'master') {
+        soundManager.setMasterVolume(value);
+      } else if (key === 'music') {
+        soundManager.setMusicVolume(value);
+      } else if (key === 'sfx') {
+        soundManager.setSfxVolume(value);
+      }
+    } catch (e) {
+      // Non-blocking: settings UI should not crash if audio update fails
+    }
+    try { localStorage.setItem('arcana:audio', JSON.stringify({ ...settings.audio, [key]: value })); } catch (e) {}
   };
 
   const handleGraphicsChange = (key, value) => {
@@ -40,6 +55,21 @@ export function Settings({ settings, onChange, onBack }) {
 
         <div style={styles.section}>
           <h3 style={styles.sectionHeading}>Audio</h3>
+          <ToggleRow
+            label="Mute"
+            value={settings.audio?.muted || false}
+            onChange={(v) => {
+              // v is muted boolean
+              onChange({
+                audio: {
+                  ...settings.audio,
+                  muted: v,
+                },
+              });
+              try { soundManager.setEnabled(!v); } catch (e) {}
+              try { localStorage.setItem('arcana:audio', JSON.stringify({ ...settings.audio, muted: v })); } catch (e) {}
+            }}
+          />
           <SliderRow
             label="Master"
             value={settings.audio.master}

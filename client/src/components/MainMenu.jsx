@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { soundManager } from '../game/soundManager.js';
 import { socket } from '../game/socket.js';
 
 export function MainMenu({
@@ -13,6 +14,7 @@ export function MainMenu({
   devMode = false,
   onToggleDevMode,
 }) {
+  // Music is handled globally in App; no per-mode control needed here
   if (mode === 'root') {
     return (
       <div style={styles.container}>
