@@ -221,11 +221,13 @@ export function Tutorial({ onBack }) {
     });
   });
 
-  // Tutorial music: start on mount, stop on unmount
+  // Tutorial music: start on mount (cleanup handled by App.jsx routing)
   useEffect(() => {
-    soundManager.playMusic('music:tutorial');
+    const timer = setTimeout(() => {
+      soundManager.playMusic('music:tutorial');
+    }, 250);
     return () => {
-      soundManager.stopMusic();
+      clearTimeout(timer);
     };
   }, []);
 

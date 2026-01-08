@@ -5,9 +5,9 @@ class SoundManager {
   constructor() {
     this.sounds = {};
     this.enabled = true;
-    this.masterVolume = 0.8;
+    this.masterVolume = 0.5;
     this.sfxVolume = 0.5;
-    this.musicVolume = 0.5;
+    this.musicVolume = 0.1;
     // Music management
     this.musicTracks = {}; // { key: HTMLAudioElement }
     this.currentMusicKey = null;
@@ -97,6 +97,10 @@ class SoundManager {
       audio.loop = true;
       this.musicTracks[key] = audio;
     }
+    
+    // Reset to beginning of track
+    try { audio.currentTime = 0; } catch (e) {}
+    
     const targetVolume = this.masterVolume * this.musicVolume;
     const previous = this.currentMusicAudio;
     const hadPrevious = !!previous;
@@ -204,14 +208,6 @@ class SoundManager {
   isMusicReady(key) {
     const a = this.musicTracks[key];
     return !!(a && a._ready);
-  }
-
-  stopMusic() {
-    if (this.currentMusicAudio) {
-      try { this.currentMusicAudio.pause(); } catch (e) {}
-      this.currentMusicAudio = null;
-      this.currentMusicKey = null;
-    }
   }
 
   play(soundName) {

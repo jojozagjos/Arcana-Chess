@@ -2,6 +2,30 @@ import React from 'react';
 import { soundManager } from '../game/soundManager.js';
 
 export function Settings({ settings, onChange, onBack }) {
+  const DEFAULTS = {
+    audio: { master: 0.5, music: 0.1, sfx: 0.5, muted: false },
+    graphics: { quality: 'medium', postProcessing: true, shadows: true },
+    gameplay: { showLegalMoves: true, highlightLastMove: true },
+  };
+
+  const handleReset = () => {
+    try {
+      // Apply audio defaults immediately
+      try { soundManager.setMasterVolume(DEFAULTS.audio.master); } catch (e) {}
+      try { soundManager.setMusicVolume(DEFAULTS.audio.music); } catch (e) {}
+      try { soundManager.setSfxVolume(DEFAULTS.audio.sfx); } catch (e) {}
+      try { soundManager.setEnabled(!DEFAULTS.audio.muted); } catch (e) {}
+    } catch (e) {}
+
+    try {
+      localStorage.setItem('arcanaChess.settings', JSON.stringify(DEFAULTS));
+      // Also store legacy audio key for compatibility
+      localStorage.setItem('arcana:audio', JSON.stringify(DEFAULTS.audio));
+    } catch (e) {}
+
+    // Notify parent to replace with defaults
+    onChange(DEFAULTS);
+  };
   const handleAudioChange = (key, value) => {
     onChange({
       audio: {
@@ -48,9 +72,10 @@ export function Settings({ settings, onChange, onBack }) {
       <div style={styles.panel}>
         <div style={styles.headerRow}>
           <h2 style={styles.heading}>Settings</h2>
-          <button style={styles.backButton} onClick={onBack}>
-            Back
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={styles.resetButton} onClick={handleReset}>Reset</button>
+            <button style={styles.backButton} onClick={onBack}>Back</button>
+          </div>
         </div>
 
         <div style={styles.section}>
@@ -244,5 +269,14 @@ const styles = {
     textAlign: 'right',
     fontSize: '0.8rem',
     opacity: 0.9,
+  },
+  resetButton: {
+    padding: '6px 12px',
+    borderRadius: 999,
+    border: '1px solid #394867',
+    background: 'transparent',
+    color: '#f8f9fb',
+    cursor: 'pointer',
+    fontSize: '0.8rem',
   },
 };

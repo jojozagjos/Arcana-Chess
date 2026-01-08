@@ -89,11 +89,13 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const opponentColorChar = opponentColor === 'white' ? 'w' : 'b';
   const hasVision = gameState?.activeEffects?.vision?.[myColor === 'white' ? 'w' : 'b'];
 
-  // In-game music: start on mount, stop on unmount
+  // In-game music: start on mount (cleanup handled by App.jsx routing)
   useEffect(() => {
-    soundManager.playMusic('music:ingame');
+    const timer = setTimeout(() => {
+      soundManager.playMusic('music:ingame');
+    }, 250);
     return () => {
-      soundManager.stopMusic();
+      clearTimeout(timer);
     };
   }, []);
 
