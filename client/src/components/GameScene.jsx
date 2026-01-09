@@ -1173,7 +1173,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               ))}
             </div>
             <div style={{marginTop:12}}>
-              <button style={styles.button} onClick={() => setPeekCardDialog(null)}>Cancel</button>
+              {/* Peek must be resolved by selecting a card; no cancel allowed */}
             </div>
           </div>
         </div>
