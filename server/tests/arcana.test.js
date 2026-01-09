@@ -4,6 +4,7 @@
  */
 
 import { Chess } from 'chess.js';
+import { getAdjacentSquares } from '../arcana/arcanaUtils.js';
 
 // Helper to create a mock game state
 function createMockGameState(fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1') {
@@ -39,25 +40,6 @@ function createMockGameState(fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR 
     arcanaByPlayer: { player1: [], player2: [] },
     usedArcanaIdsByPlayer: {},
   };
-}
-
-// Helper to get adjacent squares
-function getAdjacentSquares(square) {
-  const file = square.charCodeAt(0) - 97;
-  const rank = parseInt(square[1]);
-  const adjacent = [];
-  
-  for (let df = -1; df <= 1; df++) {
-    for (let dr = -1; dr <= 1; dr++) {
-      if (df === 0 && dr === 0) continue;
-      const newFile = file + df;
-      const newRank = rank + dr;
-      if (newFile >= 0 && newFile < 8 && newRank >= 1 && newRank <= 8) {
-        adjacent.push(`${String.fromCharCode(97 + newFile)}${newRank}`);
-      }
-    }
-  }
-  return adjacent;
 }
 
 // ============ TEST SUITES ============

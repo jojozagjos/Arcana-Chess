@@ -12,6 +12,9 @@ import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
 import { ParticleOverlay } from '../game/arcana/ParticleOverlay.jsx';
+import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
+import CutsceneOverlay from './CutsceneOverlay.jsx';
+import { getCutsceneConfig } from '../game/arcana/cutsceneDefinitions.js';
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
 // ArcanaVisualHost renders all effects using the shared arcanaVisuals module
 
@@ -41,6 +44,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Camera cutscene system for card effects
   const { cutsceneTarget, triggerCutscene, clearCutscene } = useCameraCutscene();
   const controlsRef = useRef(null);
+  const overlayRef = useRef(null);
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -55,6 +59,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   // Track when we played a local move sound to avoid duplicate playback
   const localMoveSoundRef = useRef(false);
+  const timeoutsRef = useRef([]);
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
@@ -141,12 +146,46 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     
     // Check if this arcana has cutscene enabled and a target square
     const cutsceneCards = ['execution', 'divine_intervention', 'astral_rebirth', 'time_travel', 'mind_control'];
-    if (cutsceneCards.includes(lastArcanaEvent.arcanaId) && lastArcanaEvent.params?.square) {
+    if (cutsceneCards.includes(lastArcanaEvent.arcanaId) && lastArcanaEvent.params?.targetSquare) {
+      const config = getCutsceneConfig(lastArcanaEvent.arcanaId);
+      
       // Trigger camera cutscene to focus on the effect
-      triggerCutscene(lastArcanaEvent.params.square, {
-        zoom: 1.5,
-        holdDuration: 2000,
+      triggerCutscene(lastArcanaEvent.params.targetSquare, {
+        zoom: config?.config?.camera?.targetZoom || 1.5,
+        holdDuration: config?.config?.camera?.holdDuration || 2000,
       });
+      
+      // Trigger overlay effects (if configured)
+      if (config?.config?.overlay && overlayRef.current) {
+        const overlay = config.config.overlay;
+        
+        // Handle single overlay effect
+        if (overlay.effect) {
+          overlayRef.current.playEffect({
+            effect: overlay.effect,
+            color: overlay.color,
+            duration: overlay.duration,
+            intensity: overlay.intensity,
+            fadeIn: overlay.fadeIn,
+            hold: overlay.hold,
+            fadeOut: overlay.fadeOut,
+          });
+        }
+        // Handle multiple overlay effects (e.g., time_travel with dual overlays)
+        else if (Array.isArray(overlay)) {
+          overlay.forEach((o) => {
+            overlayRef.current?.playEffect({
+              effect: o.effect,
+              color: o.color,
+              duration: o.duration,
+              intensity: o.intensity,
+              fadeIn: o.fadeIn,
+              hold: o.hold,
+              fadeOut: o.fadeOut,
+            });
+          });
+        }
+      }
     }
     
     const t = setTimeout(() => setActiveVisualArcana(null), 1500);
@@ -181,26 +220,28 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       } else {
         // For opponent draws, just show a simple text notification
         setPendingMoveError('Your opponent drew a card');
-        setTimeout(() => setPendingMoveError(''), 2000);
+        const timeout = setTimeout(() => setPendingMoveError(''), 2000);
+        timeoutsRef.current.push(timeout);
       }
     };
 
     const handleArcanaUsed = (data) => {
+      soundManager.play('cardUse');
+      // Block card actions during animation (only for the player who used it)
       const isMyUse = data.playerId === socket?.id;
-      
       if (isMyUse) {
-        soundManager.play('cardUse');
-        // Block card actions during animation
         setIsCardAnimationPlaying(true);
-        // For uses, auto-dismiss after slower animation (3s animation)
-        setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'use', stayUntilClick: false });
-        setTimeout(() => setCardReveal(null), 3500);
-        setTimeout(() => setIsCardAnimationPlaying(false), 3500);
-      } else {
-        // Opponent used a card - just show text notification
-        setPendingMoveError(`Your opponent used ${data.arcana.name}`);
-        setTimeout(() => setPendingMoveError(''), 2000);
       }
+      
+      // Both players see the full-screen card animation
+      setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'use', stayUntilClick: false });
+      const timeout1 = setTimeout(() => setCardReveal(null), 3500);
+      const timeout2 = setTimeout(() => {
+        if (isMyUse) {
+          setIsCardAnimationPlaying(false);
+        }
+      }, 3500);
+      timeoutsRef.current.push(timeout1, timeout2);
     };
 
     const handleAscended = () => {
@@ -261,7 +302,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       setPeekCardDialog(null);
       setPeekCardRevealed(data);
       // Auto-hide after 4 seconds
-      setTimeout(() => setPeekCardRevealed(null), 4000);
+      const timeout = setTimeout(() => setPeekCardRevealed(null), 4000);
+      timeoutsRef.current.push(timeout);
+    };
+    
+    const handlePeekCardEmpty = (data) => {
+      setPendingMoveError(data.message || 'Opponent has no cards to peek');
+      const timeout = setTimeout(() => setPendingMoveError(''), 3000);
+      timeoutsRef.current.push(timeout);
     };
 
     socket.on('arcanaDrawn', handleArcanaDrawn);
@@ -270,6 +318,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     socket.on('arcanaTriggered', handleArcanaTriggered);
     socket.on('peekCardSelection', handlePeekCardSelection);
     socket.on('peekCardRevealed', handlePeekCardRevealed);
+    socket.on('peekCardEmpty', handlePeekCardEmpty);
 
     return () => {
       socket.off('arcanaDrawn', handleArcanaDrawn);
@@ -278,6 +327,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       socket.off('arcanaTriggered', handleArcanaTriggered);
       socket.off('peekCardSelection', handlePeekCardSelection);
       socket.off('peekCardRevealed', handlePeekCardRevealed);
+      socket.off('peekCardEmpty', handlePeekCardEmpty);
+      // Clean up all pending timeouts
+      timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+      timeoutsRef.current = [];
     };
   }, []);
 
@@ -654,6 +707,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <CutsceneOverlay ref={overlayRef} />
       <Canvas camera={{ position: cameraPosition, fov: 40 }} shadows>
         {/* Use the ascension-style lighting by default: slightly dimmer, dramatic "night" environment */}
         <color attach="background" args={["#0b1020"]} />
@@ -685,11 +739,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         />
         <group>
           {piecesState.map((p) => {
-            // Hide opponent pieces when fog of war is active
+            // Hide opponent pieces when they have fog of war active
             const myColorIsWhite = myColor === 'white';
-            const hasFogOfWar = gameState?.activeEffects?.fogOfWar?.[myColorIsWhite ? 'w' : 'b'];
-            if (hasFogOfWar && p.isWhite !== myColorIsWhite) {
-              return null; // Hide opponent pieces
+            const opponentHasFog = gameState?.activeEffects?.fogOfWar?.[myColorIsWhite ? 'b' : 'w'];
+            if (opponentHasFog && p.isWhite !== myColorIsWhite) {
+              return null; // Hide opponent pieces (they activated fog)
             }
             return (
               <ChessPiece
@@ -707,8 +761,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             );
           })}
         </group>
-        {/* Ascension ring disabled - was causing visual artifacts */}
-        {/* {isAscended && <AscensionRing />} */}
         
         {/* Arcana Visual Effects - Shared component used by both GameScene and CardBalancingToolV2 */}
         <ArcanaVisualHost 
@@ -1143,69 +1195,37 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       )}
 
       {promotionDialog && (
-        <div style={styles.promotionOverlay}>
-          <div style={styles.promotionDialog}>
-            <h3 style={{ margin: '0 0 16px 0', color: '#eceff4' }}>Choose Promotion</h3>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-              {['q', 'r', 'b', 'n'].map(piece => (
-                <button
-                  key={piece}
-                  style={styles.promotionButton}
-                  onClick={() => handlePromotionChoice(piece)}
-                >
-                  {piece === 'q' && '♕ Queen'}
-                  {piece === 'r' && '♖ Rook'}
-                  {piece === 'b' && '♗ Bishop'}
-                  {piece === 'n' && '♘ Knight'}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <PieceSelectionDialog
+          title="Choose Promotion"
+          pieces={['q', 'r', 'b', 'n']}
+          onSelect={handlePromotionChoice}
+        />
       )}
 
       {metamorphosisDialog && (
-        <div style={styles.promotionOverlay}>
-          <div style={styles.promotionDialog}>
-            <h3 style={{ margin: '0 0 16px 0', color: '#eceff4' }}>Transform Piece To:</h3>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-              {['r', 'b', 'n', 'p'].map(pieceType => (
-                <button
-                  key={pieceType}
-                  style={styles.promotionButton}
-                  onClick={() => {
-                    const updatedParams = { 
-                      targetSquare: metamorphosisDialog.square,
-                      newType: pieceType 
-                    };
-                    // Activate the arcana immediately with the selected piece type
-                    socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId: metamorphosisDialog.arcanaId, params: updatedParams }] }, (res) => {
-                      if (!res || !res.ok) {
-                        setPendingMoveError(res?.error || 'Failed to use arcana');
-                      } else {
-                        setPendingMoveError('');
-                      }
-                    });
-                    setSelectedArcanaId(null);
-                    setTargetingMode(null);
-                    setMetamorphosisDialog(null);
-                  }}
-                >
-                  {pieceType === 'r' && '♖ Rook'}
-                  {pieceType === 'b' && '♗ Bishop'}
-                  {pieceType === 'n' && '♘ Knight'}
-                  {pieceType === 'p' && '♙ Pawn'}
-                </button>
-              ))}
-            </div>
-            <button
-              style={{ ...styles.promotionButton, marginTop: 12, background: '#bf616a' }}
-              onClick={() => setMetamorphosisDialog(null)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+        <PieceSelectionDialog
+          title="Transform Piece To:"
+          pieces={['r', 'b', 'n', 'p']}
+          onSelect={(pieceType) => {
+            const updatedParams = { 
+              targetSquare: metamorphosisDialog.square,
+              newType: pieceType 
+            };
+            // Activate the arcana immediately with the selected piece type
+            socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId: metamorphosisDialog.arcanaId, params: updatedParams }] }, (res) => {
+              if (!res || !res.ok) {
+                setPendingMoveError(res?.error || 'Failed to use arcana');
+              } else {
+                setPendingMoveError('');
+              }
+            });
+            setSelectedArcanaId(null);
+            setTargetingMode(null);
+            setMetamorphosisDialog(null);
+          }}
+          onCancel={() => setMetamorphosisDialog(null)}
+          showCancel={true}
+        />
       )}
     </div>
   );

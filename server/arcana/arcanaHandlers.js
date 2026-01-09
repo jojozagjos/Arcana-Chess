@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { pickWeightedArcana } from './arcanaUtils.js';
+import { pickWeightedArcana, getAdjacentSquares } from './arcanaUtils.js';
 
 /**
  * Validate arcana targeting before applying
@@ -736,6 +736,7 @@ function applyVision({ chess, gameState, moverColor, socketId }) {
     gameState.activeEffects.vision = { w: null, b: null };
   }
   // Store the socketId of who activated it, so we can check later
+  // Note: socketId may become stale if player disconnects, but we handle that when trying to emit
   gameState.activeEffects.vision[moverColor] = socketId;
   
   return { params: { color: moverColor, revealedMoves: opponentMoves.length, moves: opponentMoves.map(m => m.to) } };
@@ -840,7 +841,16 @@ function applyPeekCard({ gameState, socketId, params, io }) {
   if (!opponentId) return null;
   
   const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
-  if (opponentCards.length === 0) return null;
+  
+  // Check if opponent has any cards - if not, inform the player
+  if (opponentCards.length === 0) {
+    if (io) {
+      io.to(socketId).emit('peekCardEmpty', {
+        message: 'Your opponent has no cards in their deck to peek at.'
+      });
+    }
+    return null;
+  }
   
   // If cardIndex is provided, reveal that specific card
   if (params && params.cardIndex !== undefined) {
@@ -1119,24 +1129,6 @@ function chainLightningEffect(chess, origin, color, maxChains) {
     }
   }
   return chained;
-}
-
-function getAdjacentSquares(square) {
-  const file = square.charCodeAt(0) - 97;
-  const rank = parseInt(square[1]);
-  const adjacent = [];
-  
-  for (let df = -1; df <= 1; df++) {
-    for (let dr = -1; dr <= 1; dr++) {
-      if (df === 0 && dr === 0) continue;
-      const newFile = file + df;
-      const newRank = rank + dr;
-      if (newFile >= 0 && newFile < 8 && newRank >= 1 && newRank <= 8) {
-        adjacent.push(`${String.fromCharCode(97 + newFile)}${newRank}`);
-      }
-    }
-  }
-  return adjacent;
 }
 
 function destroyRook(chess, color) {

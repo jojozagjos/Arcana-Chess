@@ -13,6 +13,7 @@ import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor, getLogColor } from '../game/arcanaHelpers.js';
+import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import * as THREE from 'three';
 
 const TEST_SCENARIOS = {
@@ -26,21 +27,22 @@ const TEST_SCENARIOS = {
 
 export function CardBalancingToolV2({ onBack }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
-  const [scenario, setScenario] = useState('default');
-  const [fen, setFen] = useState(TEST_SCENARIOS.default.fen);
-  const [chess, setChess] = useState(new Chess());
-  const [playerColor, setPlayerColor] = useState('white');
-  const [selectedSquare, setSelectedSquare] = useState(null);
-  const [targetSquare, setTargetSquare] = useState(null);
-  const [targetingMode, setTargetingMode] = useState(false);
-  const [customParams, setCustomParams] = useState({});
-  const [logMessages, setLogMessages] = useState([]);
-  const [effectsModule, setEffectsModule] = useState(null);
-  
-  // Card state tracking
-  const [pawnShields, setPawnShields] = useState({ w: null, b: null });
-  const [shieldTurnCounter, setShieldTurnCounter] = useState({ w: 0, b: 0 }); // Tracks turns for shield expiration
-  const [activeEffects, setActiveEffects] = useState({});
+      
+      {/* Metamorphosis Dialog - shared component with in-game */}
+      {metamorphosisDialog && (
+        <PieceSelectionDialog
+          title="Transform Piece To:"
+          pieces={['r', 'b', 'n', 'p']}
+          onSelect={(pieceType) => {
+            const colorChar = playerColor === 'white' ? 'w' : 'b';
+            const params = { targetSquare: metamorphosisDialog.square, newType: pieceType };
+            applyCardEffect(selectedCard, params, colorChar);
+            setMetamorphosisDialog(null);
+          }}
+          onCancel={() => setMetamorphosisDialog(null)}
+          showCancel={true}
+        />
+      )}
   const [visualEffects, setVisualEffects] = useState([]);
   const [cutsceneActive, setCutsceneActive] = useState(false);
   const [cameraTarget, setCameraTarget] = useState(null);
@@ -74,6 +76,9 @@ export function CardBalancingToolV2({ onBack }) {
   // Highlighted squares for Line of Sight, Vision, Map Fragments, etc
   const [highlightedSquares, setHighlightedSquares] = useState([]);
   const [highlightColor, setHighlightColor] = useState('#88c0d0');
+  
+  // Metamorphosis dialog state
+  const [metamorphosisDialog, setMetamorphosisDialog] = useState(null);
 
   const selectedCard = useMemo(() => {
     return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
@@ -399,9 +404,14 @@ export function CardBalancingToolV2({ onBack }) {
       setValidTargetSquares([]);
       addLog(`Targeting ${square} for ${selectedCard.name}`, 'info');
       
-      const colorChar = playerColor === 'white' ? 'w' : 'b';
-      const params = { ...customParams, targetSquare: square };
-      applyCardEffect(selectedCard, params, colorChar);
+      // If metamorphosis, show dialog for piece type selection
+      if (selectedCard.id === 'metamorphosis') {
+        setMetamorphosisDialog({ square, cardId: selectedCard.id });
+      } else {
+        const colorChar = playerColor === 'white' ? 'w' : 'b';
+        const params = { ...customParams, targetSquare: square };
+        applyCardEffect(selectedCard, params, colorChar);
+      }
       return;
     }
 

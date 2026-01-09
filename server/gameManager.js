@@ -2,28 +2,7 @@ import { Chess } from 'chess.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
 import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
-import { pickWeightedArcana, checkForKingRemoval } from './arcana/arcanaUtils.js';
-
-/**
- * Get adjacent squares for a given square (for berserker rage check)
- */
-function getAdjacentSquares(square) {
-  const file = square.charCodeAt(0) - 97;
-  const rank = parseInt(square[1]);
-  const adjacent = [];
-  
-  for (let df = -1; df <= 1; df++) {
-    for (let dr = -1; dr <= 1; dr++) {
-      if (df === 0 && dr === 0) continue;
-      const newFile = file + df;
-      const newRank = rank + dr;
-      if (newFile >= 0 && newFile < 8 && newRank >= 1 && newRank <= 8) {
-        adjacent.push(`${String.fromCharCode(97 + newFile)}${newRank}`);
-      }
-    }
-  }
-  return adjacent;
-}
+import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares } from './arcana/arcanaUtils.js';
 
 function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor }) {
   const chess = new Chess();
@@ -194,6 +173,16 @@ export class GameManager {
 
     if (gameState.status !== 'ongoing') throw new Error('Game is not active');
 
+    // Validate only one action type is present
+    const actionCount = [move, arcanaUsed, actionType].filter(a => a !== undefined && a !== null).length;
+    if (actionCount === 0) throw new Error('No action specified');
+    if (move && (actionType || arcanaUsed)) {
+      throw new Error('Cannot perform move and arcana action simultaneously');
+    }
+    if (actionType && actionType !== 'drawArcana' && actionType !== 'peekCardSelect' && (move || arcanaUsed)) {
+      throw new Error('Cannot perform multiple action types simultaneously');
+    }
+
     // Handle Draw Arcana action
     if (actionType === 'drawArcana') {
       if (!gameState.ascended) throw new Error('Cannot draw arcana before ascension');
@@ -206,16 +195,16 @@ export class GameManager {
         throw new Error('You can only draw a card on your turn');
       }
       
-      // Check draw cooldown: draw → opp turn → your turn (blocked) → opp turn → your turn (can draw)
-      // This means 4 plies must pass: opp move + your move + opp move + your move
+      // Check draw cooldown rule: "must wait 1 full turn between draws"
+      // Full turn = both players move once. So: 
+      // You draw (ply N) → opp move (N+1) → you move (N+2, blocked) → opp move (N+3) → you move (N+4, allowed)
+      // This means at least 4 plies must pass between draws
       const turnColor = playerColor === 'white' ? 'w' : 'b';
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
       const lastDrawPly = gameState.lastDrawTurn[turnColor];
-      console.log('[drawArcana] player', socket.id, 'color', turnColor, 'currentPly', currentPly, 'lastDrawPly', lastDrawPly, 'diff', currentPly - lastDrawPly);
-      // Require at least 2 plies between draws (opponent move + your next turn blocked,
-      // then allowed on the following turn). i.e. you cannot draw on your immediate
-      // next turn, but you can draw on the one after that.
-      if (currentPly - lastDrawPly < 2) {
+      
+      // First draw is always allowed (lastDrawPly is -99 initially)
+      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 4) {
         throw new Error('Must wait 1 full turn between draws');
       }
 
@@ -928,6 +917,40 @@ export class GameManager {
   }
 
   async performAIMove(gameState) {
+    const AI_TIMEOUT_MS = 5000; // 5 second timeout
+    
+    try {
+      // Race the AI logic against a timeout
+      await Promise.race([
+        this._performAIMoveLogic(gameState),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('AI move timeout')), AI_TIMEOUT_MS)
+        )
+      ]);
+    } catch (error) {
+      if (error.message === 'AI move timeout') {
+        console.warn('AI move timed out after 5s, falling back to random move');
+        // Fallback to random move
+        const moves = gameState.chess.moves({ verbose: true });
+        if (moves.length > 0) {
+          const randomMove = moves[Math.floor(Math.random() * moves.length)];
+          gameState.chess.move(randomMove);
+          gameState.moveHistory.push({
+            from: randomMove.from,
+            to: randomMove.to,
+            piece: randomMove.piece,
+            color: randomMove.color,
+            promotion: randomMove.promotion,
+          });
+          gameState.currentPlayer = gameState.chess.turn() === 'w' ? 'white' : 'black';
+        }
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  async _performAIMoveLogic(gameState) {
     const chess = gameState.chess;
     if (gameState.status !== 'ongoing') return;
 
@@ -1399,11 +1422,16 @@ export class GameManager {
     }
     
     // Clear one-turn effects
+    // Only clear fog and vision for the color whose turn just ended
+    const endingColor = gameState.chess.turn() === 'w' ? 'b' : 'w'; // The color that just finished
+    
     effects.ironFortress = { w: false, b: false };
     effects.bishopsBlessing = { w: null, b: null };
-    effects.fogOfWar = { w: false, b: false };
-    // Only clear vision for the color whose turn just ended
-    const endingColor = gameState.chess.turn() === 'w' ? 'b' : 'w'; // The color that just finished
+    
+    if (effects.fogOfWar[endingColor]) {
+      effects.fogOfWar[endingColor] = false;
+    }
+    
     if (effects.vision[endingColor]) {
       effects.vision[endingColor] = null;
     }
@@ -1461,10 +1489,18 @@ export class GameManager {
 
   forfeitGame(socket, payload) {
     const gameId = this.socketToGame.get(socket.id);
-    if (!gameId) throw new Error('No game for this socket');
-    const gameState = this.games.get(gameId);
-    if (!gameState) throw new Error('Game not found');
+    if (!gameId) {
+      return { outcome: null, error: 'No game for this socket' };
+    }
 
+    const gameState = this.games.get(gameId);
+    if (!gameState) {
+      // Stale mapping - remove it and return gracefully
+      this.socketToGame.delete(socket.id);
+      return { outcome: null, error: 'Game not found' };
+    }
+
+    // Mark finished and notify players
     gameState.status = 'finished';
     const otherPlayerId = gameState.playerIds.find((id) => id !== socket.id);
     const outcome = { type: 'forfeit', loserSocketId: socket.id, winnerSocketId: otherPlayerId };
@@ -1473,7 +1509,12 @@ export class GameManager {
       if (!pid.startsWith('AI-')) {
         this.io.to(pid).emit('gameEnded', outcome);
       }
+      // Clean up socket->game mapping for all player IDs
+      this.socketToGame.delete(pid);
     }
+
+    // Remove game state from manager
+    this.games.delete(gameId);
 
     return { outcome };
   }

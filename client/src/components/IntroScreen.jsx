@@ -113,6 +113,7 @@ export function IntroScreen({ onContinue }) {
   const [textPhase, setTextPhase] = useState('none'); // 'none', 'creator', 'continue'
   const [scenePhase, setScenePhase] = useState('falling'); // 'falling', 'wait', 'fadeout'
   const [opacity, setOpacity] = useState(1);
+  const fadeIntervalRef = useRef(null);
 
   useEffect(() => {
     // Sequence:
@@ -132,7 +133,12 @@ export function IntroScreen({ onContinue }) {
       setScenePhase('wait');
     }, 5100));
 
-    return () => timers.forEach((t) => clearTimeout(t));
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      if (fadeIntervalRef.current) {
+        clearInterval(fadeIntervalRef.current);
+      }
+    };
   }, []);
 
   const handleContinue = () => {
@@ -148,10 +154,13 @@ export function IntroScreen({ onContinue }) {
       
       if (currentOpacity <= 0) {
         clearInterval(fadeInterval);
+        fadeIntervalRef.current = null;
         // Trigger actual navigation
         if (onContinue) onContinue();
       }
     }, 50);
+    
+    fadeIntervalRef.current = fadeInterval;
   };
 
   return (

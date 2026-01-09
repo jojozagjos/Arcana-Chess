@@ -79,6 +79,27 @@ export function getSquareBehindPawn(square, pawnColor) {
 }
 
 /**
+ * Get all squares adjacent (8-connected) to a given square
+ */
+export function getAdjacentSquares(square) {
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1]);
+  const adjacent = [];
+  
+  for (let df = -1; df <= 1; df++) {
+    for (let dr = -1; dr <= 1; dr++) {
+      if (df === 0 && dr === 0) continue;
+      const newFile = file + df;
+      const newRank = rank + dr;
+      if (newFile >= 0 && newFile < 8 && newRank >= 1 && newRank <= 8) {
+        adjacent.push(`${String.fromCharCode(97 + newFile)}${newRank}`);
+      }
+    }
+  }
+  return adjacent;
+}
+
+/**
  * Get all squares on the same diagonal as a bishop
  */
 export function getDiagonalSquares(square) {

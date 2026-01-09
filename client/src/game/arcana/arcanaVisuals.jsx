@@ -1139,6 +1139,101 @@ export function TimeFreezeEffect({ onComplete }) {
   );
 }
 
+// Time Travel Effect - Rewind animation with temporal trails
+export function TimeTravelEffect({ onComplete }) {
+  const [progress, setProgress] = useState(0);
+  
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 0.6;
+      if (next >= 1 && onComplete) onComplete();
+      return Math.min(next, 1);
+    });
+  });
+  
+  return (
+    <group>
+      {/* Reverse time spiral */}
+      {[...Array(12)].map((_, i) => {
+        const angle = (i / 12) * Math.PI * 2 - progress * Math.PI * 4;
+        const radius = 2 + i * 0.3;
+        const height = Math.sin((progress + i / 12) * Math.PI) * 2;
+        
+        return (
+          <mesh
+            key={i}
+            position={[
+              Math.cos(angle) * radius,
+              height,
+              Math.sin(angle) * radius
+            ]}
+          >
+            <sphereGeometry args={[0.15, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#3498db"
+              emissiveIntensity={2 * (1 - progress * 0.5)}
+              color="#64b5f6"
+              transparent
+              opacity={(1 - progress * 0.6) * 0.8}
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Rewind trails (pieces moving backward) */}
+      {[...Array(16)].map((_, i) => {
+        const angle = (i / 16) * Math.PI * 2 + progress * 0.5;
+        const dist = easeOutCubic(progress) * 3;
+        
+        return (
+          <mesh
+            key={`trail-${i}`}
+            position={[
+              Math.cos(angle) * dist,
+              0.3 + Math.sin(progress * Math.PI + i) * 0.2,
+              Math.sin(angle) * dist
+            ]}
+          >
+            <boxGeometry args={[0.12, 0.12, 0.12]} />
+            <meshStandardMaterial
+              emissive="#1e88e5"
+              emissiveIntensity={1.5 * (1 - progress)}
+              color="#42a5f5"
+              transparent
+              opacity={(1 - progress * 0.8) * 0.5}
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Temporal displacement wave */}
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[progress * 8, progress * 8, 1]}>
+        <ringGeometry args={[progress * 3, progress * 3.2, 32]} />
+        <meshStandardMaterial
+          emissive="#2196f3"
+          emissiveIntensity={1.5 * (1 - progress)}
+          color="#64b5f6"
+          transparent
+          opacity={(1 - progress * 0.5) * 0.4}
+        />
+      </mesh>
+      
+      {/* Distortion field */}
+      <mesh position={[0, 1, 0]} rotation={[0, progress * Math.PI * 2, 0]}>
+        <dodecahedronGeometry args={[2, 2]} />
+        <meshStandardMaterial
+          emissive="#0d47a1"
+          emissiveIntensity={0.8 * (1 - progress)}
+          color="#1565c0"
+          transparent
+          opacity={(1 - progress * 0.7) * 0.3}
+          wireframe={true}
+        />
+      </mesh>
+    </group>
+  );
+}
+
 // Chain Lightning Effect
 export function ChainLightningEffect({ origin, chained, onComplete }) {
   const [progress, setProgress] = useState(0);
