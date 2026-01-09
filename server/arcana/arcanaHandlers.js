@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { pickWeightedArcana, squareToCoords, coordsToSquare } from './arcanaUtils.js';
+import { pickWeightedArcana } from './arcanaUtils.js';
 
 /**
  * Validate arcana targeting before applying

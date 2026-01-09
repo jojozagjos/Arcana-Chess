@@ -44,16 +44,4 @@ export function getArcanaEffectDuration(arcanaId) {
   return durations[arcanaId] || durations.default;
 }
 
-export function getArcanaDelay(arcanaId) {
-  // Some arcana may need a delay before showing effects
-  const delays = {
-    fog_of_war: 200,
-    temporal_echo: 250,
-    time_travel: 400,
-    cursed_square: 150,
-    mind_control: 200,
-    default: 0,
-  };
-  
-  return delays[arcanaId] || delays.default;
-}
+// getArcanaDelay was unused; removed to keep the timings module minimal. Add back if a delay map is needed later.

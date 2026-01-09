@@ -9,8 +9,6 @@ import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
 import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
-import { squareToPosition } from '../game/arcana/sharedHelpers.jsx';
-import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
 import { ParticleOverlay } from '../game/arcana/ParticleOverlay.jsx';
