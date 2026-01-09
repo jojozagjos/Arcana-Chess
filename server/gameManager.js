@@ -181,12 +181,15 @@ export class GameManager {
     try {
 
     // Validate only one action type is present
-    const actionCount = [move, arcanaUsed, actionType].filter(a => a !== undefined && a !== null).length;
-    if (actionCount === 0) throw new Error('No action specified');
+    // Note: 'useArcana' actionType requires arcanaUsed; others do not
     if (move && (actionType || arcanaUsed)) {
       throw new Error('Cannot perform move and arcana action simultaneously');
     }
-    if (actionType && actionType !== 'drawArcana' && actionType !== 'peekCardSelect' && (move || arcanaUsed)) {
+    // Reject mixed action types, but allow arcanaUsed with 'useArcana'
+    if (actionType === 'useArcana' && !arcanaUsed) {
+      throw new Error('useArcana requires arcanaUsed field');
+    }
+    if (actionType && actionType !== 'drawArcana' && actionType !== 'peekCardSelect' && actionType !== 'useArcana' && (move || arcanaUsed)) {
       throw new Error('Cannot perform multiple action types simultaneously');
     }
 
