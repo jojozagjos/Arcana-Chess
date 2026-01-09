@@ -173,6 +173,13 @@ export class GameManager {
 
     if (gameState.status !== 'ongoing') throw new Error('Game is not active');
 
+    // Reentrancy guard to prevent double-apply from rapid duplicate emits
+    if (gameState._busy) {
+      throw new Error('Action in progress');
+    }
+    gameState._busy = true;
+    try {
+
     // Validate only one action type is present
     const actionCount = [move, arcanaUsed, actionType].filter(a => a !== undefined && a !== null).length;
     if (actionCount === 0) throw new Error('No action specified');
@@ -889,6 +896,9 @@ export class GameManager {
     }
 
     return { gameState: this.serialiseGameState(gameState), appliedArcana: [] };
+    } finally {
+      gameState._busy = false;
+    }
   }
 
   // applyArcana is now imported from ./arcana/arcanaHandlers.js
@@ -1362,11 +1372,28 @@ export class GameManager {
         cursedSquares: [],
         sanctuaries: [],
         fogOfWar: { w: false, b: false },
+        vision: { w: null, b: null },
         doubleStrike: { w: false, b: false },
         poisonTouch: { w: false, b: false },
         queensGambit: { w: 0, b: 0 },
+        queensGambitUsed: { w: false, b: false },
+        focusFire: { w: false, b: false },
         divineIntervention: { w: false, b: false },
         mirrorImages: [],
+        squireSupport: [],
+        poisonedPieces: [],
+        spectralMarch: { w: false, b: false },
+        phantomStep: { w: false, b: false },
+        pawnRush: { w: false, b: false },
+        sharpshooter: { w: false, b: false },
+        knightOfStorms: { w: null, b: null },
+        berserkerRage: { w: null, b: null },
+        enPassantMaster: { w: false, b: false },
+        temporalEcho: null,
+        chainLightning: { w: false, b: false },
+        castleBroken: { w: 0, b: 0 },
+        doubleStrikeActive: null,
+        berserkerRageActive: null,
       };
     }
     

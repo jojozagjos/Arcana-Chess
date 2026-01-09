@@ -119,3 +119,19 @@ export function getDiagonalSquares(square) {
 
   return diagonals;
 }
+
+/**
+ * Draw cooldown helper: requires a minimum ply gap between draws (default 4 plies).
+ * Returns true if the player may draw again at currentPly.
+ */
+export function canDrawAgain(currentPly, lastDrawPly, minGap = 4) {
+  if (lastDrawPly === undefined || lastDrawPly === null || lastDrawPly < 0) return true;
+  return (currentPly - lastDrawPly) >= minGap;
+}
+
+/**
+ * Pure helper for time-freeze checks in tests.
+ */
+export function isTurnFrozenFlag(activeEffects, moverColor) {
+  return !!activeEffects?.timeFrozen?.[moverColor];
+}

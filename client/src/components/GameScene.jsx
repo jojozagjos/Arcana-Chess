@@ -60,6 +60,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Track when we played a local move sound to avoid duplicate playback
   const localMoveSoundRef = useRef(false);
   const timeoutsRef = useRef([]);
+  // Prevent accidental double-emit of actions during latency
+  const pendingActionRef = useRef(false);
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
@@ -91,6 +93,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const opponentColor = myColor === 'white' ? 'black' : 'white';
   const opponentColorChar = opponentColor === 'white' ? 'w' : 'b';
   const hasVision = gameState?.activeEffects?.vision?.[myColor === 'white' ? 'w' : 'b'];
+  // Fog of War: if the opponent has an active fog effect, we hide their pieces on our client.
+  // Fail-open: when data is missing, no fog is applied (game remains fully visible and playable).
+  const opponentHasFog = !!gameState?.activeEffects?.fogOfWar?.[myColor === 'white' ? 'b' : 'w'];
 
   // In-game music: start on mount (cleanup handled by App.jsx routing)
   useEffect(() => {
@@ -739,9 +744,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         />
         <group>
           {piecesState.map((p) => {
-            // Hide opponent pieces when they have fog of war active
+            // Hide opponent pieces when they have fog of war active (computed once above)
             const myColorIsWhite = myColor === 'white';
-            const opponentHasFog = gameState?.activeEffects?.fogOfWar?.[myColorIsWhite ? 'b' : 'w'];
             if (opponentHasFog && p.isWhite !== myColorIsWhite) {
               return null; // Hide opponent pieces (they activated fog)
             }
@@ -787,6 +791,35 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         <div>Color: {myColor}</div>
         <button style={styles.button} onClick={() => setShowMenu(true)}>Menu</button>
       </div>
+
+      {/* Optional fog indicator: subtle, non-interactive overlay + badge when opponent's fog is active */}
+      {opponentHasFog && (
+        <>
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              background: 'radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.18) 100%)',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              background: 'rgba(34, 34, 34, 0.8)',
+              color: '#d8dee9',
+              padding: '6px 10px',
+              borderRadius: 6,
+              fontFamily: 'system-ui, sans-serif',
+              fontSize: '0.85rem',
+            }}
+          >
+            Fog of War active
+          </div>
+        </>
+      )}
 
       {pendingMoveError && (
         <div style={styles.errorBanner}>
@@ -838,8 +871,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               setTargetingMode({ arcanaId, targetType, params: {}, targetSelected: false, validSquares });
               setSelectedArcanaId(null); // Don't select until target is chosen
             } else {
-              // No targeting needed, activate immediately
+              // No targeting needed, activate immediately (guard against double-click)
+              if (pendingActionRef.current) return;
+              pendingActionRef.current = true;
               socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: {} }] }, (res) => {
+                pendingActionRef.current = false;
                 if (!res || !res.ok) {
                   setPendingMoveError(res?.error || 'Failed to use arcana');
                 } else {
@@ -859,10 +895,13 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               setPendingMoveError('Please wait for the card animation to finish');
               return;
             }
+            if (pendingActionRef.current) return;
+            pendingActionRef.current = true;
             setIsDrawingCard(true);
             setSelectedSquare(null);
             setLegalTargets([]);
             socket.emit('playerAction', { actionType: 'drawArcana' }, (res) => {
+              pendingActionRef.current = false;
               setIsDrawingCard(false);
               if (!res || !res.ok) {
                 setPendingMoveError(res?.error || 'Failed to draw card');
@@ -1212,7 +1251,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               newType: pieceType 
             };
             // Activate the arcana immediately with the selected piece type
+            if (pendingActionRef.current) return;
+            pendingActionRef.current = true;
             socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId: metamorphosisDialog.arcanaId, params: updatedParams }] }, (res) => {
+              pendingActionRef.current = false;
               if (!res || !res.ok) {
                 setPendingMoveError(res?.error || 'Failed to use arcana');
               } else {
