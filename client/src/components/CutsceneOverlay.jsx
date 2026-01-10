@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import './CutsceneOverlay.css';
+import '../components/styles/CutsceneOverlay.css';
 
 /**
  * CutsceneOverlay Component

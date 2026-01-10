@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { ChessPiece } from './ChessPiece.jsx';
-import './IntroScreen.css';
+import '../components/styles/IntroScreen.css';
 
 // Falling chess piece component
 function FallingPiece({ type, isWhite, startX, startZ, speed, rotationAxis, rotationSpeed, wobbleOffset }) {

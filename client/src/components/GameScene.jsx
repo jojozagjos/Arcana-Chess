@@ -64,12 +64,19 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const timeoutsRef = useRef([]);
   // Prevent accidental double-emit of actions during latency
   const pendingActionRef = useRef(false);
+  // Client-side draw cooldown: track if player has drawn this turn
+  const drewThisTurnRef = useRef(false);
+  const lastTurnRef = useRef(null);
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
     if (!gameState?.playerColors || !mySocketId) return 'white';
     return gameState.playerColors[mySocketId] || 'white';
   }, [gameState?.playerColors, mySocketId]);
+
+  // Helper to convert color name to chess.js color code
+  const toColorCode = (color) => color === 'white' ? 'w' : 'b';
+  const myColorCode = toColorCode(myColor);
 
   // Initial camera position: place the camera on the same side as the player's color.
   // White views from positive Z (rank 1 side), Black views from negative Z (rank 8 side).
@@ -89,15 +96,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   }, [gameState?.usedArcanaIdsByPlayer, mySocketId]);
 
   const isAscended = gameState?.ascended || !!ascendedInfo;
-  const pawnShields = gameState?.pawnShields || { w: null, b: null };
 
   // Calculate vision moves when vision effect is active
   const opponentColor = myColor === 'white' ? 'black' : 'white';
-  const opponentColorChar = opponentColor === 'white' ? 'w' : 'b';
-  const hasVision = gameState?.activeEffects?.vision?.[myColor === 'white' ? 'w' : 'b'];
-  // Fog of War: if the opponent has an active fog effect, we hide their pieces on our client.
-  // Fail-open: when data is missing, no fog is applied (game remains fully visible and playable).
-  const opponentHasFog = !!gameState?.activeEffects?.fogOfWar?.[myColor === 'white' ? 'b' : 'w'];
+  const opponentColorChar = toColorCode(opponentColor);
+  const hasVision = gameState?.activeEffects?.vision?.[myColorCode];
 
   // In-game music: start on mount (cleanup handled by App.jsx routing)
   useEffect(() => {
@@ -113,7 +116,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     if (hasVision && chess) {
       // Get all legal moves for opponent
       const currentTurn = chess.turn();
-      if (currentTurn !== (myColor === 'white' ? 'w' : 'b')) {
+      if (currentTurn !== myColorCode) {
         // It's opponent's turn, show their moves
         const moves = chess.moves({ verbose: true });
         setVisionMoves(moves.map(m => m.to));
@@ -151,6 +154,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   useEffect(() => {
     setHighlightedSquares([]);
   }, [gameState?.moves?.length]); // Clears highlights on any move (turn change)
+
+  // Reset draw cooldown when turn changes (client-side only, not affected by opponent draws)
+  useEffect(() => {
+    const currentTurn = chess?.turn();
+    if (currentTurn && currentTurn !== lastTurnRef.current) {
+      lastTurnRef.current = currentTurn;
+      drewThisTurnRef.current = false; // Reset draw flag for new turn
+    }
+  }, [chess?.fen()]); // Re-run whenever FEN changes (which includes turn changes)
 
   useEffect(() => {
     if (!lastArcanaEvent) return;
@@ -381,7 +393,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     if (!chess || !gameState || gameState.status !== 'ongoing') return;
 
     // Check if it's the player's turn
-    const myColorCode = myColor === 'white' ? 'w' : 'b';
     const currentTurn = chess.turn();
     if (currentTurn !== myColorCode) {
       // Clear selection if clicking when it's not your turn
@@ -512,7 +523,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       );
     } else {
       const piece = chess.get(square);
-      const myColorCode = myColor === 'white' ? 'w' : 'b';
       if (piece && piece.color === myColorCode) {
         setSelectedSquare(square);
         const moves = getArcanaEnhancedMoves(chess, square, gameState, myColor);
@@ -771,7 +781,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           selectedSquare={selectedSquare}
           legalTargets={settings.gameplay.showLegalMoves ? legalTargets : []}
           lastMove={settings.gameplay.highlightLastMove ? lastMove : null}
-          pawnShields={pawnShields}
+          pawnShields={gameState?.pawnShields}
           onTileClick={handleTileClick}
           onTileHover={(file, rank, entering) => {
             if (!chess) return;
@@ -832,11 +842,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         />
         <group>
           {piecesState.map((p) => {
-            // Hide opponent pieces when they have fog of war active (computed once above)
-            const myColorIsWhite = myColor === 'white';
-            if (opponentHasFog && p.isWhite !== myColorIsWhite) {
-              return null; // Hide opponent pieces (they activated fog)
-            }
             return (
               <ChessPiece
                 key={p.uid}
@@ -859,8 +864,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           effectsModule={effectsModule}
           activeVisualArcana={activeVisualArcana}
           gameState={gameState}
-          pawnShields={pawnShields}
-          showFog={opponentHasFog}
+          pawnShields={gameState?.pawnShields}
         />
         
         {/* Camera Cutscene Controller for card effect cinematics */}
@@ -880,35 +884,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         <div>Color: {myColor}</div>
         <button style={styles.button} onClick={() => setShowMenu(true)}>Menu</button>
       </div>
-
-      {/* Optional fog indicator: subtle, non-interactive overlay + badge when opponent's fog is active */}
-      {opponentHasFog && (
-        <>
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-              background: 'radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.18) 100%)',
-            }}
-          />
-          <div
-            style={{
-              position: 'absolute',
-              top: 12,
-              right: 12,
-              background: 'rgba(34, 34, 34, 0.8)',
-              color: '#d8dee9',
-              padding: '6px 10px',
-              borderRadius: 6,
-              fontFamily: 'system-ui, sans-serif',
-              fontSize: '0.85rem',
-            }}
-          >
-            Fog of War active
-          </div>
-        </>
-      )}
 
       {pendingMoveError && (
         <div style={styles.errorBanner}>
@@ -934,7 +909,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             }
             
             // Check if it's the player's turn before allowing card selection
-            const myColorCode = myColor === 'white' ? 'w' : 'b';
             const currentTurn = chess?.turn();
             if (currentTurn !== myColorCode) {
               setPendingMoveError('You can only use cards on your turn');
@@ -984,6 +958,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               setPendingMoveError('Please wait for the card animation to finish');
               return;
             }
+            // Check if player already drew this turn (client-side cooldown)
+            if (drewThisTurnRef.current) {
+              setPendingMoveError('You already drew a card this turn');
+              return;
+            }
             if (pendingActionRef.current) return;
             pendingActionRef.current = true;
             setIsDrawingCard(true);
@@ -994,6 +973,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               setIsDrawingCard(false);
               if (!res || !res.ok) {
                 setPendingMoveError(res?.error || 'Failed to draw card');
+              } else {
+                // Mark that player drew this turn
+                drewThisTurnRef.current = true;
               }
             });
           }}
@@ -1417,16 +1399,13 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
     return lastMove.from === sq || lastMove.to === sq;
   };
 
-  const shieldSquares = [];
-  if (pawnShields.w?.square) shieldSquares.push(pawnShields.w.square);
-  if (pawnShields.b?.square) shieldSquares.push(pawnShields.b.square);
-
+  // Helper to check if a square has a shielded pawn
   const isShieldSquare = (fileIndex, rankIndex) => {
-    if (!shieldSquares.length) return false;
+    if (!pawnShields) return false;
     const fileChar = 'abcdefgh'[fileIndex];
     const rankNum = 8 - rankIndex;
     const sq = `${fileChar}${rankNum}`;
-    return shieldSquares.includes(sq);
+    return pawnShields.w?.square === sq || pawnShields.b?.square === sq;
   };
 
   for (let file = 0; file < 8; file++) {
@@ -1518,7 +1497,8 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   const availableArcana = myArcana.filter(a => !usedArcanaIds.has(a.id));
   const [hoveredId, setHoveredId] = React.useState(null);
   
-  const isMyTurn = currentTurn === (myColor === 'white' ? 'w' : 'b');
+  const toColorCode = (color) => color === 'white' ? 'w' : 'b';
+  const isMyTurn = currentTurn === toColorCode(myColor);
 
   // Group cards by ID to handle duplicates
   const groupedCards = React.useMemo(() => {

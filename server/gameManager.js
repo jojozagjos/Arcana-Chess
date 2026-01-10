@@ -233,9 +233,8 @@ export class GameManager {
       // Full turn = both players move once. So: 
       // You draw (ply N) → opp move (N+1) → you move (N+2, blocked) → opp move (N+3) → you move (N+4, allowed)
       // This means at least 4 plies must pass between draws
-      const turnColor = playerColor === 'white' ? 'w' : 'b';
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
-      const lastDrawPly = gameState.lastDrawTurn[turnColor];
+      const lastDrawPly = gameState.lastDrawTurn[socket.id]; // Track per-player, not per-color
       
       // First draw is always allowed (lastDrawPly is -99 initially)
       if (lastDrawPly >= 0 && currentPly - lastDrawPly < 4) {
@@ -244,7 +243,7 @@ export class GameManager {
 
       const newCard = pickWeightedArcana();
       gameState.arcanaByPlayer[socket.id].push(newCard);
-      gameState.lastDrawTurn[turnColor] = currentPly;
+      gameState.lastDrawTurn[socket.id] = currentPly; // Track per-player, not per-color
       
       // Clear arcana used flag when drawing (ending turn)
       if (gameState.arcanaUsedThisTurn) {
