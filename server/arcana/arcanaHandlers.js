@@ -1008,7 +1008,34 @@ function applyTimeTravel({ gameState }) {
 }
 
 function applyChaosTheory({ chess }) {
-  const shuffled = shufflePieces(chess, 3);
+  const MAX_ATTEMPTS = 10;
+  let attempts = 0;
+  let shuffled;
+
+  do {
+    shuffled = shufflePieces(chess, 3);
+    const board = chess.board();
+    let isValid = true;
+
+    for (let rank = 0; rank < 8; rank++) {
+      for (let file = 0; file < 8; file++) {
+        const piece = board[rank][file];
+        if (piece && piece.type === 'p' && (rank === 0 || rank === 7)) {
+          isValid = false;
+          break;
+        }
+      }
+      if (!isValid) break;
+    }
+
+    if (isValid) break;
+    attempts++;
+  } while (attempts < MAX_ATTEMPTS);
+
+  if (attempts === MAX_ATTEMPTS) {
+    throw new Error('Chaos Theory: Failed to generate a valid board state after maximum attempts');
+  }
+
   return { params: { shuffled } };
 }
 

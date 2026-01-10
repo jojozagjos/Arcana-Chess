@@ -40,6 +40,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [highlightColor, setHighlightColor] = useState('#88c0d0'); // Default cyan color for highlights
   const [peekCardDialog, setPeekCardDialog] = useState(null); // { cardCount, opponentId } when selecting card to peek
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
+  // Hover threat sources: set of squares (e.g. new Set(['e5','d4'])) that attack a simulated destination
+  const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
   
   // Camera cutscene system for card effects
   const { cutsceneTarget, triggerCutscene, clearCutscene } = useCameraCutscene();
@@ -140,6 +142,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }
   }, [ascendedInfo]);
 
+  // Clear hover threat indicators when selection/turn/actions change
+  useEffect(() => {
+    setHoverThreatSources(new Set());
+  }, [selectedSquare, gameState?.moves?.length, selectedArcanaId, targetingMode, isCardAnimationPlaying]);
+
   // Clear highlights when turn changes (persists only for one full turn)
   useEffect(() => {
     setHighlightedSquares([]);
@@ -232,21 +239,35 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     const handleArcanaUsed = (data) => {
       soundManager.play('cardUse');
-      // Block card actions during animation (only for the player who used it)
       const isMyUse = data.playerId === socket?.id;
+
+      // Phase A: Record the pending visual event
+      const useId = `${data.playerId}-${data.arcana.id}-${Date.now()}`;
+      pendingVisualEventsRef.current.push({
+        useId,
+        cardId: data.arcana.id,
+        actorColor: data.playerId === socket?.id ? myColor : opponentColor,
+        startedAt: Date.now(),
+        durationMs: USE_CARD_ANIM_MS,
+      });
+
+      // Play the "Use Card" animation immediately
       if (isMyUse) {
         setIsCardAnimationPlaying(true);
       }
-      
-      // Both players see the full-screen card animation
       setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'use', stayUntilClick: false });
-      const timeout1 = setTimeout(() => setCardReveal(null), 3500);
-      const timeout2 = setTimeout(() => {
+
+      // Schedule Phase B: Trigger the VFX/cutscene/overlay after the animation duration
+      setTimeout(() => {
+        const eventIndex = pendingVisualEventsRef.current.findIndex((e) => e.useId === useId);
+        if (eventIndex !== -1) {
+          const [event] = pendingVisualEventsRef.current.splice(eventIndex, 1);
+          setActiveVisualArcana({ arcanaId: event.cardId, actorColor: event.actorColor });
+        }
         if (isMyUse) {
           setIsCardAnimationPlaying(false);
         }
-      }, 3500);
-      timeoutsRef.current.push(timeout1, timeout2);
+      }, USE_CARD_ANIM_MS);
     };
 
     const handleAscended = () => {
@@ -303,14 +324,31 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       setPeekCardDialog({ cardCount: data.cardCount, opponentId: data.opponentId });
     };
     
+    // Add a ref to track recently animated Peek reveals
+    const recentlyRevealedPeekKeysRef = useRef(new Set());
+
+    // Modify the handlePeekCardRevealed function to include the animation logic
     const handlePeekCardRevealed = (data) => {
+      const revealKey = `${gameState?.gameId}-${gameState?.turnNumber}-${data.card?.id}-${myColor}`;
+
+      // Skip animation if this revealKey was already animated
+      if (recentlyRevealedPeekKeysRef.current.has(revealKey)) {
+        setPeekCardDialog(null);
+        setPeekCardRevealed(data);
+        return;
+      }
+
+      // Add the revealKey to the set to prevent re-triggering
+      recentlyRevealedPeekKeysRef.current.add(revealKey);
+
+      // Trigger the animation by setting the revealed card
       setPeekCardDialog(null);
       setPeekCardRevealed(data);
-      // Auto-hide after 4 seconds
-      const timeout = setTimeout(() => setPeekCardRevealed(null), 4000);
-      timeoutsRef.current.push(timeout);
+
+      // Clean up the revealKey after a delay to allow re-use in future turns
+      setTimeout(() => recentlyRevealedPeekKeysRef.current.delete(revealKey), 5000);
     };
-    
+
     const handlePeekCardEmpty = (data) => {
       setPendingMoveError(data.message || 'Opponent has no cards to peek');
       const timeout = setTimeout(() => setPendingMoveError(''), 3000);
@@ -735,6 +773,56 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           lastMove={settings.gameplay.highlightLastMove ? lastMove : null}
           pawnShields={pawnShields}
           onTileClick={handleTileClick}
+          onTileHover={(file, rank, entering) => {
+            if (!chess) return;
+            const fileChar = 'abcdefgh'[file];
+            const rankNum = 8 - rank;
+            const sq = `${fileChar}${rankNum}`;
+
+            if (!entering) {
+              setHoverThreatSources(new Set());
+              return;
+            }
+
+            // Only trigger when a friendly piece is selected and hovered square is a legal destination
+            if (!selectedSquare) {
+              setHoverThreatSources(new Set());
+              return;
+            }
+            if (!legalTargets.includes(sq)) {
+              setHoverThreatSources(new Set());
+              return;
+            }
+
+            // Simulate the move on a fresh chess instance and collect enemy moves that target the destination
+            try {
+              const temp = new Chess(chess.fen());
+              // Try move; if promotion required, simulate with a queen as fallback
+              let mv = temp.move({ from: selectedSquare, to: sq });
+              if (!mv) {
+                const piece = chess.get(selectedSquare);
+                if (piece && piece.type === 'p' && (sq[1] === '1' || sq[1] === '8')) {
+                  mv = temp.move({ from: selectedSquare, to: sq, promotion: 'q' });
+                }
+              }
+
+              if (!mv) {
+                setHoverThreatSources(new Set());
+                return;
+              }
+
+              // Now it's opponent's turn in temp; collect all legal moves that land on sq
+              const moves = temp.moves({ verbose: true }) || [];
+              const attackers = new Set();
+              moves.forEach((m) => {
+                if (m.to === sq) attackers.add(m.from);
+              });
+              setHoverThreatSources(attackers);
+            } catch (e) {
+              setHoverThreatSources(new Set());
+            }
+          }}
+          hoverThreatSources={hoverThreatSources}
           targetingMode={targetingMode}
           chess={chess}
           myColor={myColor}
@@ -772,6 +860,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           activeVisualArcana={activeVisualArcana}
           gameState={gameState}
           pawnShields={pawnShields}
+          showFog={opponentHasFog}
         />
         
         {/* Camera Cutscene Controller for card effect cinematics */}
@@ -1273,7 +1362,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   );
 }
 
-function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, targetingMode, chess, myColor, visionMoves, highlightedSquares, highlightColor }) {
+function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, onTileHover, hoverThreatSources, targetingMode, chess, myColor, visionMoves, highlightedSquares, highlightColor }) {
   const tiles = [];
 
   const isLegalTarget = (fileIndex, rankIndex) => {
@@ -1303,6 +1392,14 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
     const rankNum = 8 - rankIndex;
     const sq = `${fileChar}${rankNum}`;
     return targetingMode.validSquares.includes(sq);
+  };
+
+  const isHoverThreatSource = (fileIndex, rankIndex) => {
+    if (!hoverThreatSources || !(hoverThreatSources instanceof Set)) return false;
+    const fileChar = 'abcdefgh'[fileIndex];
+    const rankNum = 8 - rankIndex;
+    const sq = `${fileChar}${rankNum}`;
+    return hoverThreatSources.has(sq);
   };
 
   const isSelected = (fileIndex, rankIndex) => {
@@ -1366,15 +1463,23 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
         if (shielded) color = '#b48ead';
       }
 
+      const hoverThreat = isHoverThreatSource(file, rank);
       tiles.push(
         <mesh
           key={`${file}-${rank}`}
           position={[file - 3.5, 0, rank - 3.5]}
           receiveShadow
           onPointerDown={() => onTileClick(file, rank)}
+          onPointerOver={() => onTileHover && onTileHover(file, rank, true)}
+          onPointerOut={() => onTileHover && onTileHover(file, rank, false)}
         >
           <boxGeometry args={[1, 0.1, 1]} />
-          <meshStandardMaterial color={color} transparent opacity={opacity} />
+          <meshStandardMaterial
+            color={color}
+            transparent
+            opacity={opacity}
+            {...(hoverThreat ? { emissive: '#ff4444', emissiveIntensity: 1.2 } : {})}
+          />
         </mesh>,
       );
     }

@@ -127,8 +127,8 @@ export class GameManager {
     // If the human chose black, the AI (white) should move first.
     if (playerColor === 'black') {
       await this.performAIMove(gameState);
-      const afterAIMove = this.serialiseGameState(gameState);
-      this.io.to(socket.id).emit('gameUpdated', afterAIMove);
+      const personalised = this.serialiseGameStateForViewer(gameState, socket.id);
+      this.io.to(socket.id).emit('gameUpdated', personalised);
     }
 
     return this.serialiseGameState(gameState);
@@ -161,6 +161,30 @@ export class GameManager {
       pawnShields: gameState.pawnShields,
       activeEffects: gameState.activeEffects,
     };
+  }
+
+  // Per-viewer serialization: masks sensitive fields (like lastMove) when fog of war
+  // is active for the move owner and the viewer is not the owner.
+  serialiseGameStateForViewer(gameState, viewerId) {
+    const base = this.serialiseGameState(gameState);
+    try {
+      const viewerColor = gameState.playerColors[viewerId];
+      const viewerChar = viewerColor === 'white' ? 'w' : 'b';
+      const fog = gameState.activeEffects?.fogOfWar || { w: false, b: false };
+
+      // If any color has fog active, and the viewer is NOT that color, mask lastMove
+      for (const c of ['w', 'b']) {
+        if (fog[c] && viewerChar !== c) {
+          // Minimum acceptable concealment: remove lastMove so viewer doesn't see from->to
+          base.lastMove = null;
+          break;
+        }
+      }
+    } catch (e) {
+      // Fail closed: if any error, remove lastMove to avoid leaking info
+      base.lastMove = null;
+    }
+    return base;
   }
 
   async handlePlayerAction(socket, payload) {
@@ -243,18 +267,19 @@ export class GameManager {
             playerId: socket.id,
             arcana: newCard,
           });
-          this.io.to(pid).emit('gameUpdated', this.serialiseGameState(gameState));
+          const personalised = this.serialiseGameStateForViewer(gameState, pid);
+          this.io.to(pid).emit('gameUpdated', personalised);
         }
       }
       
       // If this is an AI game and the current turn is AI's, make the AI move
       if (gameState.aiDifficulty && gameState.status === 'ongoing' && chess.turn() === (gameState.playerColors[socket.id] === 'white' ? 'b' : 'w')) {
         await this.performAIMove(gameState);
-        const afterAIMove = this.serialiseGameState(gameState);
         const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
         if (humanId) {
-          this.io.to(humanId).emit('gameUpdated', afterAIMove);
-          if (afterAIMove.status === 'finished') {
+          const personalised = this.serialiseGameStateForViewer(gameState, humanId);
+          this.io.to(humanId).emit('gameUpdated', personalised);
+          if (personalised.status === 'finished') {
             this.io.to(humanId).emit('gameEnded', { type: 'ai-finished' });
           }
         }
@@ -297,10 +322,10 @@ export class GameManager {
       if (arcanaKingCheck.kingRemoved) {
         gameState.status = 'finished';
         const outcome = { type: 'king-destroyed', winner: arcanaKingCheck.winner };
-        const serialised = this.serialiseGameState(gameState);
         for (const pid of gameState.playerIds) {
           if (!pid.startsWith('AI-')) {
-            this.io.to(pid).emit('gameUpdated', serialised);
+            const personalised = this.serialiseGameStateForViewer(gameState, pid);
+            this.io.to(pid).emit('gameUpdated', personalised);
             this.io.to(pid).emit('gameEnded', outcome);
           }
         }
@@ -312,12 +337,12 @@ export class GameManager {
       gameState.arcanaUsedThisTurn[socket.id] = true;
 
       // Emit game update to both players
-      const serialised = this.serialiseGameState(gameState);
-      for (const pid of gameState.playerIds) {
-        if (!pid.startsWith('AI-')) {
-          this.io.to(pid).emit('gameUpdated', serialised);
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            const personalised = this.serialiseGameStateForViewer(gameState, pid);
+            this.io.to(pid).emit('gameUpdated', personalised);
+          }
         }
-      }
 
       // Check if any used card should end the turn
       const turnEndingCards = [
@@ -340,11 +365,11 @@ export class GameManager {
         fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
         chess.load(fenParts.join(' '));
         
-        // Update serialized state
-        const updatedSerialised = this.serialiseGameState(gameState);
+        // Update serialized state (personalised per viewer for fog concealment)
         for (const pid of gameState.playerIds) {
           if (!pid.startsWith('AI-')) {
-            this.io.to(pid).emit('gameUpdated', updatedSerialised);
+            const personalised = this.serialiseGameStateForViewer(gameState, pid);
+            this.io.to(pid).emit('gameUpdated', personalised);
           }
         }
         
@@ -568,14 +593,14 @@ export class GameManager {
     if (kingCaptured) {
       gameState.status = 'finished';
       const outcome = { type: 'king-captured', winner: result.color === 'w' ? 'white' : 'black' };
-      const serialised = this.serialiseGameState(gameState);
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
-          this.io.to(pid).emit('gameUpdated', serialised);
+          const personalised = this.serialiseGameStateForViewer(gameState, pid);
+          this.io.to(pid).emit('gameUpdated', personalised);
           this.io.to(pid).emit('gameEnded', outcome);
         }
       }
-      return { gameState: serialised, appliedArcana: [] };
+      return { gameState: this.serialiseGameState(gameState), appliedArcana: [] };
     }
 
     // Update shield position if the shielded piece moved
@@ -854,10 +879,10 @@ export class GameManager {
       }
       
       // Don't change turn - same player can move again
-      const serialised = this.serialiseGameState(gameState);
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
-          this.io.to(pid).emit('gameUpdated', serialised);
+          const personalised = this.serialiseGameStateForViewer(gameState, pid);
+          this.io.to(pid).emit('gameUpdated', personalised);
           // Notify about extra move
           this.io.to(pid).emit('extraMoveAvailable', { 
             color: moverColor, 
@@ -868,12 +893,11 @@ export class GameManager {
       return { gameState: serialised, appliedArcana: [], extraMove: true };
     }
 
-    const serialised = this.serialiseGameState(gameState);
-
-    // Broadcast updated state to both players
+    // Broadcast personalised updated state to both players (mask lastMove under fog per viewer)
     for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {
-        this.io.to(pid).emit('gameUpdated', serialised);
+        const personalised = this.serialiseGameStateForViewer(gameState, pid);
+        this.io.to(pid).emit('gameUpdated', personalised);
       }
     }
 
@@ -888,11 +912,11 @@ export class GameManager {
     // If this is an AI game and still ongoing, make the AI move
     if (gameState.aiDifficulty && gameState.status === 'ongoing') {
       await this.performAIMove(gameState);
-      const afterAIMove = this.serialiseGameState(gameState);
       const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
       if (humanId) {
-        this.io.to(humanId).emit('gameUpdated', afterAIMove);
-        if (afterAIMove.status === 'finished') {
+        const personalised = this.serialiseGameStateForViewer(gameState, humanId);
+        this.io.to(humanId).emit('gameUpdated', personalised);
+        if (personalised.status === 'finished') {
           this.io.to(humanId).emit('gameEnded', { type: 'ai-finished' });
         }
       }
@@ -1077,7 +1101,8 @@ export class GameManager {
               playerId: aiSocketId,
               arcana: cardToUse,
             });
-            this.io.to(humanId).emit('gameUpdated', this.serialiseGameState(gameState));
+            const personalised = this.serialiseGameStateForViewer(gameState, humanId);
+            this.io.to(humanId).emit('gameUpdated', personalised);
           }
           
           // If card ends turn, return
@@ -1452,16 +1477,24 @@ export class GameManager {
     }
     
     // Clear one-turn effects
-    // Only clear fog and vision for the color whose turn just ended
-    const endingColor = gameState.chess.turn() === 'w' ? 'b' : 'w'; // The color that just finished
-    
+    // Fog of War: keep fog active throughout the opponent's entire turn and only
+    // clear when it becomes the fog owner's turn again. This ensures: Player A
+    // uses Fog -> Player B experiences fog during their full turn; fog clears
+    // when Player A regains the move. (See design requirements.)
     effects.ironFortress = { w: false, b: false };
     effects.bishopsBlessing = { w: null, b: null };
-    
-    if (effects.fogOfWar[endingColor]) {
-      effects.fogOfWar[endingColor] = false;
+
+    // If fog is active for a color `c`, clear it only when it's currently `c`'s turn.
+    // That means fog persists during the opponent's turn and clears when owner regains turn.
+    const currentTurn = gameState.chess.turn();
+    for (const c of ['w', 'b']) {
+      if (effects.fogOfWar[c] && currentTurn === c) {
+        effects.fogOfWar[c] = false;
+      }
     }
-    
+
+    // Vision remains cleared for the color that just finished (legacy behavior)
+    const endingColor = gameState.chess.turn() === 'w' ? 'b' : 'w';
     if (effects.vision[endingColor]) {
       effects.vision[endingColor] = null;
     }
@@ -1511,8 +1544,7 @@ export class GameManager {
     if (effects.queensGambit.b === 0) effects.queensGambitUsed.b = false;
     
     // Expire shields after the turn ends (opponent had their chance to attack)
-    const currentTurn = gameState.chess.turn();
-    const nextPlayerColor = currentTurn === 'w' ? 'b' : 'w';
+    const nextPlayerColor = gameState.chess.turn() === 'w' ? 'b' : 'w';
     // Clear the shield for the player whose turn just ended
     gameState.pawnShields[nextPlayerColor] = null;
   }

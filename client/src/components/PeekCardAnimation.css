@@ -1,0 +1,41 @@
+/* Peek card flip animation styles */
+
+.peekFlipContainer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  perspective: 1000px;
+}
+
+.peekFlipCard {
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.8s cubic-bezier(0.4, 0.2, 0.2, 1),
+              filter 0.4s ease-in-out;
+}
+
+.peekFlipActive {
+  transform: rotateY(180deg) scale(1.05);
+  filter: brightness(1.2) blur(2px);
+}
+
+.peekFaceFront,
+.peekFaceBack {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  border-radius: 8px;
+}
+
+.peekFaceFront {
+  background: #fff;
+  z-index: 2;
+  transform: rotateY(0deg);
+}
+
+.peekFaceBack {
+  background: linear-gradient(180deg, #21324a, #0f1720);
+  transform: rotateY(180deg);
+}

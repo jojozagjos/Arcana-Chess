@@ -460,9 +460,9 @@ export function FogOfWarEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
   
-  // Generate cloud particles - more of them for better coverage
+  // Generate cloud particles - reduced density for readability and perf
   const clouds = useMemo(() => {
-    return [...Array(80)].map(() => ({
+    return [...Array(48)].map(() => ({
       x: (Math.random() - 0.5) * 12,
       z: (Math.random() - 0.5) * 12,
       y: 0.1 + Math.random() * 0.8,
@@ -503,21 +503,21 @@ function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete }) {
       ref.current.position.z = z + Math.cos(t * speed + phase) * 0.8;
       ref.current.position.y = y + Math.sin(t * speed * 2 + phase) * 0.15;
       
-      // More transparent fog - opacity 0.15-0.25 instead of 0.35
-      const baseOpacity = hasComplete ? 0.2 * (1 - progress) : 0.2;
-      ref.current.material.opacity = baseOpacity + Math.sin(t + phase) * 0.05;
+      // Slightly reduced opacity and smaller shimmer for clarity
+      const baseOpacity = hasComplete ? 0.15 * (1 - progress) : 0.15;
+      ref.current.material.opacity = baseOpacity + Math.sin(t + phase) * 0.03;
     }
   });
   
   return (
     <mesh ref={ref} position={[x, y, z]}>
-      <sphereGeometry args={[scale, 12, 12]} />
+      <sphereGeometry args={[scale, 8, 8]} />
       <meshStandardMaterial
-        emissive="#1a237e"
-        emissiveIntensity={0.3}
-        color="#283593"
+        emissive="#17202a"
+        emissiveIntensity={0.2}
+        color="#1f2a44"
         transparent
-        opacity={0.2}
+        opacity={0.15}
       />
     </mesh>
   );

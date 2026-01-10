@@ -3,7 +3,7 @@ import { squareToPosition } from './sharedHelpers.jsx';
 
 // ArcanaVisualHost mounts visual components exported from arcanaVisuals.jsx
 // It expects `effectsModule` to be an object of visual components (loaded dynamically).
-export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState, pawnShields }) {
+export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState, pawnShields, showFog }) {
   const Effects = effectsModule || {};
 
   if (!Effects) return null;
@@ -28,8 +28,8 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
         <ActiveEffect {...(activeVisualArcana.params || {})} />
       ) : null}
 
-      {/* Fog of War (render if either side has fog of war active) */}
-      {((active.fogOfWar && active.fogOfWar.w) || (active.fogOfWar && active.fogOfWar.b)) && Effects.FogOfWarEffect ? (
+      {/* Fog of War: render only if this viewer should see the fog overlay (showFog) */}
+      {showFog && Effects.FogOfWarEffect ? (
         <Effects.FogOfWarEffect />
       ) : null}
 
