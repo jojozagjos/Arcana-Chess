@@ -1,9 +1,11 @@
 import React, { useState, useRef } from 'react';
 
 // ArcanaCard component: displays card background, icon, and name
-export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo }) {
+export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo, deferLoad = false }) {
   const [hovered, setHovered] = useState(false);
   const [tooltipStyle, setTooltipStyle] = useState(null);
+  const [bgLoaded, setBgLoaded] = useState(false);
+  const [iconLoaded, setIconLoaded] = useState(false);
   const cardRef = useRef(null);
   const TOOLTIP_MAX_W = 280;
   const rarity = arcana.rarity || 'common';
@@ -69,6 +71,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
       <img
         src={backgroundPath}
         alt=""
+        onLoad={() => setBgLoaded(true)}
         style={{
           position: 'absolute',
           top: 0,
@@ -77,6 +80,8 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
           height: '100%',
           objectFit: 'cover',
           zIndex: 0,
+          opacity: deferLoad ? (bgLoaded && iconLoaded ? 1 : 0) : 1,
+          transition: 'opacity 180ms ease',
         }}
       />
 
@@ -129,11 +134,14 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
         <img
           src={iconPath}
           alt={arcana.name}
+          onLoad={() => setIconLoaded(true)}
           style={{
             width: dims.iconSize,
             height: dims.iconSize,
             objectFit: 'contain',
             filter: isUsed ? 'grayscale(0.6)' : 'none',
+            opacity: deferLoad ? (bgLoaded && iconLoaded ? 1 : 0) : 1,
+            transition: 'opacity 200ms ease',
           }}
         />
       </div>
@@ -158,8 +166,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
           USED
         </div>
       )}
-
-      {/* Hover tooltip for quick description (used in-game) */}
+        {/* Hover tooltip for quick description (used in-game) */}
       {hoverInfo && hovered && (
         <div
           style={{
@@ -183,6 +190,22 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{arcana.name}</div>
           <div style={{ opacity: 0.95 }}>{hoverInfo}</div>
+        </div>
+      )}
+      {/* Placeholder overlay while loading when deferLoad is enabled */}
+      {deferLoad && !(bgLoaded && iconLoaded) && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.45))',
+          zIndex: 4,
+          borderRadius: 8,
+        }}>
+          <div style={{ width: 28, height: 28, borderRadius: 14, border: '3px solid rgba(143,148,251,0.85)', boxSizing: 'border-box', animation: 'spin 1s linear infinite' }} />
+          <style>{`@keyframes spin {from {transform: rotate(0deg);} to {transform: rotate(360deg);}}`}</style>
         </div>
       )}
     </div>

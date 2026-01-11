@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { soundManager } from '../game/soundManager.js';
 import { socket } from '../game/socket.js';
 import './styles/MainMenu.css';
+import MenuParticlesCanvas from './MenuParticles.jsx';
 
 export function MainMenu({
   mode = 'root',
@@ -22,6 +23,7 @@ export function MainMenu({
   if (mode === 'root') {
     return (
       <div className="menu-container">
+        <MenuParticlesCanvas />
         <div className="menu-vignette" />
 
         <div className="menu-ui">

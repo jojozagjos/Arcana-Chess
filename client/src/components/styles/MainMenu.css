@@ -3,7 +3,7 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: rgb(107, 73, 139);
+  background: radial-gradient(circle at 20% 10%, #2b1a3a 0%, #0b0710 45%, #020205 100%);
   color: #ffffff;
   font-family: system-ui, sans-serif;
 }

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import './styles/ArcanaCompendium.css';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 
@@ -24,7 +25,7 @@ export function ArcanaCompendium({ onBack }) {
           </button>
         </div>
 
-        <div style={styles.filterRow}>
+          <div style={styles.filterRow}>
           <label style={styles.filterLabel}>Rarity</label>
           <select
             style={styles.select}
@@ -40,17 +41,18 @@ export function ArcanaCompendium({ onBack }) {
           </select>
         </div>
 
-        <div style={styles.content}>
-          <div style={styles.list}>
+          <div style={styles.content}>
+          <div className="arcana-list" style={styles.list}>
             {filtered.map((arcana) => (
-              <div key={arcana.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <div key={arcana.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
                 <ArcanaCard
                   arcana={arcana}
-                  size="small"
+                  size="medium"
                   isSelected={selected?.id === arcana.id}
                   onClick={() => setSelected(arcana)}
+                  deferLoad
                 />
-                <div style={{ fontSize: '0.7rem', textAlign: 'center', opacity: 0.8 }}>
+                <div style={{ fontSize: '0.85rem', textAlign: 'center', opacity: 0.9 }}>
                   {arcana.rarity} · {arcana.category}
                 </div>
               </div>
@@ -105,12 +107,14 @@ const styles = {
     fontFamily: 'system-ui, sans-serif',
   },
   panel: {
-    width: '90vw',
-    maxWidth: 960,
-    padding: 24,
-    borderRadius: 18,
-    background: 'rgba(5, 6, 10, 0.95)',
-    boxShadow: '0 22px 60px rgba(0,0,0,0.65)',
+    width: '75vw',
+    maxWidth: '75vw',
+    height: '75vh',
+    maxHeight: '75vh',
+    padding: 36,
+    borderRadius: 20,
+    background: 'rgba(5, 6, 10, 0.96)',
+    boxShadow: '0 28px 80px rgba(0,0,0,0.7)',
   },
   headerRow: {
     display: 'flex',
@@ -120,7 +124,7 @@ const styles = {
   },
   heading: {
     margin: 0,
-    fontSize: '1.4rem',
+    fontSize: '1.6rem',
   },
   backButton: {
     padding: '6px 12px',
@@ -141,33 +145,35 @@ const styles = {
     fontSize: '0.85rem',
   },
   select: {
-    padding: '6px 10px',
-    borderRadius: 8,
+    padding: '8px 12px',
+    borderRadius: 10,
     border: '1px solid #3b4252',
-    background: 'rgba(8,10,20,0.9)',
+    background: 'rgba(8,10,20,0.92)',
     color: '#e5e9f0',
-    fontSize: '0.9rem',
+    fontSize: '1rem',
   },
   content: {
     display: 'flex',
     gap: 16,
+    height: '65vh',
   },
   list: {
     flex: 1,
-    maxHeight: 520,
     overflowY: 'auto',
-    paddingRight: 4,
+    paddingRight: 8,
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, 1fr)',
-    gap: 12,
-    alignItems: 'start',
-    justifyItems: 'center',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: 18,
+    alignContent: 'start',
+    backgroundcolor: 'rgb(240, 3, 3)',
+    // alignItems: 'start',
+    // justifyItems: 'center',
   },
   totalCount: {
-    marginTop: 6,
-    fontSize: '0.85rem',
+    marginTop: 8,
+    fontSize: '0.95rem',
     color: '#cbd6e6',
-    opacity: 0.9,
+    opacity: 0.95,
   },
   card: {
     padding: 10,

@@ -254,7 +254,7 @@ export function App() {
       {screen === 'intro' && (
         <IntroScreen
           onContinue={() => {
-            try { soundManager.setEnabled(true); } catch (e) {}
+            try { soundManager.setEnabled(!globalSettings.audio?.muted); } catch (e) {}
             setAudioReady(true);
             setScreen('main-menu');
           }}

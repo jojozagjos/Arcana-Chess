@@ -918,8 +918,7 @@ export function CardBalancingToolV2({ onBack }) {
                 pawnShields={pawnShields}
               />
 
-              {/* Cutscene overlay + camera (used by orchestrateCutscene) */}
-              <CutsceneOverlay ref={overlayRef} />
+              {/* CameraCutscene (uses three.js camera) - keep inside canvas */}
               <CameraCutscene cutsceneTarget={cutsceneTarget} onCutsceneEnd={() => setCutsceneActive(false)} myColor={playerColor} controls={null} />
 
               {/* Legacy Visual Effects (kept for backward compatibility) */}
@@ -950,6 +949,8 @@ export function CardBalancingToolV2({ onBack }) {
               {/* Grayscale effect */}
               {grayscaleIntensity > 0 && <GrayscaleEffect intensity={grayscaleIntensity} />}
             </Canvas>
+            {/* DOM overlay for cutscenes must be outside the Canvas (not part of R3F tree) */}
+            <CutsceneOverlay ref={overlayRef} />
           </div>
 
           <div style={styles.testControls}>
