@@ -70,16 +70,16 @@ export function ArcanaCompendium({ onBack }) {
             )}
             {selected && (
               <>
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, marginTop: 100, transform: 'scale(1.3)' }}>
                   <ArcanaCard arcana={selected} size="large" />
                 </div>
-                <h3 style={{ marginTop: 0, textAlign: 'center' }}>{selected.name}</h3>
+                <h3 style={{ marginTop: 0, textAlign: 'center', fontSize: '1.5rem' }}>{selected.name}</h3>
                 <p style={styles.detailMeta}>
                   <strong>Rarity:</strong> {selected.rarity}<br />
                   <strong>Category:</strong> {selected.category}
                 </p>
-                <p>{selected.description}</p>
-                <p style={{ marginTop: 16, fontSize: '0.85rem', opacity: 0.8 }}>
+                <p style={{fontSize: '1.5rem' }}>{selected.description}</p>
+                <p style={{ marginTop: 16, fontSize: '0.85rem', opacity: 0.8, }}>
                   During an Arcana Chess match, Arcana remain dormant until the Ascension event is
                   triggered (for example, on the first capture). Once Ascended, each player can
                   select one Arcana before making a move to apply its effect. Most Arcana can be
@@ -165,9 +165,7 @@ const styles = {
     gridTemplateColumns: 'repeat(3, 1fr)',
     gap: 18,
     alignContent: 'start',
-    backgroundcolor: 'rgb(240, 3, 3)',
-    // alignItems: 'start',
-    // justifyItems: 'center',
+    justifyItems: 'center',
   },
   totalCount: {
     marginTop: 8,
@@ -195,9 +193,10 @@ const styles = {
     borderRadius: 12,
     background: 'rgba(11,16,32,0.9)',
     fontSize: '0.9rem',
+    textAlign: 'center',
   },
   detailMeta: {
-    fontSize: '0.85rem',
+    fontSize: '1rem',
     opacity: 0.9,
   },
 };
