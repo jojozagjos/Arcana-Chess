@@ -137,7 +137,7 @@ const TUTORIAL_STEPS = [
     requireMove: null,
     showCards: true,
     demoCard: 'shield_pawn',
-    cardTargeting: true,
+    cardTargeting: false,
   },
   {
     id: 10,

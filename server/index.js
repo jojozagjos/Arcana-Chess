@@ -224,6 +224,16 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('voteRematch', (payload, ack) => {
+    try {
+      const result = gameManager.handleRematchVote(socket, lobbyManager);
+      safeAck(ack, result);
+    } catch (err) {
+      console.error('voteRematch error', err);
+      safeAck(ack, { ok: false, error: err.message || 'Failed to vote for rematch' });
+    }
+  });
+
   socket.on('getArcanaList', (payload, ack) => {
     safeAck(ack, { ok: true, arcana: ARCANA_DEFINITIONS });
   });

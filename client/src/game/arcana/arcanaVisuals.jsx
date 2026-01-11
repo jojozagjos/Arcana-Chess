@@ -1560,16 +1560,34 @@ export function SanctuaryEffect({ square, onComplete }) {
 export function SanctuaryIndicatorEffect({ square }) {
   const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
   const ringRef = useRef();
+  const glowRef = useRef();
   
   useFrame((state) => {
     const t = state.clock.elapsedTime;
     if (ringRef.current) {
       ringRef.current.material.opacity = 0.3 + Math.sin(t * 2) * 0.15;
     }
+    if (glowRef.current) {
+      glowRef.current.material.opacity = 0.2 + Math.sin(t * 1.5) * 0.1;
+    }
   });
   
   return (
     <group position={[x, 0.12, z]}>
+      {/* Persistent ground glow */}
+      <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} ref={glowRef}>
+        <circleGeometry args={[0.48, 32]} />
+        <meshStandardMaterial
+          emissive="#ffd700"
+          emissiveIntensity={1.5}
+          color="#ffeb3b"
+          transparent
+          opacity={0.25}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Animated ring */}
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.35, 0.45, 32]} />
         <meshStandardMaterial
@@ -1675,6 +1693,7 @@ export function CursedSquareEffect({ square, onComplete }) {
 export function CursedSquareIndicatorEffect({ square, turnsLeft }) {
   const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
   const ringRef = useRef();
+  const glowRef = useRef();
   
   useFrame((state) => {
     const t = state.clock.elapsedTime;
@@ -1682,10 +1701,27 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft }) {
       ringRef.current.rotation.z = t * 0.5;
       ringRef.current.material.opacity = 0.3 + Math.sin(t * 3) * 0.1;
     }
+    if (glowRef.current) {
+      glowRef.current.material.opacity = 0.25 + Math.sin(t * 2) * 0.1;
+    }
   });
   
   return (
     <group position={[x, 0.12, z]}>
+      {/* Persistent dark ground effect */}
+      <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} ref={glowRef}>
+        <circleGeometry args={[0.48, 32]} />
+        <meshStandardMaterial
+          emissive="#8b0000"
+          emissiveIntensity={1.2}
+          color="#dc143c"
+          transparent
+          opacity={0.3}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Animated ring */}
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.35, 0.42, 6]} />
         <meshStandardMaterial

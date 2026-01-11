@@ -908,10 +908,10 @@ function applySquireSupport({ gameState, params }) {
   const targetSquare = params?.targetSquare;
   if (!targetSquare) return null;
   
-  // Add piece to squire support list for 1 turn
+  // Add piece to squire support list for 2 turns (lasts until opponent's turn ends)
   gameState.activeEffects.squireSupport.push({
     square: targetSquare,
-    turnsLeft: 1
+    turnsLeft: 2
   });
   
   return { params: { protectedSquare: targetSquare } };

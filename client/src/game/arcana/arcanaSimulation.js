@@ -407,9 +407,9 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
           const piece = chess.get(params.targetSquare);
           if (piece && piece.color === colorChar) {
             gameState.activeEffects.squireSupport = gameState.activeEffects.squireSupport || [];
-            gameState.activeEffects.squireSupport.push({ square: params.targetSquare, turnsLeft: 1 });
+            gameState.activeEffects.squireSupport.push({ square: params.targetSquare, turnsLeft: 2 });
             result.success = true;
-            result.message = `Squire Support: Protected ${params.targetSquare} for 1 turn`;
+            result.message = `Squire Support: Protected ${params.targetSquare} for opponent's turn`;
             result.visualEffect = 'squire_support';
             result.soundEffect = 'arcana:squire_support';
           } else {

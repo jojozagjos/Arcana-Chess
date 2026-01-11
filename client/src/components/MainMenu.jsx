@@ -13,8 +13,10 @@ export function MainMenu({
   onBack,
   devMode = false,
   onToggleDevMode,
+  onQuickMatch,
+  quickMatchStatus,
 }) {
-  // Music is handled globally in App; no per-mode control needed here
+  // Music is handled globally in App; no per-mode control needed here  
   if (mode === 'root') {
     return (
       <div style={styles.container}>
@@ -30,6 +32,19 @@ export function MainMenu({
               Join game
             </button>
           </div>
+
+          <div style={{ ...styles.buttonRow, marginTop: 12 }}>
+            <button
+              style={styles.primaryButton}
+              onClick={onQuickMatch}
+            >
+              ⚡ Quick Match
+            </button>
+          </div>
+
+          {typeof quickMatchStatus === 'string' && quickMatchStatus && (
+            <div style={{ marginTop: 10, color: '#88c0d0', fontSize: '0.9rem' }}>{quickMatchStatus}</div>
+          )}
 
           <div style={styles.secondaryRow}>
             <button style={styles.secondaryButton} onClick={onTutorial}>

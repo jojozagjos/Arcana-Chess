@@ -32,6 +32,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [isCardAnimationPlaying, setIsCardAnimationPlaying] = useState(false); // Block card actions during animation
   const [promotionDialog, setPromotionDialog] = useState(null); // { from, to } when promotion is pending
   const [rematchVote, setRematchVote] = useState(null); // 'voted' when player votes for rematch
+  const [rematchVoteCount, setRematchVoteCount] = useState(0); // Number of players who voted for rematch
+  const [rematchTotalPlayers, setRematchTotalPlayers] = useState(2); // Total players in game
   const [targetingMode, setTargetingMode] = useState(null); // { arcanaId, targetType: 'pawn'|'piece'|'square'|'enemyPiece', params: {} }
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null); // { square } when showing piece type choice
   const [effectsModule, setEffectsModule] = useState(null);
@@ -67,6 +69,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Client-side draw cooldown: track if player has drawn this turn
   const drewThisTurnRef = useRef(false);
   const lastTurnRef = useRef(null);
+  // Track previous turn code to clear per-turn highlights reliably
+  const prevTurnRef = useRef(null);
+  // Track if player used arcana this turn (blocks draw)
+  const usedArcanaThisTurnRef = useRef(false);
+  // Track recently animated Peek reveals
+  const recentlyRevealedPeekKeysRef = useRef(new Set());
+  // Track pending visual events for arcana use animations
+  const pendingVisualEventsRef = useRef([]);
+  const USE_CARD_ANIM_MS = 800;
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
@@ -109,6 +120,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }, 250);
     return () => {
       clearTimeout(timer);
+      try {
+        soundManager.stopMusic({ fadeMs: 200 });
+      } catch (e) {}
     };
   }, []);
 
@@ -136,6 +150,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       }
     } else {
       setVisionMoves([]);
+      // Clear any lingering client-side highlights when vision ends
+      setHighlightedSquares([]);
     }
   }, [hasVision, chess, myColor, opponentColorChar]);
 
@@ -150,10 +166,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     setHoverThreatSources(new Set());
   }, [selectedSquare, gameState?.moves?.length, selectedArcanaId, targetingMode, isCardAnimationPlaying]);
 
-  // Clear highlights when turn changes (persists only for one full turn)
+  // Clear highlights when turn changes using reliable turn signals
   useEffect(() => {
-    setHighlightedSquares([]);
-  }, [gameState?.moves?.length]); // Clears highlights on any move (turn change)
+    const currentTurnCode = (typeof chess?.turn === 'function' ? chess.turn() : null) || gameState?.turn;
+    if (prevTurnRef.current !== null && currentTurnCode && currentTurnCode !== prevTurnRef.current) {
+      setHighlightedSquares([]);
+      setVisionMoves([]);
+    }
+    if (currentTurnCode) prevTurnRef.current = currentTurnCode;
+  }, [gameState?.turn, chess?.fen()]);
 
   // Reset draw cooldown when turn changes (client-side only, not affected by opponent draws)
   useEffect(() => {
@@ -161,6 +182,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     if (currentTurn && currentTurn !== lastTurnRef.current) {
       lastTurnRef.current = currentTurn;
       drewThisTurnRef.current = false; // Reset draw flag for new turn
+      usedArcanaThisTurnRef.current = false; // Reset arcana usage flag for new turn
     }
   }, [chess?.fen()]); // Re-run whenever FEN changes (which includes turn changes)
 
@@ -242,10 +264,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         setIsCardAnimationPlaying(true);
         setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'draw', stayUntilClick: true, isHidden: false });
       } else {
-        // For opponent draws, just show a simple text notification
-        setPendingMoveError('Your opponent drew a card');
-        const timeout = setTimeout(() => setPendingMoveError(''), 2000);
-        timeoutsRef.current.push(timeout);
+        // For opponent draws, show a CardReveal animation (hidden card back)
+        setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'draw', stayUntilClick: false, isHidden: true });
       }
     };
 
@@ -303,18 +323,25 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           const squares = params?.legalMoves || [];
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
           setHighlightColor('#88c0d0');
+          // Auto-clear as a safety after a short duration
+          const t = setTimeout(() => setHighlightedSquares([]), 6000);
+          timeoutsRef.current.push(t);
           break;
         }
         case 'map_fragments': {
           const squares = params?.predictedSquares || [];
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
           setHighlightColor('#bf616a');
+          const t = setTimeout(() => setHighlightedSquares([]), 6000);
+          timeoutsRef.current.push(t);
           break;
         }
         case 'quiet_thought': {
           const squares = params?.threats || [];
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
           setHighlightColor('#ff4444');
+          const t = setTimeout(() => setHighlightedSquares([]), 6000);
+          timeoutsRef.current.push(t);
           break;
         }
         case 'vision': {
@@ -323,6 +350,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           if (Array.isArray(squares) && squares.length) {
             setHighlightedSquares(squares);
             setHighlightColor('#bf616a');
+            const t = setTimeout(() => setHighlightedSquares([]), 6000);
+            timeoutsRef.current.push(t);
           }
           break;
         }
@@ -335,9 +364,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const handlePeekCardSelection = (data) => {
       setPeekCardDialog({ cardCount: data.cardCount, opponentId: data.opponentId });
     };
-    
-    // Add a ref to track recently animated Peek reveals
-    const recentlyRevealedPeekKeysRef = useRef(new Set());
 
     // Modify the handlePeekCardRevealed function to include the animation logic
     const handlePeekCardRevealed = (data) => {
@@ -367,6 +393,19 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       timeoutsRef.current.push(timeout);
     };
 
+    const handleRematchVotesUpdated = (data) => {
+      setRematchVoteCount(data.votes || 0);
+      setRematchTotalPlayers(data.totalPlayers || 2);
+    };
+
+    const handleRematchCancelled = (data) => {
+      setPendingMoveError(data.message || 'Opponent left rematch voting');
+      const timeout = setTimeout(() => setPendingMoveError(''), 3000);
+      timeoutsRef.current.push(timeout);
+      setRematchVote(null);
+      setRematchVoteCount(0);
+    };
+
     socket.on('arcanaDrawn', handleArcanaDrawn);
     socket.on('arcanaUsed', handleArcanaUsed);
     socket.on('ascended', handleAscended);
@@ -374,6 +413,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     socket.on('peekCardSelection', handlePeekCardSelection);
     socket.on('peekCardRevealed', handlePeekCardRevealed);
     socket.on('peekCardEmpty', handlePeekCardEmpty);
+    socket.on('rematchVotesUpdated', handleRematchVotesUpdated);
+    socket.on('rematchCancelled', handleRematchCancelled);
 
     return () => {
       socket.off('arcanaDrawn', handleArcanaDrawn);
@@ -383,6 +424,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       socket.off('peekCardSelection', handlePeekCardSelection);
       socket.off('peekCardRevealed', handlePeekCardRevealed);
       socket.off('peekCardEmpty', handlePeekCardEmpty);
+      socket.off('rematchVotesUpdated', handleRematchVotesUpdated);
+      socket.off('rematchCancelled', handleRematchCancelled);
       // Clean up all pending timeouts
       timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
       timeoutsRef.current = [];
@@ -425,6 +468,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setTargetingMode(null);
         } else {
           // Activate the arcana immediately with the selected target
+          usedArcanaThisTurnRef.current = true;
           socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: updatedParams }] }, (res) => {
             if (!res || !res.ok) {
               setPendingMoveError(res?.error || 'Failed to use arcana');
@@ -761,7 +805,20 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <CutsceneOverlay ref={overlayRef} />
-      <Canvas camera={{ position: cameraPosition, fov: 40 }} shadows>
+      <Canvas 
+        camera={{ position: cameraPosition, fov: 40 }} 
+        shadows
+        onCreated={({ gl }) => {
+          // Handle WebGL context loss gracefully
+          gl.domElement.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault();
+            console.warn('WebGL context lost in GameScene. Preventing default.');
+          });
+          gl.domElement.addEventListener('webglcontextrestored', () => {
+            console.log('WebGL context restored in GameScene.');
+          });
+        }}
+      >
         {/* Use the ascension-style lighting by default: slightly dimmer, dramatic "night" environment */}
         <color attach="background" args={["#0b1020"]} />
         <ambientLight intensity={0.4} />
@@ -915,6 +972,13 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               return;
             }
             
+            // If this card is already in targeting mode, cancel it (toggle off)
+            if (targetingMode && targetingMode.arcanaId === arcanaId) {
+              setTargetingMode(null);
+              setSelectedArcanaId(null);
+              return;
+            }
+            
             // Clear piece selection when using a card
             setSelectedSquare(null);
             setLegalTargets([]);
@@ -937,6 +1001,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               // No targeting needed, activate immediately (guard against double-click)
               if (pendingActionRef.current) return;
               pendingActionRef.current = true;
+              usedArcanaThisTurnRef.current = true;
               socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: {} }] }, (res) => {
                 pendingActionRef.current = false;
                 if (!res || !res.ok) {
@@ -958,9 +1023,19 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               setPendingMoveError('Please wait for the card animation to finish');
               return;
             }
+            // Check if player is in check - cannot draw while in check
+            if (chess && chess.inCheck()) {
+              setPendingMoveError('You cannot draw a card while in check');
+              return;
+            }
             // Check if player already drew this turn (client-side cooldown)
             if (drewThisTurnRef.current) {
               setPendingMoveError('You already drew a card this turn');
+              return;
+            }
+            // Check if player used arcana this turn - blocks drawing
+            if (usedArcanaThisTurnRef.current) {
+              setPendingMoveError('You cannot draw after using an arcana card');
               return;
             }
             if (pendingActionRef.current) return;
@@ -1006,20 +1081,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               }}>
                 Game Menu
               </h2>
-              <button
-                onClick={() => setShowMenu(false)}
-                style={{
-                  ...styles.button,
-                  background: 'transparent',
-                  color: '#88c0d0',
-                  fontSize: '1.2rem',
-                  padding: 6,
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.color = '#eceff4'}
-                onMouseLeave={(e) => e.currentTarget.style.color = '#88c0d0'}
-              >
-                ✕
-              </button>
             </div>
 
             {/* Main action buttons */}
@@ -1106,6 +1167,21 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       {settings.graphics?.shadows ? 'On' : 'Off'}
                     </button>
                   </div>
+                  <div style={styles.menuSettingRow}>
+                    <label style={styles.menuSettingLabel}>Fullscreen</label>
+                    <button
+                      type="button"
+                      onClick={() => onSettingsChange({ graphics: { ...settings.graphics }, display: { ...settings.display, fullscreen: !settings.display?.fullscreen } })}
+                      style={{
+                        ...styles.menuToggle,
+                        background: settings.display?.fullscreen
+                          ? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)'
+                          : 'rgba(76, 86, 106, 0.5)',
+                      }}
+                    >
+                      {settings.display?.fullscreen ? 'On' : 'Off'}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1157,9 +1233,31 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                   Audio
                 </div>
                 <div style={styles.menuCardContent}>
+                  <div style={styles.menuSettingRow}>
+                    <label style={styles.menuSettingLabel}>Mute All</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newMuted = !settings.audio?.muted;
+                        onSettingsChange({ audio: { ...settings.audio, muted: newMuted } });
+                        try { soundManager.setEnabled(!newMuted); } catch {}
+                      }}
+                      style={{
+                        ...styles.menuToggle,
+                        background: settings.audio?.muted
+                          ? 'rgba(191, 97, 106, 0.5)'
+                          : 'rgba(76, 86, 106, 0.5)',
+                      }}
+                    >
+                      {settings.audio?.muted ? 'Muted' : 'Off'}
+                    </button>
+                  </div>
+
+                  
+
                   <div style={styles.menuSliderRow}>
                     <label style={styles.menuSliderLabel}>
-                      Master
+                      Master Volume
                       <span style={styles.menuSliderValue}>{Math.round((settings?.audio?.master ?? 0.8) * 100)}%</span>
                     </label>
                     <input
@@ -1172,6 +1270,25 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                         const vol = Number(e.target.value);
                         onSettingsChange({ audio: { ...settings.audio, master: vol } });
                         try { soundManager.setMasterVolume(vol); } catch {}
+                      }}
+                      style={styles.menuSlider}
+                    />
+                  </div>
+                  <div style={styles.menuSliderRow}>
+                    <label style={styles.menuSliderLabel}>
+                      Music
+                      <span style={styles.menuSliderValue}>{Math.round((settings?.audio?.music ?? 0.5) * 100)}%</span>
+                    </label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={settings?.audio?.music ?? 0.5}
+                      onChange={(e) => {
+                        const vol = Number(e.target.value);
+                        onSettingsChange({ audio: { ...settings.audio, music: vol } });
+                        try { soundManager.setMusicVolume(vol); } catch {}
                       }}
                       style={styles.menuSlider}
                     />
@@ -1192,26 +1309,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                         const vol = Number(e.target.value);
                         onSettingsChange({ audio: { ...settings.audio, sfx: vol } });
                         try { soundManager.setSfxVolume(vol); } catch {}
-                      }}
-                      style={styles.menuSlider}
-                    />
-                  </div>
-
-                  <div style={styles.menuSliderRow}>
-                    <label style={styles.menuSliderLabel}>
-                      Music
-                      <span style={styles.menuSliderValue}>{Math.round((settings?.audio?.music ?? 0.5) * 100)}%</span>
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={settings?.audio?.music ?? 0.5}
-                      onChange={(e) => {
-                        const vol = Number(e.target.value);
-                        onSettingsChange({ audio: { ...settings.audio, music: vol } });
-                        try { soundManager.setMusicVolume(vol); } catch {}
                       }}
                       style={styles.menuSlider}
                     />
@@ -1262,19 +1359,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         </div>
       )}
 
-      {activeVisualArcana && activeVisualArcana.arcanaId && (
-        <div style={styles.arcanaOverlay}>
-          <ArcanaCard
-            arcana={{
-              id: activeVisualArcana.arcanaId,
-              name: activeVisualArcana.arcanaId.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-              rarity: 'rare',
-              ...activeVisualArcana
-            }}
-            size="medium"
-          />
-        </div>
-      )}
+      {/* activeVisualArcana overlay removed - CardRevealAnimation handles all card displays */}
 
       {cardReveal && (
         <CardRevealAnimation
@@ -1283,6 +1368,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           type={cardReveal.type}
           mySocketId={mySocketId}
           stayUntilClick={cardReveal.stayUntilClick}
+          isHidden={cardReveal.isHidden}
           onDismiss={() => {
             setCardReveal(null);
             // Unlock interactions after draw/use animation ends
@@ -1296,6 +1382,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           outcome={gameEndOutcome}
           mySocketId={mySocketId}
           rematchVote={rematchVote}
+          rematchVoteCount={rematchVoteCount}
+          rematchTotalPlayers={rematchTotalPlayers}
           onRematchVote={() => {
             setRematchVote('voted');
             socket.emit('voteRematch');
@@ -1434,11 +1522,12 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
           opacity = 0.7;
         }
       } else {
+        // Legal moves should have priority over last move highlight
         if (last) color = '#ffd27f';
         if (selected) color = '#4db8ff';
-        else if (legal) color = '#4cd964';
-        else if (vision) color = '#bf616a'; // Red for opponent's potential moves (vision)
-        else if (highlighted) color = highlightColor || '#88c0d0'; // Cyan for Line of Sight, Map Fragments, etc
+        if (legal) color = '#4cd964'; // Legal moves override last move
+        if (vision) color = '#bf616a'; // Red for opponent's potential moves (vision)
+        if (highlighted) color = highlightColor || '#88c0d0'; // Cyan for Line of Sight, Map Fragments, etc
         if (shielded) color = '#b48ead';
       }
 
@@ -1564,7 +1653,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
                 arcana={card}
                 size="small"
                 isSelected={isSelected}
-                hoverInfo={card.description}
+                hoverInfo={card.endsTurn ? `${card.description}\n\n⚠️ ENDS YOUR TURN` : card.description}
                 onClick={() => isCardAnimationPlaying ? null : onSelectArcana(isSelected ? null : card.id)}
               />
               {count > 1 && (
@@ -1572,7 +1661,10 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
               )}
               {isHovered && (
                 <div style={styles.arcanaTooltip}>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>{card.name} {count > 1 && `(×${count})`}</div>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                    {card.name} {count > 1 && `(×${count})`}
+                    {card.endsTurn && <span style={{ color: '#ebcb8b', marginLeft: 8, fontSize: '0.7rem' }}>⚠️ ENDS TURN</span>}
+                  </div>
                   <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>{card.description}</div>
                 </div>
               )}
@@ -1595,7 +1687,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   );
 }
 
-function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClick, onDismiss }) {
+function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClick, isHidden, onDismiss }) {
   const isMe = playerId === mySocketId;
   const actionText = type === 'draw' ? 'drew' : 'used';
   const playerText = isMe ? 'You' : 'Opponent';
@@ -1642,8 +1734,15 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         clearTimeout(t2);
         clearInterval(progressInterval);
       };
+    } else if (type === 'draw' && isHidden && !stayUntilClick && onDismiss) {
+      // Auto-dismiss opponent draw notifications after 2 seconds
+      const autoDismissTimer = setTimeout(() => {
+        onDismiss();
+      }, 2000);
+      
+      return () => clearTimeout(autoDismissTimer);
     }
-  }, [type]);
+  }, [type, isHidden, stayUntilClick, onDismiss]);
 
   return (
     <>
@@ -1843,7 +1942,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
             textTransform: 'uppercase',
             textAlign: 'center',
           }}>
-            {playerText} {actionText} an Arcana!
+            {isHidden ? 'Opponent drew a card!' : `${playerText} ${actionText} an Arcana!`}
           </div>
         </div>
         
@@ -1868,36 +1967,57 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
             filter: type === 'use' ? `drop-shadow(0 0 ${20 + usePhase * 15}px ${colors.glow})` : 'none',
             transition: 'filter 0.5s ease-out',
           }}>
-            <ArcanaCard arcana={arcana} size="large" />
+            {isHidden ? (
+              // Show a card back or placeholder for hidden opponent draws
+              <div style={{
+                width: 200,
+                height: 300,
+                borderRadius: 8,
+                background: 'linear-gradient(135deg, #2e3440 0%, #1a1f2e 100%)',
+                border: '2px solid #88c0d0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '4rem',
+                color: '#88c0d0',
+                boxShadow: `0 0 30px ${colors.glow}`,
+              }}>
+                🂠
+              </div>
+            ) : (
+              <ArcanaCard arcana={arcana} size="large" />
+            )}
           </div>
         </div>
         
-        {/* Description text - properly centered */}
-        <div style={{
-          position: 'absolute',
-          bottom: '15%',
-          left: 0,
-          right: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          animation: type === 'use' && usePhase >= 2 
-            ? 'textFadeOut 0.8s ease-out forwards'
-            : 'textReveal 0.6s ease-out 0.5s forwards',
-          opacity: 0,
-        }}>
+        {/* Description text - properly centered (hidden for opponent draws) */}
+        {!isHidden && (
           <div style={{
-            fontSize: 'clamp(0.95rem, 2.5vw, 1.15rem)',
-            color: '#d8dee9',
-            lineHeight: 1.6,
-            textShadow: '0 2px 10px rgba(0,0,0,0.8)',
-            padding: '0 20px',
-            maxWidth: 550,
-            textAlign: 'center',
+            position: 'absolute',
+            bottom: '15%',
+            left: 0,
+            right: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            animation: type === 'use' && usePhase >= 2 
+              ? 'textFadeOut 0.8s ease-out forwards'
+              : 'textReveal 0.6s ease-out 0.5s forwards',
+            opacity: 0,
           }}>
-            {arcana.description}
+            <div style={{
+              fontSize: 'clamp(0.95rem, 2.5vw, 1.15rem)',
+              color: '#d8dee9',
+              lineHeight: 1.6,
+              textShadow: '0 2px 10px rgba(0,0,0,0.8)',
+              padding: '0 20px',
+              maxWidth: 550,
+              textAlign: 'center',
+            }}>
+              {arcana.description}
+            </div>
           </div>
-        </div>
+        )}
         
         {/* Use animation effects - GPU-accelerated particles */}
         {type === 'use' && usePhase >= 1 && useProgress > 0.05 && (
@@ -1921,7 +2041,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   );
 }
 
-function GameEndOverlay({ outcome, mySocketId, rematchVote, onRematchVote, onReturnToMenu }) {
+function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, rematchTotalPlayers, onRematchVote, onReturnToMenu }) {
   const isWinner = outcome.winnerSocketId === mySocketId;
   const title = isWinner ? '🏆 VICTORY!' : '💀 DEFEAT';
   const message = outcome.type === 'disconnect' 
@@ -1930,6 +2050,10 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, onRematchVote, onRet
     ? (isWinner ? 'Opponent forfeited' : 'You forfeited')
     : 'Game ended';
   const color = isWinner ? '#a3be8c' : '#bf616a';
+  const voteCountText = `${rematchVoteCount}/${rematchTotalPlayers}`;
+  const rematchButtonText = rematchVote === 'voted' 
+    ? `✓ Voted for Rematch (${voteCountText})`
+    : `🔄 Request Rematch (${voteCountText})`;
 
   return (
     <div style={styles.gameEndOverlay}>
@@ -1946,7 +2070,7 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, onRematchVote, onRet
             onClick={onRematchVote}
             disabled={rematchVote === 'voted'}
           >
-            {rematchVote === 'voted' ? '✓ Voted for Rematch' : '🔄 Request Rematch'}
+            {rematchButtonText}
           </button>
           <button
             style={{ ...styles.gameEndButton, ...styles.gameEndButtonSecondary }}

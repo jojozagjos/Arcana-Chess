@@ -6,6 +6,7 @@ export function Settings({ settings, onChange, onBack }) {
     audio: { master: 0.5, music: 0.1, sfx: 0.5, muted: false },
     graphics: { quality: 'medium', postProcessing: true, shadows: true },
     gameplay: { showLegalMoves: true, highlightLastMove: true },
+    display: { fullscreen: false },
   };
 
   const handleReset = () => {
@@ -67,6 +68,15 @@ export function Settings({ settings, onChange, onBack }) {
     });
   };
 
+  const handleDisplayChange = (key, value) => {
+    onChange({
+      display: {
+        ...settings.display,
+        [key]: value,
+      },
+    });
+  };
+
   return (
     <div style={styles.container}>
       <div style={styles.panel}>
@@ -81,10 +91,13 @@ export function Settings({ settings, onChange, onBack }) {
         <div style={styles.section}>
           <h3 style={styles.sectionHeading}>Audio</h3>
           <ToggleRow
-            label="Mute"
+            label="Mute All"
             value={settings.audio?.muted || false}
+            trueLabel="Muted"
+            falseLabel="Off"
+            trueStyle={{ background: 'rgba(191, 97, 106, 0.5)', color: '#ffdede' }}
+            falseStyle={{ background: 'rgba(76, 86, 106, 0.5)', color: '#e5e9f0' }}
             onChange={(v) => {
-              // v is muted boolean
               onChange({
                 audio: {
                   ...settings.audio,
@@ -96,7 +109,7 @@ export function Settings({ settings, onChange, onBack }) {
             }}
           />
           <SliderRow
-            label="Master"
+            label="Master Volume"
             value={settings.audio.master}
             onChange={(v) => handleAudioChange('master', v)}
           />
@@ -136,17 +149,22 @@ export function Settings({ settings, onChange, onBack }) {
             value={settings.graphics.shadows}
             onChange={(v) => handleGraphicsChange('shadows', v)}
           />
+          <ToggleRow
+            label="Fullscreen"
+            value={settings.display?.fullscreen || false}
+            onChange={(v) => handleDisplayChange('fullscreen', v)}
+          />
         </div>
 
         <div style={styles.section}>
           <h3 style={styles.sectionHeading}>Gameplay</h3>
           <ToggleRow
-            label="Show legal moves"
+            label="Show Legal Moves"
             value={settings.gameplay.showLegalMoves}
             onChange={(v) => handleGameplayChange('showLegalMoves', v)}
           />
           <ToggleRow
-            label="Highlight last move"
+            label="Highlight Last Move"
             value={settings.gameplay.highlightLastMove}
             onChange={(v) => handleGameplayChange('highlightLastMove', v)}
           />
@@ -174,7 +192,10 @@ function SliderRow({ label, value, onChange }) {
   );
 }
 
-function ToggleRow({ label, value, onChange }) {
+function ToggleRow({ label, value, onChange, trueLabel = 'On', falseLabel = 'Off', trueStyle = {}, falseStyle = {} }) {
+  const background = value ? (trueStyle.background ?? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)') : (falseStyle.background ?? 'rgba(76, 86, 106, 0.5)');
+  const color = value ? (trueStyle.color ?? '#eceff4') : (falseStyle.color ?? '#eceff4');
+
   return (
     <div style={styles.row}>
       <label style={styles.labelInline}>{label}</label>
@@ -182,16 +203,19 @@ function ToggleRow({ label, value, onChange }) {
         type="button"
         onClick={() => onChange(!value)}
         style={{
-          padding: '4px 10px',
-          borderRadius: 999,
-          border: '1px solid #394867',
-          background: value ? 'linear-gradient(135deg, #4c6fff, #8f94fb)' : 'transparent',
-          color: '#d0d6ea',
+          padding: '8px 16px',
+          borderRadius: 8,
+          border: 'none',
+          background,
+          color,
           cursor: 'pointer',
-          fontSize: '0.8rem',
+          fontSize: '0.9rem',
+          fontWeight: 500,
+          minWidth: 60,
+          transition: 'all 0.2s ease',
         }}
       >
-        {value ? 'On' : 'Off'}
+        {value ? trueLabel : falseLabel}
       </button>
     </div>
   );

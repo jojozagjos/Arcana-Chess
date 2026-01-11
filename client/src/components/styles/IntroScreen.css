@@ -48,11 +48,40 @@
 }
 
 .continue-text {
-  font-size: 1.2rem;
-  color: rgba(255, 255, 255, 0.75);
+  font-size: 1.6rem;
+  color: rgba(255, 255, 255, 0.95);
   text-align: center;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
-  letter-spacing: 0.06em;
+  text-shadow: 0 6px 18px rgba(0, 0, 0, 0.9);
+  letter-spacing: 0.12em;
   font-weight: 400;
-  margin-top: 16px;
+  pointer-events: none; /* clicks handled by overlay */
+  padding: 6px 10px;
+  border: none;
+  transition: none;
+  position: relative;
+  bottom: 0;
+}
+
+.fade-in {
+  animation: fadeIn 1.5s ease-in-out forwards;
+}
+
+.fade-out {
+  animation: fadeOut 0.6s ease-in-out forwards;
+}
+
+@keyframes fadeOut {
+  0% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+
+@keyframes fadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

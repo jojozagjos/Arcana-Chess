@@ -67,6 +67,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       castleBroken: { w: 0, b: 0 },           // prevents castling (turn counter, 0 = inactive)
     },
     moveHistory: [],  // for time_travel
+    rematchVotes: {},  // socketId -> boolean (true = voted, false = left/declined)
   };
 }
 
@@ -154,7 +155,12 @@ export class GameManager {
       status: gameState.status,
       ascended: gameState.ascended,
       ascensionTrigger: gameState.ascensionTrigger,
-      arcanaByPlayer: gameState.arcanaByPlayer,
+      arcanaByPlayer: Object.fromEntries(
+        Object.entries(gameState.arcanaByPlayer).map(([pid, cards]) => [
+          pid,
+          Array.isArray(cards) ? [...cards] : cards,
+        ])
+      ),
       usedArcanaIdsByPlayer: usedArcanaPlain,
       playerColors: gameState.playerColors,
       lastMove: gameState.lastMove,
@@ -344,13 +350,10 @@ export class GameManager {
         }
 
       // Check if any used card should end the turn
-      const turnEndingCards = [
-        'execution', 'castle_breaker', 'astral_rebirth', 'necromancy',
-        'time_travel', 'chaos_theory', 'sacrifice', 'mind_control',
-        'royal_swap', 'promotion_ritual', 'metamorphosis'
-      ];
-      
-      const shouldEndTurn = arcanaUsed.some(use => turnEndingCards.includes(use.arcanaId));
+      const shouldEndTurn = arcanaUsed.some(use => {
+        const cardDef = ARCANA_DEFINITIONS.find(card => card.id === use.arcanaId);
+        return cardDef && cardDef.endsTurn === true;
+      });
       
       if (shouldEndTurn) {
         // Clear arcana used flag when turn-ending card is used
@@ -1580,6 +1583,85 @@ export class GameManager {
     return { outcome };
   }
 
+  handleRematchVote(socket, lobbyManager) {
+    const gameId = this.socketToGame.get(socket.id);
+    if (!gameId) {
+      return { ok: false, error: 'No game found' };
+    }
+
+    const gameState = this.games.get(gameId);
+    if (!gameState || gameState.status !== 'finished') {
+      return { ok: false, error: 'Game must be finished to vote for rematch' };
+    }
+
+    // Record this player's vote
+    gameState.rematchVotes[socket.id] = true;
+
+    const votes = Object.values(gameState.rematchVotes).filter(v => v === true).length;
+    const totalPlayers = gameState.playerIds.filter(id => !id.startsWith('AI-')).length;
+
+    // Notify both players of the updated vote count
+    for (const pid of gameState.playerIds) {
+      if (!pid.startsWith('AI-')) {
+        this.io.to(pid).emit('rematchVotesUpdated', {
+          voteCount: votes,
+          totalPlayers: totalPlayers,
+        });
+      }
+    }
+
+    // If both players voted, start a new game
+    if (votes === totalPlayers && totalPlayers === 2) {
+      return this.startRematchGame(gameState, lobbyManager);
+    }
+
+    return { ok: true, votes, totalPlayers };
+  }
+
+  startRematchGame(finishedGameState, lobbyManager) {
+    // Create new game with same players, swapped colors
+    const newPlayerIds = finishedGameState.playerIds.reverse();
+    const newGameState = createInitialGameState({
+      mode: finishedGameState.mode,
+      playerIds: newPlayerIds,
+    });
+
+    this.games.set(newGameState.id, newGameState);
+    for (const pid of newGameState.playerIds) {
+      this.socketToGame.set(pid, newGameState.id);
+    }
+
+    // Emit gameStarted to both players
+    for (const pid of newGameState.playerIds) {
+      if (!pid.startsWith('AI-')) {
+        const personalised = this.serialiseGameStateForViewer(newGameState, pid);
+        this.io.to(pid).emit('gameStarted', personalised);
+      }
+    }
+
+    // Clean up the old game
+    this.games.delete(finishedGameState.id);
+
+    return { ok: true, newGameState: this.serialiseGameState(newGameState) };
+  }
+
+  cancelRematchGame(gameId) {
+    const gameState = this.games.get(gameId);
+    if (!gameState) return;
+
+    // Notify remaining players that rematch was cancelled
+    for (const pid of gameState.playerIds) {
+      if (!pid.startsWith('AI-')) {
+        this.io.to(pid).emit('rematchCancelled');
+      }
+    }
+
+    this.games.delete(gameId);
+    for (const pid of gameState.playerIds) {
+      this.socketToGame.delete(pid);
+    }
+  }
+
   handleDisconnect(socketId) {
     const gameId = this.socketToGame.get(socketId);
     if (!gameId) return;
@@ -1595,6 +1677,10 @@ export class GameManager {
       if (otherPlayerId && !otherPlayerId.startsWith('AI-')) {
         this.io.to(otherPlayerId).emit('gameEnded', outcome);
       }
+    } else if (gameState.status === 'finished' && gameState.rematchVotes) {
+      // Game is finished - if player leaves, cancel rematch
+      this.cancelRematchGame(gameId);
+      return;
     }
 
     this.games.delete(gameId);

@@ -19,7 +19,9 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Choose a piece. If it would be captured on the opponent\'s next move, it instead survives with the attacker bouncing back one square.',
     visual: { particles: true, animation: true, cutscene: false },
+    visualLifecycle: { mode: 'clientOnly', duration: 'untilOpponentTurn' },
     soundKey: 'arcana:squire_support',
+    endsTurn: true,
   },
   {
     id: 'pawn_guard',
@@ -58,6 +60,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select a square to designate it as safe - no captures can occur there for 2 turns.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:sanctuary',
+    endsTurn: true,
   },
   {
     id: 'time_freeze',
@@ -96,6 +99,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Move any piece one square toward the center of the board. Must still be a legal move and cannot capture.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:soft_push',
+    endsTurn: true,
   },
 
   // MOVEMENT ARCANA - UNCOMMON+
@@ -143,6 +147,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select one of your pawns to swap positions with your king.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:royal_swap',
+    endsTurn: true,
   },
   {
     id: 'queens_gambit',
@@ -207,7 +212,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Sacrifice',
     rarity: 'rare',
     category: 'utility',
-    description: 'Select one of your pieces to destroy it and gain arcana cards (stronger piece = stronger cards).',
+    description: 'Select one of your pieces to destroy it and gain 2 arcana cards (stronger piece = stronger cards).',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:sacrifice',
   },
@@ -237,6 +242,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select and instantly remove any enemy piece of your choice (except king).',
     visual: { particles: true, animation: true, cutscene: true },
     soundKey: 'arcana:execution',
+    endsTurn: true,
   },
   
   // RESURRECTION / TRANSFORMATION - UNCOMMON+
@@ -248,6 +254,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Revive up to two captured pawns.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:necromancy',
+    endsTurn: true,
   },
   {
     id: 'metamorphosis',
@@ -275,6 +282,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Resurrect one captured piece onto your back rank.',
     visual: { particles: true, animation: true, cutscene: true },
     soundKey: 'arcana:astral_rebirth',
+    endsTurn: true,
   },
   {
     id: 'promotion_ritual',
@@ -284,6 +292,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select any of your pawns to instantly promote it to a queen regardless of position.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:promotion_ritual',
+    endsTurn: true,
   },
   
   // TACTICAL / UTILITY - COMMON
@@ -378,6 +387,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select a square to mark it as cursed - any piece that lands there is destroyed (lasts 2 turns).',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:cursed_square',
+    endsTurn: true,
   },
   {
     id: 'chaos_theory',
@@ -387,6 +397,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Randomly shuffle 3 pieces on each side to different positions.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:chaos_theory',
+    endsTurn: true,
   },
   {
     id: 'time_travel',
@@ -396,6 +407,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Undo the last two moves (yours and opponent\'s).',
     visual: { particles: true, animation: true, cutscene: true },
     soundKey: 'arcana:time_travel',
+    endsTurn: true,
   },
   {
     id: 'mind_control',
@@ -405,5 +417,6 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select an enemy piece to take control of it for one turn.',
     visual: { particles: true, animation: true, cutscene: true },
     soundKey: 'arcana:mind_control',
+    endsTurn: true,
   },
 ];

@@ -19,6 +19,7 @@ export function App() {
   const [lastArcanaEvent, setLastArcanaEvent] = useState(null);
   const [gameEndOutcome, setGameEndOutcome] = useState(null);
   const [devMode, setDevMode] = useState(false);
+  const [quickMatchStatus, setQuickMatchStatus] = useState('');
   const [globalSettings, setGlobalSettings] = useState(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
@@ -30,6 +31,7 @@ export function App() {
       audio: { master: 0.8, music: 0.5, sfx: 0.8, muted: false },
       graphics: { quality: 'medium', postProcessing: true, shadows: true },
       gameplay: { showLegalMoves: true, highlightLastMove: true },
+      display: { fullscreen: false },
     };
   });
 
@@ -52,8 +54,47 @@ export function App() {
         showLegalMoves: prev.gameplay?.showLegalMoves ?? true,
         highlightLastMove: prev.gameplay?.highlightLastMove ?? true,
       },
+      display: {
+        fullscreen: prev.display?.fullscreen ?? false,
+      },
     }));
   }, []);
+
+  // Fullscreen state synchronization
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isFullscreen = !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      );
+      
+      setGlobalSettings((prev) => {
+        if (prev.display?.fullscreen !== isFullscreen) {
+          const updated = {
+            ...prev,
+            display: { ...prev.display, fullscreen: isFullscreen },
+          };
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
+          return updated;
+        }
+        return prev;
+      });
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, [SETTINGS_KEY]);
 
   useEffect(() => {
     const handleGameStarted = (state) => {
@@ -125,8 +166,51 @@ export function App() {
       } catch (e) {
         // ignore storage errors (e.g., private mode)
       }
+
+      // Handle fullscreen changes
+      if (patch.display?.fullscreen !== undefined && patch.display.fullscreen !== prev.display?.fullscreen) {
+        toggleFullscreen(patch.display.fullscreen);
+      }
+
+      // Apply audio changes immediately
+      if (patch.audio) {
+        soundManager.setEnabled(!next.audio.muted);
+        soundManager.setMasterVolume(next.audio.master ?? 1.0);
+        soundManager.setMusicVolume(next.audio.music ?? 1.0);
+        soundManager.setSfxVolume(next.audio.sfx ?? 1.0);
+      }
+
       return next;
     });
+  };
+
+  const toggleFullscreen = async (enable) => {
+    try {
+      if (enable) {
+        const elem = document.documentElement;
+        if (elem.requestFullscreen) {
+          await elem.requestFullscreen();
+        } else if (elem.webkitRequestFullscreen) {
+          await elem.webkitRequestFullscreen();
+        } else if (elem.mozRequestFullScreen) {
+          await elem.mozRequestFullScreen();
+        } else if (elem.msRequestFullscreen) {
+          await elem.msRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen();
+        } else if (document.mozCancelFullScreen) {
+          await document.mozCancelFullScreen();
+        } else if (document.msExitFullscreen) {
+          await document.msExitFullscreen();
+        }
+      }
+    } catch (err) {
+      console.error('Fullscreen toggle error:', err);
+    }
   };
 
   const handleBackToMenu = () => {
@@ -168,6 +252,42 @@ export function App() {
           mode="root"
           onPlayOnlineHost={() => setScreen('host-game')}
           onPlayOnlineJoin={() => setScreen('join-game')}
+          onQuickMatch={async () => {
+            try {
+              setQuickMatchStatus('Searching for open public games...');
+              socket.emit('listLobbies', {}, (res) => {
+                if (res && res.ok && res.lobbies && res.lobbies.length > 0) {
+                  const availableLobby = res.lobbies.find(
+                    (lobby) => !lobby.isPrivate && lobby.status === 'waiting' && lobby.playerCount < 2
+                  );
+                  if (availableLobby) {
+                    setQuickMatchStatus('Found open game — joining...');
+                    socket.emit('joinLobby', { lobbyId: availableLobby.id }, (joinRes) => {
+                      if (joinRes && joinRes.ok) {
+                        setQuickMatchStatus('');
+                        setScreen('host-game');
+                      } else {
+                        console.error('Failed to join lobby:', joinRes?.error);
+                        setQuickMatchStatus('Failed to join the found game.');
+                        setTimeout(() => setQuickMatchStatus(''), 3000);
+                      }
+                    });
+                  } else {
+                    setQuickMatchStatus('No open public games found.');
+                    setTimeout(() => setQuickMatchStatus(''), 3000);
+                  }
+                } else {
+                  setQuickMatchStatus('No open public games found.');
+                  setTimeout(() => setQuickMatchStatus(''), 3000);
+                }
+              });
+            } catch (err) {
+              console.error('Quick match error:', err);
+              setQuickMatchStatus('Error searching for games.');
+              setTimeout(() => setQuickMatchStatus(''), 3000);
+            }
+          }}
+          quickMatchStatus={quickMatchStatus}
           onTutorial={() => setScreen('tutorial')}
           onViewArcana={() => setScreen('arcana')}
           onSettings={() => setScreen('settings')}

@@ -101,6 +101,15 @@ export function ParticleSystem({
   // Geometry for particles (use sphere for soft particles)
   const geometry = useMemo(() => new THREE.SphereGeometry(1, 8, 8), []);
 
+  // Cleanup geometry on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (geometry) {
+        geometry.dispose();
+      }
+    };
+  }, [geometry]);
+
   // Update particles each frame
   useFrame((state, delta) => {
     if (!meshRef.current || isComplete) return;
