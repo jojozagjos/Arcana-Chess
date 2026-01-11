@@ -51,7 +51,7 @@ function useFinishFade(onComplete, fadeMs = 400) {
 // SHIELD GLOW EFFECT - Magical protective barrier
 // ============================================================================
 
-export function ShieldGlowEffect({ square }) {
+export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
   if (!square) return null;
   
   const [x, , z] = squareToPosition(square);
@@ -78,19 +78,19 @@ export function ShieldGlowEffect({ square }) {
     if (innerRef.current) {
       const pulse = Math.sin(t * 4) * 0.08 + 1;
       innerRef.current.scale.set(pulse, 1, pulse);
-      innerRef.current.material.opacity = 0.3 + Math.sin(t * 3) * 0.1;
+      innerRef.current.material.opacity = (0.3 + Math.sin(t * 3) * 0.1) * fadeOpacity;
     }
-    
+
     if (outerRef.current) {
       outerRef.current.rotation.y = -t * 0.3;
-      outerRef.current.material.opacity = 0.15 + Math.sin(t * 2) * 0.05;
+      outerRef.current.material.opacity = (0.15 + Math.sin(t * 2) * 0.05) * fadeOpacity;
     }
-    
+
     if (runesRef.current) {
       runesRef.current.children.forEach((rune, i) => {
         const offset = (i / 6) * Math.PI * 2;
         rune.position.y = 0.5 + Math.sin(t * 2 + offset) * 0.1;
-        rune.material.opacity = 0.6 + Math.sin(t * 3 + offset) * 0.3;
+        rune.material.opacity = (0.6 + Math.sin(t * 3 + offset) * 0.3) * fadeOpacity;
       });
     }
   });
@@ -105,7 +105,7 @@ export function ShieldGlowEffect({ square }) {
           emissiveIntensity={2.5}
           color="#81d4fa"
           transparent
-          opacity={0.35}
+          opacity={0.35 * fadeOpacity}
           side={THREE.DoubleSide}
         />
       </mesh>
@@ -118,7 +118,7 @@ export function ShieldGlowEffect({ square }) {
           emissiveIntensity={1.5}
           color="#4fc3f7"
           transparent
-          opacity={0.2}
+          opacity={0.2 * fadeOpacity}
           wireframe
         />
       </mesh>
@@ -133,7 +133,7 @@ export function ShieldGlowEffect({ square }) {
               emissiveIntensity={3}
               color="#e1f5fe"
               transparent
-              opacity={0.8}
+              opacity={0.8 * fadeOpacity}
             />
           </mesh>
         ))}
@@ -147,7 +147,7 @@ export function ShieldGlowEffect({ square }) {
           emissiveIntensity={2}
           color="#4fc3f7"
           transparent
-          opacity={0.4}
+          opacity={0.4 * fadeOpacity}
           side={THREE.DoubleSide}
         />
       </mesh>
@@ -162,7 +162,7 @@ export function ShieldGlowEffect({ square }) {
 // POISONED PIECE EFFECT - Toxic aura with dripping particles
 // ============================================================================
 
-export function PoisonedPieceEffect({ square, turnsLeft }) {
+export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
   if (!square) return null;
   
   const [x, , z] = squareToPosition(square);
@@ -206,7 +206,7 @@ export function PoisonedPieceEffect({ square, turnsLeft }) {
           emissiveIntensity={urgency * 1.5}
           color={baseColor}
           transparent
-          opacity={0.35}
+          opacity={0.35 * fadeOpacity}
           side={THREE.DoubleSide}
         />
       </mesh>
@@ -220,12 +220,13 @@ export function PoisonedPieceEffect({ square, turnsLeft }) {
           color={baseColor}
           speed={urgency}
           delay={i * 0.3}
+          fadeOpacity={fadeOpacity}
         />
       ))}
       
       {/* Rising bubbles */}
       {bubbles.map((bubble, i) => (
-        <PoisonBubble key={i} {...bubble} urgency={urgency} color={baseColor} />
+        <PoisonBubble key={i} {...bubble} urgency={urgency} color={baseColor} fadeOpacity={fadeOpacity} />
       ))}
       
       {/* Skull indicator for final turn */}
@@ -250,7 +251,7 @@ export function PoisonedPieceEffect({ square, turnsLeft }) {
           emissiveIntensity={1}
           color={baseColor}
           transparent
-          opacity={0.25}
+          opacity={0.25 * fadeOpacity}
         />
       </mesh>
       
@@ -260,7 +261,7 @@ export function PoisonedPieceEffect({ square, turnsLeft }) {
   );
 }
 
-function PoisonDrip({ angle, radius, color, speed, delay }) {
+function PoisonDrip({ angle, radius, color, speed, delay, fadeOpacity = 1 }) {
   const ref = useRef();
   
   useFrame((state) => {
@@ -268,13 +269,13 @@ function PoisonDrip({ angle, radius, color, speed, delay }) {
       const t = ((state.clock.elapsedTime * speed + delay) % 2) / 2;
       const y = 0.8 - t * 0.7;
       ref.current.position.y = y;
-      ref.current.material.opacity = t < 0.1 ? t * 10 : t > 0.9 ? (1 - t) * 10 : 0.7;
+      ref.current.material.opacity = (t < 0.1 ? t * 10 : t > 0.9 ? (1 - t) * 10 : 0.7) * fadeOpacity;
       ref.current.scale.y = 1 + t * 2;
     }
   });
   
   return (
-    <mesh
+      <mesh
       ref={ref}
       position={[Math.cos(angle) * radius, 0.8, Math.sin(angle) * radius]}
     >
@@ -284,15 +285,15 @@ function PoisonDrip({ angle, radius, color, speed, delay }) {
         emissiveIntensity={2}
         color={color}
         transparent
-        opacity={0.7}
+        opacity={0.7 * fadeOpacity}
       />
     </mesh>
   );
 }
 
-function PoisonBubble({ angle, radius, speed, size, phase, urgency, color }) {
+function PoisonBubble({ angle, radius, speed, size, phase, urgency, color, fadeOpacity = 1 }) {
   const ref = useRef();
-  
+
   useFrame((state) => {
     if (ref.current) {
       const t = ((state.clock.elapsedTime * speed * urgency + phase) % 1.5) / 1.5;
@@ -300,12 +301,12 @@ function PoisonBubble({ angle, radius, speed, size, phase, urgency, color }) {
       ref.current.position.y = y;
       ref.current.position.x = Math.cos(angle + t * 2) * radius;
       ref.current.position.z = Math.sin(angle + t * 2) * radius;
-      ref.current.material.opacity = Math.sin(t * Math.PI) * 0.6;
+      ref.current.material.opacity = Math.sin(t * Math.PI) * 0.6 * fadeOpacity;
       const s = size * (1 + Math.sin(t * Math.PI) * 0.5);
       ref.current.scale.set(s / 0.05, s / 0.05, s / 0.05);
     }
   });
-  
+
   return (
     <mesh ref={ref} position={[Math.cos(angle) * radius, 0.1, Math.sin(angle) * radius]}>
       <sphereGeometry args={[0.05, 8, 8]} />
@@ -314,7 +315,7 @@ function PoisonBubble({ angle, radius, speed, size, phase, urgency, color }) {
         emissiveIntensity={3}
         color={color}
         transparent
-        opacity={0.5}
+        opacity={0.5 * fadeOpacity}
       />
     </mesh>
   );
@@ -529,7 +530,7 @@ export function FogOfWarEffect({ onComplete }) {
   );
 }
 
-function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete, finishT = 0 }) {
+function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete, finishT = 0, fadeOpacity = 1 }) {
   const ref = useRef();
   
   useFrame((state) => {
@@ -541,7 +542,7 @@ function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete, finishT
       
       // Slightly reduced opacity and smaller shimmer for clarity
       const baseOpacity = hasComplete ? 0.15 * (1 - progress) : 0.15;
-      ref.current.material.opacity = (baseOpacity * (1 - finishT)) + Math.sin(t + phase) * 0.03 * (1 - finishT);
+      ref.current.material.opacity = ((baseOpacity * (1 - finishT)) + Math.sin(t + phase) * 0.03 * (1 - finishT)) * fadeOpacity;
     }
   });
   
@@ -553,7 +554,7 @@ function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete, finishT
         emissiveIntensity={0.2}
         color="#1f2a44"
         transparent
-        opacity={0.15}
+        opacity={0.15 * fadeOpacity}
       />
     </mesh>
   );
@@ -1579,7 +1580,7 @@ export function SanctuaryEffect({ square, onComplete }) {
 }
 
 // Persistent sanctuary indicator for squares
-export function SanctuaryIndicatorEffect({ square }) {
+export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
   const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
   const ringRef = useRef();
   const glowRef = useRef();
@@ -1587,10 +1588,10 @@ export function SanctuaryIndicatorEffect({ square }) {
   useFrame((state) => {
     const t = state.clock.elapsedTime;
     if (ringRef.current) {
-      ringRef.current.material.opacity = 0.3 + Math.sin(t * 2) * 0.15;
+      ringRef.current.material.opacity = (0.3 + Math.sin(t * 2) * 0.15) * fadeOpacity;
     }
     if (glowRef.current) {
-      glowRef.current.material.opacity = 0.2 + Math.sin(t * 1.5) * 0.1;
+      glowRef.current.material.opacity = (0.2 + Math.sin(t * 1.5) * 0.1) * fadeOpacity;
     }
   });
   
@@ -1604,7 +1605,7 @@ export function SanctuaryIndicatorEffect({ square }) {
           emissiveIntensity={1.5}
           color="#ffeb3b"
           transparent
-          opacity={0.25}
+          opacity={0.25 * fadeOpacity}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
@@ -1617,7 +1618,7 @@ export function SanctuaryIndicatorEffect({ square }) {
           emissiveIntensity={2}
           color="#ffeb3b"
           transparent
-          opacity={0.4}
+          opacity={0.4 * fadeOpacity}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
@@ -1630,7 +1631,7 @@ export function SanctuaryIndicatorEffect({ square }) {
 // CURSED SQUARE EFFECT - Dark malevolent energy on a square
 // ============================================================================
 
-export function CursedSquareEffect({ square, onComplete }) {
+export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
   const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
@@ -1652,7 +1653,7 @@ export function CursedSquareEffect({ square, onComplete }) {
     }
   });
   
-  const opacity = (progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1) * (1 - finishT);
+  const opacity = ((progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1) * (1 - finishT)) * fadeOpacity;
   
   return (
     <group position={[x, 0, z]} ref={groupRef}>
@@ -1713,22 +1714,22 @@ export function CursedSquareEffect({ square, onComplete }) {
 }
 
 // Persistent cursed square indicator
-export function CursedSquareIndicatorEffect({ square, turnsLeft }) {
+export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1 }) {
   const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
   const ringRef = useRef();
   const glowRef = useRef();
-  
+
   useFrame((state) => {
     const t = state.clock.elapsedTime;
     if (ringRef.current) {
       ringRef.current.rotation.z = t * 0.5;
-      ringRef.current.material.opacity = 0.3 + Math.sin(t * 3) * 0.1;
+      ringRef.current.material.opacity = (0.3 + Math.sin(t * 3) * 0.1) * fadeOpacity;
     }
     if (glowRef.current) {
-      glowRef.current.material.opacity = 0.25 + Math.sin(t * 2) * 0.1;
+      glowRef.current.material.opacity = (0.25 + Math.sin(t * 2) * 0.1) * fadeOpacity;
     }
   });
-  
+
   return (
     <group position={[x, 0.12, z]}>
       {/* Persistent dark ground effect */}
@@ -1739,7 +1740,7 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft }) {
           emissiveIntensity={1.2}
           color="#dc143c"
           transparent
-          opacity={0.3}
+          opacity={0.3 * fadeOpacity}
           side={THREE.DoubleSide}
           depthWrite={false}
         />
@@ -1752,7 +1753,7 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft }) {
           emissiveIntensity={2}
           color="#dc143c"
           transparent
-          opacity={0.4}
+          opacity={0.4 * fadeOpacity}
           side={THREE.DoubleSide}
           depthWrite={false}
         />

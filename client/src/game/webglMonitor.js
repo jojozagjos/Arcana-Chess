@@ -4,10 +4,15 @@
  */
 
 export class WebGLMonitor {
-  constructor(gl) {
+  constructor(gl, canvas = null) {
     this.gl = gl;
+    this.canvas = canvas;
     this.isContextLost = false;
     this.warningThreshold = 0.8; // Warn at 80% of limits
+
+    // Bound handlers so we can remove them later
+    this._boundHandleContextLost = null;
+    this._boundHandleContextRestored = null;
   }
 
   /**
@@ -52,28 +57,37 @@ export class WebGLMonitor {
    * Set up context loss/restore handlers
    */
   setupContextHandlers(canvas, onLost, onRestored) {
-    canvas.addEventListener('webglcontextlost', (e) => {
-      e.preventDefault();
+    this.canvas = canvas;
+
+    // store bound handlers so we can remove them in dispose()
+    this._boundHandleContextLost = (e) => {
+      try { e.preventDefault(); } catch (err) {}
       this.isContextLost = true;
       console.warn('WebGL context lost. Preventing default behavior.');
       if (onLost) onLost(e);
-    }, false);
+    };
 
-    canvas.addEventListener('webglcontextrestored', (e) => {
+    this._boundHandleContextRestored = (e) => {
       this.isContextLost = false;
       console.log('WebGL context restored.');
       if (onRestored) onRestored(e);
-    }, false);
+    };
+
+    canvas.addEventListener('webglcontextlost', this._boundHandleContextLost, false);
+    canvas.addEventListener('webglcontextrestored', this._boundHandleContextRestored, false);
   }
 
   /**
    * Clean up event listeners
    */
   dispose(canvas) {
-    if (canvas) {
-      canvas.removeEventListener('webglcontextlost', this.handleContextLost);
-      canvas.removeEventListener('webglcontextrestored', this.handleContextRestored);
+    const c = canvas || this.canvas;
+    if (c) {
+      if (this._boundHandleContextLost) c.removeEventListener('webglcontextlost', this._boundHandleContextLost);
+      if (this._boundHandleContextRestored) c.removeEventListener('webglcontextrestored', this._boundHandleContextRestored);
     }
+    this._boundHandleContextLost = null;
+    this._boundHandleContextRestored = null;
   }
 }
 
@@ -81,13 +95,17 @@ export class WebGLMonitor {
  * Helper function to create a monitor for a THREE renderer
  */
 export function createWebGLMonitor(renderer) {
-  if (!renderer || !renderer.getContext) {
+  if (!renderer) {
     console.warn('Invalid renderer provided to createWebGLMonitor');
     return null;
   }
 
-  const gl = renderer.getContext();
-  return new WebGLMonitor(gl);
+  // Try to obtain GL context and canvas from common Three renderer shapes
+  const gl = (typeof renderer.getContext === 'function') ? renderer.getContext() : (renderer.getContext ? renderer.getContext : null) || (renderer.context || null);
+  const canvas = renderer.domElement || null;
+  const monitor = new WebGLMonitor(gl, canvas);
+  if (canvas) monitor.setupContextHandlers(canvas);
+  return monitor;
 }
 
 /**

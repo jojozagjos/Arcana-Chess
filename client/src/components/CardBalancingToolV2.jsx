@@ -11,10 +11,40 @@ import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
 import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget, getValidTargetSquares, getTargetTypeForArcana } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from '../game/arcana/sharedHelpers.jsx';
+import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
+import CutsceneOverlay from './CutsceneOverlay.jsx';
+import { orchestrateCutscene } from '../game/arcana/cutsceneOrchestrator.js';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor, getLogColor } from '../game/arcanaHelpers.js';
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import * as THREE from 'three';
+
+// Parse FEN into piece descriptors used by the balancing tool renderer
+function parseFenPieces(fenStr) {
+  if (!fenStr) return [];
+  const [placement] = fenStr.split(' ');
+  const rows = placement.split('/');
+  const pieces = [];
+  for (let rank = 0; rank < 8; rank++) {
+    let file = 0;
+    for (const ch of rows[rank]) {
+      if (/[1-8]/.test(ch)) {
+        file += parseInt(ch, 10);
+      } else {
+        const isWhite = ch === ch.toUpperCase();
+        const type = ch.toLowerCase();
+        const x = file - 3.5;
+        const z = rank - 3.5;
+        const fileChar = 'abcdefgh'[file];
+        const rankNum = 8 - rank;
+        const square = `${fileChar}${rankNum}`;
+        pieces.push({ type, isWhite, square, targetPosition: [x, 0.15, z], uid: `${square}-${type}` });
+        file += 1;
+      }
+    }
+  }
+  return pieces;
+}
 
 const TEST_SCENARIOS = {
   default: { name: 'Starting Position', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
@@ -46,6 +76,9 @@ export function CardBalancingToolV2({ onBack }) {
   const [cutsceneActive, setCutsceneActive] = useState(false);
   const [cameraTarget, setCameraTarget] = useState(null);
   const [grayscaleIntensity, setGrayscaleIntensity] = useState(0);
+  // Cutscene orchestration hooks/refs
+  const { cutsceneTarget, triggerCutscene: _localTriggerCutscene, clearCutscene } = useCameraCutscene();
+  const overlayRef = useRef();
   
   // Move history for testing
   const [moveHistory, setMoveHistory] = useState([]);
@@ -78,6 +111,19 @@ export function CardBalancingToolV2({ onBack }) {
   
   // Metamorphosis dialog state
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null);
+
+  // Track piece state with stable UIDs so move animations can interpolate
+  const uidCounterRef = useRef(0);
+  const [piecesState, setPiecesState] = useState(() => {
+    const initial = parseFenPieces(fen);
+    return initial.map((p) => {
+      uidCounterRef.current += 1;
+      return { ...p, uid: `${p.square}-${p.type}-${uidCounterRef.current}` };
+    });
+  });
+
+  // Show when a card/interaction ends the turn (Badge in UI)
+  const [turnEndInfo, setTurnEndInfo] = useState(null);
 
   const selectedCard = useMemo(() => {
     return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
@@ -290,19 +336,58 @@ export function CardBalancingToolV2({ onBack }) {
     // Trigger visual effect via activeVisualArcana (same as in-game)
     if (result.visualEffect) {
       setValidationChecklist(prev => ({ ...prev, visuals: true }));
-      
-      // Set the active visual arcana to trigger the shared renderer
-      setActiveVisualArcana({
-        arcanaId: card.id,
-        params: params
-      });
 
-      // Clear visual after animation duration (use shared timing)
-      const duration = getArcanaEffectDuration(card.id);
-      setTimeout(() => {
-        setActiveVisualArcana(null);
-      }, duration || 3000);
-      
+      // Prepare visual params: prefer highlightSquares (destination) when present,
+      // fall back to targetSquare; also include actorColor for effects that need it.
+      const visualParams = { ...(params || {}) };
+      if (result.highlightSquares && result.highlightSquares.length > 0) {
+        visualParams.square = result.highlightSquares[0];
+      }
+      if (!visualParams.square && visualParams.targetSquare) visualParams.square = visualParams.targetSquare;
+      // include actor color for effects that use it
+      visualParams.actorColor = colorChar;
+
+      const pascalCase = (id) => id.split(/[_-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
+
+      const triggerVisual = (effectsMod) => {
+        const compName = `${pascalCase(card.id)}Effect`;
+        if (!effectsMod || !effectsMod[compName]) {
+          addLog(`No visual component for ${card.id} (${compName}) — skipping visual.`, 'warning');
+          return;
+        }
+
+        // set active visual arcana to trigger shared renderer
+        setActiveVisualArcana({ arcanaId: card.id, params: visualParams });
+        // Clear visual after animation duration (use shared timing)
+        const duration = getArcanaEffectDuration(card.id);
+        setTimeout(() => setActiveVisualArcana(null), duration || 3000);
+      };
+
+      // Ensure effects module is loaded before triggering visuals (Balancing tool may lazy-load)
+      if (!effectsModule || Object.keys(effectsModule).length === 0) {
+        import('../game/arcana/arcanaVisuals.jsx')
+          .then((m) => {
+            setEffectsModule(m);
+            triggerVisual(m);
+          })
+          .catch((err) => {
+            console.warn('Failed to load arcanaVisuals for visual trigger', err);
+          });
+      } else {
+        triggerVisual(effectsModule);
+      }
+
+      // If this card includes a cutscene in its visuals metadata, mark cutscene as working
+      if (card?.visual?.cutscene) {
+        setValidationChecklist(prev => ({ ...prev, cutscene: true }));
+        // Trigger full orchestrated cutscene when available
+        try {
+          triggerCardCutscene(card.id, visualParams.square);
+        } catch (e) {
+          addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
+        }
+      }
+
       // Handle shield (persistent effect)
       if (result.visualEffect === 'shield') {
         setPawnShields(prev => ({ ...prev, [colorChar]: { square: params.targetSquare } }));
@@ -317,6 +402,7 @@ export function CardBalancingToolV2({ onBack }) {
       addLog(`${result.message} - protected for 1 enemy turn`, 'success');
       setValidationChecklist(prev => ({ ...prev, logic: true }));
       setChess(testChess);
+      setFen(testChess.fen());
       return;
     }
 
@@ -364,10 +450,41 @@ export function CardBalancingToolV2({ onBack }) {
     // Update chess state and log result
     if (result.success) {
       setChess(testChess);
+      setFen(testChess.fen());
+      // (no side-panel turn-end indicator in balancing tool)
       setValidationChecklist(prev => ({ ...prev, logic: true }));
     }
     
     addLog(result.message, result.success ? 'success' : 'error');
+  };
+
+  // Map orchestrator VFX triggers into ArcanaVisualHost by setting activeVisualArcana
+  const handleVFXTrigger = (payload) => {
+    if (!payload) return;
+    const arcanaId = payload.arcanaId || payload.type;
+    const params = { square: payload.targetSquare || payload.square };
+    setActiveVisualArcana({ arcanaId, params });
+    const duration = getArcanaEffectDuration(arcanaId) || 3000;
+    setTimeout(() => setActiveVisualArcana(null), duration);
+  };
+
+  // Trigger an orchestrated cutscene wired to the local CameraCutscene and CutsceneOverlay
+  const triggerCardCutscene = (arcanaId, targetSquare) => {
+    setCutsceneActive(true);
+    // Create a cameraRef object that exposes triggerCutscene (from useCameraCutscene)
+    const cameraRef = { current: { triggerCutscene: _localTriggerCutscene } };
+    const cleanup = orchestrateCutscene({
+      arcanaId,
+      cameraRef,
+      overlayRef,
+      soundManager,
+      targetSquare,
+      onVFXTrigger: handleVFXTrigger,
+      onComplete: () => {
+        setCutsceneActive(false);
+      }
+    });
+    return cleanup;
   };
 
   const handleSquareClick = (fileIndex, rankIndex) => {
@@ -537,33 +654,106 @@ export function CardBalancingToolV2({ onBack }) {
     }
   };
 
-  const parseFenPieces = (fenStr) => {
-    if (!fenStr) return [];
-    const [placement] = fenStr.split(' ');
-    const rows = placement.split('/');
-    const pieces = [];
-    for (let rank = 0; rank < 8; rank++) {
-      let file = 0;
-      for (const ch of rows[rank]) {
-        if (/[1-8]/.test(ch)) {
-          file += parseInt(ch, 10);
-        } else {
-          const isWhite = ch === ch.toUpperCase();
-          const type = ch.toLowerCase();
-          const x = file - 3.5;
-          const z = rank - 3.5;
-          const fileChar = 'abcdefgh'[file];
-          const rankNum = 8 - rank;
-          const square = `${fileChar}${rankNum}`;
-          pieces.push({ type, isWhite, square, targetPosition: [x, 0.15, z], uid: `${square}-${type}` });
-          file += 1;
+  
+
+  // Reconcile piecesState whenever fen changes to preserve uids for animations
+  useEffect(() => {
+    const newPieces = parseFenPieces(fen);
+    if (!piecesState || piecesState.length === 0) {
+      const withUids = newPieces.map((p) => {
+        uidCounterRef.current += 1;
+        return { ...p, uid: `${p.square}-${p.type}-${uidCounterRef.current}` };
+      });
+      setPiecesState(withUids);
+      return;
+    }
+
+    // Map old pieces by type+color for best-effort matching
+    const oldByKey = new Map();
+    for (const op of piecesState) {
+      const key = `${op.type}-${op.isWhite}`;
+      if (!oldByKey.has(key)) oldByKey.set(key, []);
+      oldByKey.get(key).push(op);
+    }
+
+    // Simple matching by same square first, then nearest by Euclidean distance
+    const posFromSquare = (sq) => {
+      const fileIndex = 'abcdefgh'.indexOf(sq[0]);
+      const rankIndex = 8 - parseInt(sq[1], 10);
+      return [fileIndex - 3.5, rankIndex - 3.5];
+    };
+    const dist2 = (aSq, bSq) => {
+      const [ax, az] = posFromSquare(aSq);
+      const [bx, bz] = posFromSquare(bSq);
+      const dx = ax - bx;
+      const dz = az - bz;
+      return dx * dx + dz * dz;
+    };
+
+    // We'll perform a stable reconciliation:
+    // 1) exact square+type+color matches keep UID
+    // 2) for remaining, perform a global greedy minimal-distance matching (pairs sorted by distance)
+    const result = [];
+    const usedOld = new Set();
+    const matchedNew = new Array(newPieces.length).fill(false);
+
+    // Stage 1: exact matches by square
+    for (let j = 0; j < newPieces.length; j++) {
+      const np = newPieces[j];
+      let matched = -1;
+      for (let i = 0; i < piecesState.length; i++) {
+        if (usedOld.has(i)) continue;
+        const op = piecesState[i];
+        if (op.square === np.square && op.type === np.type && op.isWhite === np.isWhite) {
+          matched = i; break;
         }
       }
+      if (matched !== -1) {
+        usedOld.add(matched);
+        matchedNew[j] = true;
+        result[j] = { ...np, uid: piecesState[matched].uid };
+      }
     }
-    return pieces;
-  };
 
-  const pieces = parseFenPieces(fen);
+    // Stage 2: build all candidate pairs (oldIdx, newIdx, dist) for same type/color
+    const pairs = [];
+    for (let j = 0; j < newPieces.length; j++) {
+      if (matchedNew[j]) continue;
+      const np = newPieces[j];
+      for (let i = 0; i < piecesState.length; i++) {
+        if (usedOld.has(i)) continue;
+        const op = piecesState[i];
+        if (op.type !== np.type || op.isWhite !== np.isWhite) continue;
+        const d = dist2(op.square, np.square);
+        pairs.push({ oldIdx: i, newIdx: j, d });
+      }
+    }
+
+    // Sort pairs by distance ascending and greedily assign
+    pairs.sort((a, b) => a.d - b.d);
+    const newAssigned = new Set();
+    for (const p of pairs) {
+      if (usedOld.has(p.oldIdx)) continue;
+      if (newAssigned.has(p.newIdx)) continue;
+      // assign
+      usedOld.add(p.oldIdx);
+      newAssigned.add(p.newIdx);
+      result[p.newIdx] = { ...newPieces[p.newIdx], uid: piecesState[p.oldIdx].uid };
+      matchedNew[p.newIdx] = true;
+    }
+
+    // Stage 3: any remaining new pieces get fresh UIDs
+    for (let j = 0; j < newPieces.length; j++) {
+      if (result[j]) continue;
+      uidCounterRef.current += 1;
+      result[j] = { ...newPieces[j], uid: `${newPieces[j].square}-${newPieces[j].type}-${uidCounterRef.current}` };
+    }
+
+    setPiecesState(result);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fen]);
+
+  const pieces = piecesState;
 
   return (
     <div style={styles.container}>
@@ -728,6 +918,10 @@ export function CardBalancingToolV2({ onBack }) {
                 pawnShields={pawnShields}
               />
 
+              {/* Cutscene overlay + camera (used by orchestrateCutscene) */}
+              <CutsceneOverlay ref={overlayRef} />
+              <CameraCutscene cutsceneTarget={cutsceneTarget} onCutsceneEnd={() => setCutsceneActive(false)} myColor={playerColor} controls={null} />
+
               {/* Legacy Visual Effects (kept for backward compatibility) */}
               {visualEffects.map(effect => {
                 if (effect.type === 'ghost') {
@@ -800,6 +994,7 @@ export function CardBalancingToolV2({ onBack }) {
                 )}
               </div>
             )}
+            {/* Turn end indicator moved to right panel */}
           </div>
         </div>
 
@@ -852,7 +1047,27 @@ export function CardBalancingToolV2({ onBack }) {
                   </span>
                   <span>Server Validated</span>
                 </div>
+                <div style={styles.checklistItem}>
+                  <span style={selectedCard?.endsTurn ? styles.checkTrue : styles.checkFalse}>
+                    {selectedCard?.endsTurn ? '✓' : '✗'}
+                  </span>
+                  <span>Ends Turn</span>
+                </div>
+                <div style={styles.checklistItem}>
+                  <span style={selectedCard?.visual?.cutscene ? styles.checkTrue : styles.checkFalse}>
+                    {selectedCard?.visual?.cutscene ? '✓' : '✗'}
+                  </span>
+                  <span>Has Cutscene</span>
+                </div>
+                <div style={styles.checklistItem}>
+                  <span style={selectedCard?.visual?.particles ? styles.checkTrue : styles.checkFalse}>
+                    {selectedCard?.visual?.particles ? '✓' : '✗'}
+                  </span>
+                  <span>Has Particles</span>
+                </div>
               </div>
+
+              {/* Turn-end indicator removed per user request */}
 
               {/* Parameters */}
               {needsTargetSquare(selectedCard.id) && (

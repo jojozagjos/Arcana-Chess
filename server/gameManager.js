@@ -17,6 +17,10 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
   if (playerIds[0]) playerColors[playerIds[0]] = 'white';
   if (playerIds[1]) playerColors[playerIds[1]] = 'black';
 
+  // Initialize lastDrawTurn per-player to -99 (never drawn)
+  const lastDrawTurn = {};
+  for (const pid of playerIds) lastDrawTurn[pid] = -99;
+
   return {
     id: Math.random().toString(36).slice(2),
     mode,
@@ -34,7 +38,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     lastMove: null,
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
-    lastDrawTurn: { w: -99, b: -99 },  // Track turn number when each player last drew
+    lastDrawTurn: lastDrawTurn,  // Track turn number when each player last drew
     // Extended state for Arcana effects
     activeEffects: {
       ironFortress: { w: false, b: false },

@@ -234,8 +234,18 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       }
     }
     
-    const t = setTimeout(() => setActiveVisualArcana(null), 1500);
-    return () => clearTimeout(t);
+    const t = setTimeout(() => {
+      setActiveVisualArcana(null);
+      // Ensure any lingering animation lock is released when the visual clears
+      setIsCardAnimationPlaying(false);
+    }, 1500);
+    // Track timeout for global cleanup
+    timeoutsRef.current.push(t);
+    return () => {
+      clearTimeout(t);
+      // remove from tracked timeouts if present
+      timeoutsRef.current = timeoutsRef.current.filter(id => id !== t);
+    };
   }, [lastArcanaEvent, triggerCutscene]);
 
   // Load arcana visual effects module on demand when visuals or persistent effects are present
@@ -290,7 +300,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'use', stayUntilClick: false });
 
       // Schedule Phase B: Trigger the VFX/cutscene/overlay after the animation duration
-      setTimeout(() => {
+      const useTimeout = setTimeout(() => {
         const eventIndex = pendingVisualEventsRef.current.findIndex((e) => e.useId === useId);
         if (eventIndex !== -1) {
           const [event] = pendingVisualEventsRef.current.splice(eventIndex, 1);
@@ -300,6 +310,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setIsCardAnimationPlaying(false);
         }
       }, USE_CARD_ANIM_MS);
+      timeoutsRef.current.push(useTimeout);
     };
 
     const handleAscended = () => {
@@ -847,6 +858,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             const sq = `${fileChar}${rankNum}`;
 
             if (!entering) {
+              setHoverThreatSources(new Set());
+              return;
+            }
+
+            // Only compute hover threat sources when vision or a revealing arcana is active.
+            const revealArcanaIds = ['vision', 'line_of_sight', 'map_fragments', 'quiet_thought'];
+            const canShowHoverThreat = Boolean(hasVision) || (activeVisualArcana && revealArcanaIds.includes(activeVisualArcana.arcanaId));
+            if (!canShowHoverThreat) {
               setHoverThreatSources(new Set());
               return;
             }
@@ -1743,6 +1762,16 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
       return () => clearTimeout(autoDismissTimer);
     }
   }, [type, isHidden, stayUntilClick, onDismiss]);
+
+  // Auto-dismiss completed 'use' animations when they are not meant to stay until click
+  React.useEffect(() => {
+    if (type === 'use' && !stayUntilClick && onDismiss) {
+      const AUTO_DISMISS_MS = 3500; // matches usePhase + dissolve timing
+      const auto = setTimeout(() => onDismiss(), AUTO_DISMISS_MS);
+      return () => clearTimeout(auto);
+    }
+    return undefined;
+  }, [type, stayUntilClick, onDismiss]);
 
   return (
     <>
