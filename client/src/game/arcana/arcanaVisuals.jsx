@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { squareToPosition } from './sharedHelpers.jsx';
@@ -18,6 +18,34 @@ const easeOutElastic = (t) => {
   const c4 = (2 * Math.PI) / 3;
   return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
 };
+
+// Helper hook to run a short fade/shrink before calling onComplete
+function useFinishFade(onComplete, fadeMs = 400) {
+  const [finishing, setFinishing] = useState(false);
+  const [finishT, setFinishT] = useState(0);
+
+  useEffect(() => {
+    if (!finishing) return undefined;
+    let rafId = null;
+    let start = null;
+    const step = (t) => {
+      if (!start) start = t;
+      const dt = t - start;
+      const nt = Math.min(dt / fadeMs, 1);
+      setFinishT(nt);
+      if (nt < 1) rafId = requestAnimationFrame(step);
+      else {
+        if (onComplete) onComplete();
+      }
+    };
+    rafId = requestAnimationFrame(step);
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [finishing, fadeMs, onComplete]);
+
+  return { finishing, finishT, triggerFinish: () => setFinishing(true) };
+}
 
 // ============================================================================
 // SHIELD GLOW EFFECT - Magical protective barrier
@@ -399,10 +427,14 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
   
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 450);
+
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 1.2;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
     
@@ -411,8 +443,10 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
     }
   });
   
-  const scale = easeOutElastic(progress);
-  const opacity = progress < 0.8 ? 1 : (1 - progress) * 5;
+  const baseScale = easeOutElastic(progress);
+  const scale = baseScale * (1 - finishT * 0.25);
+  const baseOpacity = progress < 0.8 ? 1 : (1 - progress) * 5;
+  const opacity = baseOpacity * (1 - finishT);
   
   return (
     <group position={[x, 0, z]} ref={groupRef} scale={[scale, scale, scale]}>
@@ -472,28 +506,30 @@ export function FogOfWarEffect({ onComplete }) {
     }));
   }, []);
   
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 500);
+
   useFrame((state, delta) => {
-    if (onComplete) {
-      setProgress(prev => {
-        const next = prev + delta * 0.5;
-        if (next >= 1) onComplete();
-        return Math.min(next, 1);
-      });
-    }
+    setProgress(prev => {
+      const next = prev + delta * 0.5;
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
+      return Math.min(next, 1);
+    });
     // No rotation - removed the rotating group
   });
   
   return (
     <group ref={groupRef}>
       {clouds.map((cloud, i) => (
-        <FogCloud key={i} {...cloud} progress={progress} hasComplete={!!onComplete} />
+        <FogCloud key={i} {...cloud} progress={progress} hasComplete={!!onComplete} finishT={finishT} />
       ))}
       {/* Ground fog plane removed - just particles now */}
     </group>
   );
 }
 
-function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete }) {
+function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete, finishT = 0 }) {
   const ref = useRef();
   
   useFrame((state) => {
@@ -505,7 +541,7 @@ function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete }) {
       
       // Slightly reduced opacity and smaller shimmer for clarity
       const baseOpacity = hasComplete ? 0.15 * (1 - progress) : 0.15;
-      ref.current.material.opacity = baseOpacity + Math.sin(t + phase) * 0.03;
+      ref.current.material.opacity = (baseOpacity * (1 - finishT)) + Math.sin(t + phase) * 0.03 * (1 - finishT);
     }
   });
   
@@ -532,17 +568,20 @@ export function SoftPushEffect({ square, onComplete }) {
   
   const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 300);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 1.5;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
   
-  const ringScale = easeOutCubic(progress) * 2;
-  const opacity = 1 - easeOutCubic(progress);
+  const ringScale = easeOutCubic(progress) * 2 * (1 - finishT * 0.25);
+  const opacity = (1 - easeOutCubic(progress)) * (1 - finishT);
   
   return (
     <group position={[x, 0, z]}>
@@ -559,7 +598,7 @@ export function SoftPushEffect({ square, onComplete }) {
               emissiveIntensity={2}
               color="#ffccbc"
               transparent
-              opacity={o}
+              opacity={o * (1 - finishT)}
               side={THREE.DoubleSide}
             />
           </mesh>
@@ -608,11 +647,14 @@ export function SoftPushEffect({ square, onComplete }) {
 
 export function PawnRushEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 350);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 1.2;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
@@ -635,10 +677,10 @@ export function PawnRushEffect({ onComplete }) {
             <planeGeometry args={[0.1, 0.8 * p]} />
             <meshStandardMaterial
               emissive="#4dd0e1"
-              emissiveIntensity={3 * (1 - p)}
+              emissiveIntensity={3 * (1 - p) * (1 - finishT)}
               color="#80deea"
               transparent
-              opacity={(1 - p) * 0.7}
+              opacity={(1 - p) * 0.7 * (1 - finishT)}
               side={THREE.DoubleSide}
             />
           </mesh>
@@ -650,10 +692,10 @@ export function PawnRushEffect({ onComplete }) {
         <planeGeometry args={[10, 0.5]} />
         <meshStandardMaterial
           emissive="#00bcd4"
-          emissiveIntensity={4 * (1 - progress)}
+          emissiveIntensity={4 * (1 - progress) * (1 - finishT)}
           color="#4dd0e1"
           transparent
-          opacity={(1 - progress) * 0.5}
+          opacity={(1 - progress) * 0.5 * (1 - finishT)}
           side={THREE.DoubleSide}
         />
       </mesh>
@@ -677,10 +719,14 @@ export function PhantomStepEffect({ square, onComplete }) {
     [1, 2], [1, -2], [-1, 2], [-1, -2]
   ], []);
   
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 350);
+
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 1.5;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
     
@@ -693,13 +739,13 @@ export function PhantomStepEffect({ square, onComplete }) {
     <group position={[x, 0, z]} ref={groupRef}>
       {/* Central ghost sphere */}
       <mesh position={[0, 0.5, 0]}>
-        <sphereGeometry args={[0.25 * (1 - progress * 0.3), 16, 16]} />
+        <sphereGeometry args={[0.25 * (1 - progress * 0.3) * (1 - finishT * 0.3), 16, 16]} />
         <meshStandardMaterial
           emissive="#ce93d8"
           emissiveIntensity={3}
           color="#e1bee7"
           transparent
-          opacity={(1 - progress) * 0.6}
+          opacity={(1 - progress) * 0.6 * (1 - finishT)}
         />
       </mesh>
       
@@ -713,25 +759,25 @@ export function PhantomStepEffect({ square, onComplete }) {
           <group key={i}>
             {/* Trail line */}
             <mesh position={[dx * 0.3 * dist, 0.4, dz * 0.3 * dist]}>
-              <sphereGeometry args={[0.1 * (1 - p), 8, 8]} />
+              <sphereGeometry args={[0.1 * (1 - p) * (1 - finishT * 0.25), 8, 8]} />
               <meshStandardMaterial
                 emissive="#ba68c8"
-                emissiveIntensity={3 * (1 - p)}
+                emissiveIntensity={3 * (1 - p) * (1 - finishT)}
                 color="#ce93d8"
                 transparent
-                opacity={(1 - p) * 0.7}
+                opacity={(1 - p) * 0.7 * (1 - finishT)}
               />
             </mesh>
             
             {/* End point glow */}
             <mesh position={[dx * 0.3, 0.4, dz * 0.3]}>
-              <sphereGeometry args={[0.08 * p, 8, 8]} />
+              <sphereGeometry args={[0.08 * p * (1 - finishT * 0.25), 8, 8]} />
               <meshStandardMaterial
                 emissive="#e1bee7"
                 emissiveIntensity={2}
                 color="#e1bee7"
                 transparent
-                opacity={p * 0.5 * (1 - progress)}
+                opacity={p * 0.5 * (1 - progress) * (1 - finishT)}
               />
             </mesh>
           </group>
@@ -750,11 +796,14 @@ export function SpectralMarchEffect({ square, onComplete }) {
   
   const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 300);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 1.2;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
@@ -773,10 +822,10 @@ export function SpectralMarchEffect({ square, onComplete }) {
             <boxGeometry args={[0.3, 0.5 * (1 - p * 0.5), 0.15]} />
             <meshStandardMaterial
               emissive="#5c6bc0"
-              emissiveIntensity={2 * (1 - p)}
+              emissiveIntensity={2 * (1 - p) * (1 - finishT)}
               color="#7986cb"
               transparent
-              opacity={(1 - p) * 0.5}
+              opacity={(1 - p) * 0.5 * (1 - finishT)}
               wireframe
             />
           </mesh>
@@ -788,10 +837,10 @@ export function SpectralMarchEffect({ square, onComplete }) {
         <cylinderGeometry args={[0.2, 0.3, 0.8, 8]} />
         <meshStandardMaterial
           emissive="#7c4dff"
-          emissiveIntensity={2 * (1 - progress)}
+          emissiveIntensity={2 * (1 - progress) * (1 - finishT)}
           color="#b388ff"
           transparent
-          opacity={(1 - progress) * 0.4}
+          opacity={(1 - progress) * 0.4 * (1 - finishT)}
         />
       </mesh>
     </group>
@@ -805,11 +854,14 @@ export function SpectralMarchEffect({ square, onComplete }) {
 export function PoisonTouchEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 300);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 1.5;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
     
@@ -870,11 +922,14 @@ export function PoisonTouchEffect({ onComplete }) {
 // Iron Fortress Effect
 export function IronFortressEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 0.8;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
@@ -892,10 +947,10 @@ export function IronFortressEffect({ onComplete }) {
           <boxGeometry args={[1, 0.8, 1]} />
           <meshStandardMaterial
             emissive="#78909c"
-            emissiveIntensity={1.5 * (1 - progress * 0.5)}
+            emissiveIntensity={1.5 * (1 - progress * 0.5) * (1 - finishT)}
             color="#90a4ae"
             transparent
-            opacity={0.7 * (1 - progress * 0.3)}
+            opacity={0.7 * (1 - progress * 0.3) * (1 - finishT)}
           />
         </mesh>
       ))}
@@ -905,10 +960,10 @@ export function IronFortressEffect({ onComplete }) {
         <planeGeometry args={[8, 1]} />
         <meshStandardMaterial
           emissive="#b0bec5"
-          emissiveIntensity={2 * (1 - progress)}
+          emissiveIntensity={2 * (1 - progress) * (1 - finishT)}
           color="#cfd8dc"
           transparent
-          opacity={(1 - progress) * 0.4}
+          opacity={(1 - progress) * 0.4 * (1 - finishT)}
           side={THREE.DoubleSide}
         />
       </mesh>
@@ -920,16 +975,19 @@ export function IronFortressEffect({ onComplete }) {
 export function DivineInterventionEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 0.6;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
     
     if (groupRef.current) {
-      groupRef.current.rotation.y = state.clock.elapsedTime;
+      groupRef.current.rotation.y = state.clock.elapsedTime * (1 - finishT * 0.3);
     }
   });
   
@@ -1006,11 +1064,14 @@ export function ExecutionEffect({ square, onComplete }) {
   
   const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
-  
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 450);
+
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 2;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
@@ -1018,24 +1079,24 @@ export function ExecutionEffect({ square, onComplete }) {
   return (
     <group position={[x, 0, z]}>
       {/* Red X mark */}
-      <mesh position={[0, 0.5, 0]} rotation={[0, Math.PI / 4, 0]}>
-        <boxGeometry args={[0.1, 0.8 * easeOutCubic(progress), 0.02]} />
+      <mesh position={[0, 0.5, 0]} rotation={[0, Math.PI / 4, 0]} scale={[1 - finishT * 0.2, 1 - finishT * 0.2, 1]}>
+        <boxGeometry args={[0.1, 0.8 * easeOutCubic(progress) * (1 - finishT * 0.3), 0.02]} />
         <meshStandardMaterial
           emissive="#f44336"
-          emissiveIntensity={4}
+          emissiveIntensity={4 * (1 - finishT)}
           color="#ff5252"
           transparent
-          opacity={1 - progress * 0.3}
+          opacity={(1 - progress * 0.3) * (1 - finishT)}
         />
       </mesh>
-      <mesh position={[0, 0.5, 0]} rotation={[0, -Math.PI / 4, 0]}>
-        <boxGeometry args={[0.1, 0.8 * easeOutCubic(progress), 0.02]} />
+      <mesh position={[0, 0.5, 0]} rotation={[0, -Math.PI / 4, 0]} scale={[1 - finishT * 0.2, 1 - finishT * 0.2, 1]}>
+        <boxGeometry args={[0.1, 0.8 * easeOutCubic(progress) * (1 - finishT * 0.3), 0.02]} />
         <meshStandardMaterial
           emissive="#f44336"
-          emissiveIntensity={4}
+          emissiveIntensity={4 * (1 - finishT)}
           color="#ff5252"
           transparent
-          opacity={1 - progress * 0.3}
+          opacity={(1 - progress * 0.3) * (1 - finishT)}
         />
       </mesh>
       
@@ -1071,11 +1132,14 @@ export function ExecutionEffect({ square, onComplete }) {
 // Time Freeze Effect
 export function TimeFreezeEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 350);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 0.8;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
@@ -1113,13 +1177,13 @@ export function TimeFreezeEffect({ onComplete }) {
             rotation={[0, angle, 0]}
           >
             <coneGeometry args={[0.1, 0.4 * p, 4]} />
-            <meshStandardMaterial
-              emissive="#e1f5fe"
-              emissiveIntensity={2}
-              color="#b3e5fc"
-              transparent
-              opacity={(1 - progress * 0.5) * 0.7}
-            />
+                <meshStandardMaterial
+                  emissive="#e1f5fe"
+                  emissiveIntensity={2 * (1 - finishT)}
+                  color="#b3e5fc"
+                  transparent
+                  opacity={(1 - progress * 0.5) * 0.7 * (1 - finishT)}
+                />
           </mesh>
         );
       })}
@@ -1142,11 +1206,14 @@ export function TimeFreezeEffect({ onComplete }) {
 // Time Travel Effect - Rewind animation with temporal trails
 export function TimeTravelEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 500);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 0.6;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
@@ -1171,10 +1238,10 @@ export function TimeTravelEffect({ onComplete }) {
             <sphereGeometry args={[0.15, 8, 8]} />
             <meshStandardMaterial
               emissive="#3498db"
-              emissiveIntensity={2 * (1 - progress * 0.5)}
+              emissiveIntensity={2 * (1 - progress * 0.5) * (1 - finishT)}
               color="#64b5f6"
               transparent
-              opacity={(1 - progress * 0.6) * 0.8}
+              opacity={(1 - progress * 0.6) * 0.8 * (1 - finishT)}
             />
           </mesh>
         );
@@ -1237,11 +1304,14 @@ export function TimeTravelEffect({ onComplete }) {
 // Chain Lightning Effect
 export function ChainLightningEffect({ origin, chained, onComplete }) {
   const [progress, setProgress] = useState(0);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 300);
   
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 2.5;
-      if (next >= 1 && onComplete) onComplete();
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
       return Math.min(next, 1);
     });
   });
@@ -1285,10 +1355,10 @@ export function ChainLightningEffect({ origin, chained, onComplete }) {
                   <sphereGeometry args={[0.08, 8, 8]} />
                   <meshStandardMaterial
                     emissive="#fff176"
-                    emissiveIntensity={4 * (1 - p * 0.5)}
+                    emissiveIntensity={4 * (1 - p * 0.5) * (1 - finishT)}
                     color="#ffeb3b"
                     transparent
-                    opacity={(1 - p) * 0.9}
+                    opacity={(1 - p) * 0.9 * (1 - finishT)}
                   />
                 </mesh>
               );
@@ -1299,10 +1369,10 @@ export function ChainLightningEffect({ origin, chained, onComplete }) {
               <sphereGeometry args={[0.15 * p, 12, 12]} />
               <meshStandardMaterial
                 emissive="#ffeb3b"
-                emissiveIntensity={5 * p * (1 - progress)}
+                emissiveIntensity={5 * p * (1 - progress) * (1 - finishT)}
                 color="#fff59d"
                 transparent
-                opacity={p * (1 - progress) * 0.9}
+                opacity={p * (1 - progress) * 0.9 * (1 - finishT)}
               />
             </mesh>
           </group>
@@ -1320,6 +1390,7 @@ export function ChaosTheoryEffect({ shuffledSquares = [], onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
   const particleCount = 150;
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 600);
   
   // Generate random particle data
   const particles = useMemo(() => {
@@ -1338,18 +1409,18 @@ export function ChaosTheoryEffect({ shuffledSquares = [], onComplete }) {
     setProgress(prev => {
       const next = prev + delta / 3;
       if (next >= 1) {
-        onComplete?.();
+        if (!finishing) triggerFinish();
         return 1;
       }
       return next;
     });
     
     if (groupRef.current) {
-      groupRef.current.rotation.y += delta * 0.8;
+      groupRef.current.rotation.y += delta * 0.8 * (1 - finishT * 0.5);
     }
   });
   
-  const opacity = progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1;
+  const opacity = (progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1) * (1 - finishT);
   
   return (
     <group ref={groupRef} position={[0, 2, 0]}>
@@ -1358,7 +1429,7 @@ export function ChaosTheoryEffect({ shuffledSquares = [], onComplete }) {
         <torusGeometry args={[2, 0.1, 16, 100]} />
         <meshStandardMaterial
           emissive="#9b59b6"
-          emissiveIntensity={3}
+          emissiveIntensity={3 * (1 - finishT)}
           color="#8e44ad"
           transparent
           opacity={opacity * 0.6}
@@ -1378,7 +1449,7 @@ export function ChaosTheoryEffect({ shuffledSquares = [], onComplete }) {
             <sphereGeometry args={[p.size, 8, 8]} />
             <meshStandardMaterial
               emissive={p.color}
-              emissiveIntensity={2}
+              emissiveIntensity={2 * (1 - finishT)}
               color={p.color}
               transparent
               opacity={opacity * 0.8}
@@ -1412,68 +1483,17 @@ export function ChaosTheoryEffect({ shuffledSquares = [], onComplete }) {
 
 // Vision Effect
 export function VisionEffect({ onComplete }) {
-  const [progress, setProgress] = useState(0);
-  
-  useFrame((state, delta) => {
-    setProgress(prev => {
-      const next = prev + delta * 1.2;
-      if (next >= 1 && onComplete) onComplete();
-      return Math.min(next, 1);
-    });
-  });
-  
-  return (
-    <group>
-      {/* All-seeing eye */}
-      <mesh position={[0, 3, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.3, 0.5, 32]} />
-        <meshStandardMaterial
-          emissive="#7e57c2"
-          emissiveIntensity={3 * easeOutCubic(progress)}
-          color="#9575cd"
-          transparent
-          opacity={0.7 * (1 - progress * 0.3)}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      
-      {/* Eye pupil */}
-      <mesh position={[0, 3, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.2, 32]} />
-        <meshStandardMaterial
-          emissive="#311b92"
-          emissiveIntensity={2}
-          color="#4527a0"
-          transparent
-          opacity={0.9 * (1 - progress * 0.3)}
-        />
-      </mesh>
-      
-      {/* Scanning beams */}
-      {[...Array(8)].map((_, i) => {
-        const angle = (i / 8) * Math.PI * 2 + progress * Math.PI;
-        const dist = 4;
-        
-        return (
-          <mesh
-            key={i}
-            position={[0, 1.5, 0]}
-            rotation={[Math.PI / 4, angle, 0]}
-          >
-            <planeGeometry args={[0.05, dist]} />
-            <meshStandardMaterial
-              emissive="#b39ddb"
-              emissiveIntensity={2 * (1 - progress)}
-              color="#d1c4e9"
-              transparent
-              opacity={(1 - progress) * 0.4}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-        );
-      })}
-    </group>
-  );
+  // Disable Vision visual effect — no rendering, immediately notify completion.
+  useEffect(() => {
+    if (onComplete) {
+      // call on next tick so callers expecting async completion continue to work
+      const id = setTimeout(() => onComplete(), 0);
+      return () => clearTimeout(id);
+    }
+    return undefined;
+  }, [onComplete]);
+
+  return null;
 }
 
 // ============================================================================
@@ -1486,22 +1506,24 @@ export function SanctuaryEffect({ square, onComplete }) {
   
   const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
   
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
+
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta / 2;
       if (next >= 1) {
-        onComplete?.();
+        if (!finishing) triggerFinish();
         return 1;
       }
       return next;
     });
     
     if (groupRef.current) {
-      groupRef.current.rotation.y += delta * 0.5;
+      groupRef.current.rotation.y += delta * 0.5 * (1 - finishT * 0.5);
     }
   });
   
-  const opacity = progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1;
+  const opacity = (progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1) * (1 - finishT);
   
   return (
     <group position={[x, 0, z]} ref={groupRef}>
@@ -1611,6 +1633,7 @@ export function SanctuaryIndicatorEffect({ square }) {
 export function CursedSquareEffect({ square, onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
   
   const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
   
@@ -1618,18 +1641,18 @@ export function CursedSquareEffect({ square, onComplete }) {
     setProgress(prev => {
       const next = prev + delta / 2;
       if (next >= 1) {
-        onComplete?.();
+        if (!finishing) triggerFinish();
         return 1;
       }
       return next;
     });
     
     if (groupRef.current) {
-      groupRef.current.rotation.y -= delta * 0.8;
+      groupRef.current.rotation.y -= delta * 0.8 * (1 - finishT * 0.5);
     }
   });
   
-  const opacity = progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1;
+  const opacity = (progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1) * (1 - finishT);
   
   return (
     <group position={[x, 0, z]} ref={groupRef}>

@@ -27,22 +27,21 @@ const TEST_SCENARIOS = {
 
 export function CardBalancingToolV2({ onBack }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
+  // Missing state initializations used throughout the tool
+  const [fen, setFen] = useState(TEST_SCENARIOS.default.fen);
+  const [chess, setChess] = useState(() => new Chess(TEST_SCENARIOS.default.fen));
+  const [scenario, setScenario] = useState('default');
+  const [playerColor, setPlayerColor] = useState('white');
+  const [effectsModule, setEffectsModule] = useState(null);
+  const [logMessages, setLogMessages] = useState([]);
+  const [activeEffects, setActiveEffects] = useState({});
+  const [pawnShields, setPawnShields] = useState({ w: null, b: null });
+  const [shieldTurnCounter, setShieldTurnCounter] = useState({ w: 0, b: 0 });
+  const [selectedSquare, setSelectedSquare] = useState(null);
+  const [targetSquare, setTargetSquare] = useState(null);
+  const [targetingMode, setTargetingMode] = useState(false);
+  const [customParams, setCustomParams] = useState({});
       
-      {/* Metamorphosis Dialog - shared component with in-game */}
-      {metamorphosisDialog && (
-        <PieceSelectionDialog
-          title="Transform Piece To:"
-          pieces={['r', 'b', 'n', 'p']}
-          onSelect={(pieceType) => {
-            const colorChar = playerColor === 'white' ? 'w' : 'b';
-            const params = { targetSquare: metamorphosisDialog.square, newType: pieceType };
-            applyCardEffect(selectedCard, params, colorChar);
-            setMetamorphosisDialog(null);
-          }}
-          onCancel={() => setMetamorphosisDialog(null)}
-          showCancel={true}
-        />
-      )}
   const [visualEffects, setVisualEffects] = useState([]);
   const [cutsceneActive, setCutsceneActive] = useState(false);
   const [cameraTarget, setCameraTarget] = useState(null);
@@ -903,6 +902,22 @@ export function CardBalancingToolV2({ onBack }) {
           )}
         </div>
       </div>
+
+      {metamorphosisDialog && (
+        <PieceSelectionDialog
+          title="Transform Piece To:"
+          pieces={['r', 'b', 'n', 'p']}
+          onSelect={(pieceType) => {
+            const colorChar = playerColor === 'white' ? 'w' : 'b';
+            const params = { targetSquare: metamorphosisDialog.square, newType: pieceType };
+            applyCardEffect(selectedCard, params, colorChar);
+            setMetamorphosisDialog(null);
+          }}
+          onCancel={() => setMetamorphosisDialog(null)}
+          showCancel={true}
+        />
+      )}
+
     </div>
   );
 }

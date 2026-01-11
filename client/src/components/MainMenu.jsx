@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { soundManager } from '../game/soundManager.js';
 import { socket } from '../game/socket.js';
+import './styles/MainMenu.css';
 
 export function MainMenu({
   mode = 'root',
@@ -15,69 +16,36 @@ export function MainMenu({
   onToggleDevMode,
   onQuickMatch,
   quickMatchStatus,
+  quickMatchLoading = false,
 }) {
   // Music is handled globally in App; no per-mode control needed here  
   if (mode === 'root') {
     return (
-      <div style={styles.container}>
-        <div style={styles.panel}>
-          <h1 style={styles.title}>Arcana Chess</h1>
-          <p style={styles.subtitle}>Arcana-infused 3D chess with multiplayer and AI.</p>
+      <div className="menu-container">
+        <div className="menu-vignette" />
 
-          <div style={styles.buttonRow}>
-            <button style={styles.primaryButton} onClick={onPlayOnlineHost}>
-              Host game
-            </button>
-            <button style={styles.primaryButton} onClick={onPlayOnlineJoin}>
-              Join game
-            </button>
+        <div className="menu-ui">
+          <h1 className="menu-title">Arcana Chess</h1>
+          {/* <p className="menu-subtitle">Arcana-infused 3D chess with multiplayer and AI.</p> */}
+
+          <div className="menu-buttons">
+            <button className="menu-button" onClick={onPlayOnlineHost}>Host game</button>
+            <button className="menu-button" onClick={onPlayOnlineJoin}>Join game</button>
+            <button className="menu-button" onClick={onQuickMatch} disabled={quickMatchLoading}>{quickMatchStatus || 'Find Match'}</button>
           </div>
 
-          <div style={{ ...styles.buttonRow, marginTop: 12 }}>
-            <button
-              style={styles.primaryButton}
-              onClick={onQuickMatch}
-            >
-              ⚡ Quick Match
-            </button>
+          <div className="menu-secondary-row">
+            <button className="menu-secondary" onClick={onTutorial}>Tutorial (WIP)</button>
+            <button className="menu-secondary" onClick={onViewArcana}>View Arcana</button>
+            <button className="menu-secondary" onClick={onSettings}>Settings</button>
+            {devMode && (
+              <button className="menu-secondary" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }} onClick={onCardBalancing}>🛠️ Card Balancing Tool 📊</button>
+            )}
           </div>
-
-          {typeof quickMatchStatus === 'string' && quickMatchStatus && (
-            <div style={{ marginTop: 10, color: '#88c0d0', fontSize: '0.9rem' }}>{quickMatchStatus}</div>
-          )}
-
-          <div style={styles.secondaryRow}>
-            <button style={styles.secondaryButton} onClick={onTutorial}>
-              Tutorial (WIP)
-            </button>
-            <button style={styles.secondaryButton} onClick={onViewArcana}>
-              View Arcana
-            </button>
-            <button style={styles.secondaryButton} onClick={onSettings}>
-              Settings
-            </button>
-          </div>
-
-          {devMode && (
-            <div style={{ ...styles.secondaryRow, marginTop: 12 }}>
-              <button
-                style={{ ...styles.secondaryButton, background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
-                onClick={onCardBalancing}
-              >
-                🛠️ Card Balancing Tool
-              </button>
-            </div>
-          )}
 
           {onToggleDevMode && (
-            <div style={styles.devModeToggle}>
-              <button
-                style={styles.devButton}
-                onClick={onToggleDevMode}
-                title="Toggle developer mode"
-              >
-                {devMode ? '🔧 Dev Mode: ON' : 'Dev Mode'}
-              </button>
+            <div className="dev-mode">
+              <button className="menu-secondary dev-btn" onClick={onToggleDevMode} title="Toggle developer mode">{devMode ? '🔧 Dev Mode: ON' : 'Dev Mode'}</button>
             </div>
           )}
         </div>
@@ -688,6 +656,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
     background: 'radial-gradient(circle at top, #1b2735, #090a0f)',
     color: '#e5e9f0',
     fontFamily: 'system-ui, sans-serif',

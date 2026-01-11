@@ -71,32 +71,65 @@ export function GhostPiece({ type, isWhite, fromSquare, toSquare }) {
 
 /**
  * Camera controller for cutscene animations
+ * Moves camera to target, holds briefly, then returns to original position
  */
 export function CameraController({ targetPosition, active, onComplete }) {
   const { camera } = useThree();
   const startPos = useRef(null);
   const progress = useRef(0);
+  const phase = useRef('idle'); // 'idle', 'moving_to', 'holding', 'returning'
+  const holdTimer = useRef(0);
   
   useEffect(() => {
     if (active && targetPosition) {
+      // Save original camera state
       startPos.current = camera.position.clone();
+      
       progress.current = 0;
+      phase.current = 'moving_to';
+      holdTimer.current = 800; // Hold for 800ms at target
     }
   }, [active, targetPosition, camera]);
   
   useFrame((state, delta) => {
     if (!active || !targetPosition || !startPos.current) return;
     
-    progress.current = Math.min(progress.current + delta * 0.8, 1);
+    const speed = 1.5; // Animation speed
     
-    const t = progress.current;
-    const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease in-out quad
-    
-    camera.position.lerpVectors(startPos.current, new Vector3(...targetPosition), eased);
-    camera.lookAt(0, 0, 0);
-    
-    if (progress.current >= 1 && onComplete) {
-      onComplete();
+    if (phase.current === 'moving_to') {
+      progress.current = Math.min(progress.current + delta * speed, 1);
+      const t = progress.current;
+      const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease in-out quad
+      
+      camera.position.lerpVectors(startPos.current, new Vector3(...targetPosition), eased);
+      camera.lookAt(0, 0, 0);
+      
+      if (progress.current >= 1) {
+        phase.current = 'holding';
+      }
+    }
+    else if (phase.current === 'holding') {
+      holdTimer.current -= delta * 1000;
+      if (holdTimer.current <= 0) {
+        phase.current = 'returning';
+        progress.current = 0;
+      }
+    }
+    else if (phase.current === 'returning') {
+      progress.current = Math.min(progress.current + delta * speed, 1);
+      const t = progress.current;
+      const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      
+      camera.position.lerpVectors(new Vector3(...targetPosition), startPos.current, eased);
+      camera.lookAt(new Vector3(0, 0, 0));
+      
+      if (progress.current >= 1) {
+        phase.current = 'idle';
+        
+        if (onComplete) {
+          onComplete();
+        }
+      }
     }
   });
   
