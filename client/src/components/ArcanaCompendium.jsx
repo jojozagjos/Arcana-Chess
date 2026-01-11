@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './styles/ArcanaCompendium.css';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
@@ -11,6 +11,16 @@ export function ArcanaCompendium({ onBack }) {
     if (rarityFilter === 'all') return true;
     return a.rarity.toLowerCase() === rarityFilter.toLowerCase();
   });
+
+  // Responsive: switch card size and grid columns on small screens
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const cardSize = windowWidth < 700 ? 'small' : 'medium';
+  const gridCols = windowWidth < 480 ? 'repeat(1, 1fr)' : windowWidth < 900 ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)';
 
   return (
     <div style={styles.container}>
@@ -42,17 +52,17 @@ export function ArcanaCompendium({ onBack }) {
         </div>
 
           <div style={styles.content}>
-          <div className="arcana-list" style={styles.list}>
+          <div className="arcana-list" style={{ ...styles.list, gridTemplateColumns: gridCols }}>
             {filtered.map((arcana) => (
               <div key={arcana.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
                 <ArcanaCard
                   arcana={arcana}
-                  size="medium"
+                  size={cardSize}
                   isSelected={selected?.id === arcana.id}
                   onClick={() => setSelected(arcana)}
                   deferLoad
                 />
-                <div style={{ fontSize: '0.85rem', textAlign: 'center', opacity: 0.9 }}>
+                <div style={{ fontSize: windowWidth < 700 ? '0.75rem' : '0.85rem', textAlign: 'center', opacity: 0.9 }}>
                   {arcana.rarity} · {arcana.category}
                 </div>
               </div>
