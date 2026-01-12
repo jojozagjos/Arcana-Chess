@@ -107,10 +107,8 @@ const styles = {
     fontFamily: 'system-ui, sans-serif',
   },
   panel: {
-    width: '75vw',
-    maxWidth: '75vw',
-    height: '75vh',
-    maxHeight: '75vh',
+    width: '70%',
+    // height: '70%',
     padding: 36,
     borderRadius: 20,
     background: 'rgba(5, 6, 10, 0.96)',

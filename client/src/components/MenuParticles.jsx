@@ -52,6 +52,8 @@ function ParticleField({ count = 220, textures = [], mouseRefProp, forceRefProp 
   }, [groups.length]);
 
   useFrame((state, delta) => {
+    // clamp delta to avoid huge jumps after tabbing out/in
+    const dt = Math.min(delta, 0.05);
     const t = state.clock.elapsedTime;
     const mX = mouse.current.x;
     const mY = mouse.current.y;
@@ -74,8 +76,8 @@ function ParticleField({ count = 220, textures = [], mouseRefProp, forceRefProp 
           const sp = phasePack.speeds[i];
           const nx = Math.cos(ph + t * 0.2 * sp) * 0.02;
           const ny = Math.sin(ph + t * 0.18 * sp) * 0.02;
-          g.velocities[ix + 0] += nx * delta * 60;
-          g.velocities[ix + 1] += ny * delta * 60;
+          g.velocities[ix + 0] += nx * dt * 60;
+          g.velocities[ix + 1] += ny * dt * 60;
         }
 
         if (hasMouse) {
@@ -83,13 +85,13 @@ function ParticleField({ count = 220, textures = [], mouseRefProp, forceRefProp 
           const dy = mY - py;
           const distSq = dx * dx + dy * dy + 1;
           const f = Math.min(2000 / distSq, 0.6) * 0.002 * (mouseForce.current || 1);
-          g.velocities[ix + 0] += dx * f * delta * 60;
-          g.velocities[ix + 1] += dy * f * delta * 60;
+          g.velocities[ix + 0] += dx * f * dt * 60;
+          g.velocities[ix + 1] += dy * f * dt * 60;
         }
 
-        px += g.velocities[ix + 0] * delta * 60;
-        py += g.velocities[ix + 1] * delta * 60;
-        pz += g.velocities[ix + 2] * delta * 60;
+        px += g.velocities[ix + 0] * dt * 60;
+        py += g.velocities[ix + 1] * dt * 60;
+        pz += g.velocities[ix + 2] * dt * 60;
 
         g.velocities[ix + 0] *= 0.96;
         g.velocities[ix + 1] *= 0.96;
