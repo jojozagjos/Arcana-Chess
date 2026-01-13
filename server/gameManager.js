@@ -238,6 +238,13 @@ export class GameManager {
       if (currentTurn !== playerTurnChar) {
         throw new Error('You can only draw a card on your turn');
       }
+      // Do not allow drawing while the player's king is in check
+      // chess.js exposes either in_check() or inCheck() depending on version, so guard both
+      if (typeof gameState.chess.in_check === 'function') {
+        if (gameState.chess.in_check()) throw new Error('You cannot draw while in check');
+      } else if (typeof gameState.chess.inCheck === 'function') {
+        if (gameState.chess.inCheck()) throw new Error('You cannot draw while in check');
+      }
       
       // Check draw cooldown rule: "must wait 1 full turn between draws"
       // Full turn = both players move once. So: 
@@ -896,7 +903,7 @@ export class GameManager {
           });
         }
       }
-      return { gameState: serialised, appliedArcana: [], extraMove: true };
+      return { gameState: this.serialiseGameState(gameState), appliedArcana: [], extraMove: true };
     }
 
     // Broadcast personalised updated state to both players (mask lastMove under fog per viewer)
