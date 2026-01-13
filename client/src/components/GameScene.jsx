@@ -1710,7 +1710,8 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   const isMe = playerId === mySocketId;
   const actionText = type === 'draw' ? 'drew' : 'used';
   const playerText = isMe ? 'You' : 'Opponent';
-  
+  if (!arcana) return null;
+
   const rarityColors = {
     common: { glow: 'rgba(200, 200, 200, 0.8)', inner: '#c8c8c8' },
     uncommon: { glow: 'rgba(76, 175, 80, 0.8)', inner: '#4caf50' },

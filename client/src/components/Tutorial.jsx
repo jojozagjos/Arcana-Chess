@@ -992,6 +992,7 @@ function TutorialPieces({ fen, onClickSquare }) {
 function CardRevealAnimation({ arcana, type, onDismiss }) {
   const [usePhase, setUsePhase] = React.useState(0);
   const [useProgress, setUseProgress] = React.useState(0); // 0..1 ramp between phase 1 and 2
+  if (!arcana) return null;
   
   React.useEffect(() => {
     if (type === 'use') {
