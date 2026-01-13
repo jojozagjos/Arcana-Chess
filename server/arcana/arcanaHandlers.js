@@ -7,8 +7,7 @@ import { pickWeightedArcana, getAdjacentSquares } from './arcanaUtils.js';
 function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState) {
   const targetSquare = params?.targetSquare;
   const piece = targetSquare ? chess.get(targetSquare) : null;
-  
-  // Cards that don't need targeting
+
   const noTargetCards = [
     'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
     'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
@@ -16,89 +15,55 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
     'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress'
   ];
-  
+
   if (noTargetCards.includes(arcanaId)) {
-    return { valid: true };
+    return { ok: true };
   }
-  
-  // Cards requiring target validation
-  switch (arcanaId) {
-    case 'shield_pawn':
-    case 'pawn_guard':
-    case 'promotion_ritual':
-      // Requires own pawn
-      if (!targetSquare) return { valid: false, error: 'No target selected' };
-      if (!piece || piece.type !== 'p' || piece.color !== moverColor) {
-        return { valid: false, error: 'Must target your own pawn' };
-      }
-      return { valid: true };
-      
-    case 'bishops_blessing':
-      // Requires own bishop
-      if (!targetSquare) return { valid: false, error: 'No target selected' };
-      if (!piece || piece.type !== 'b' || piece.color !== moverColor) {
-        return { valid: false, error: 'Must target your own bishop' };
-      }
-      return { valid: true };
-      
-    case 'knight_of_storms':
-      // Requires own knight
-      if (!targetSquare) return { valid: false, error: 'No target selected' };
-      if (!piece || piece.type !== 'n' || piece.color !== moverColor) {
-        return { valid: false, error: 'Must target your own knight' };
-      }
-      return { valid: true };
-      
-    case 'squire_support':
-    case 'soft_push':
-    case 'line_of_sight':
-    case 'royal_swap':
-    case 'metamorphosis':
-    case 'mirror_image':
-    case 'sacrifice':
-      // Requires own piece
-      if (!targetSquare) return { valid: false, error: 'No target selected' };
-      if (!piece || piece.color !== moverColor) {
-        return { valid: false, error: 'Must target your own piece' };
-      }
-      return { valid: true };
-      
-    case 'execution':
-    case 'mind_control':
-      // Requires enemy piece (not king)
-      if (!targetSquare) return { valid: false, error: 'No target selected' };
-      if (!piece || piece.color === moverColor || piece.type === 'k') {
-        return { valid: false, error: 'Must target an enemy piece (not king)' };
-      }
-      return { valid: true };
-      
-    case 'castle_breaker':
-      // Requires enemy rook (or auto-selects if no target)
-      if (targetSquare) {
-        if (!piece || piece.type !== 'r' || piece.color === moverColor) {
-          return { valid: false, error: 'Must target an enemy rook' };
-        }
-      }
-      return { valid: true };
-      
-    case 'antidote':
-      // Requires poisoned piece
-      if (!targetSquare) return { valid: false, error: 'No target selected' };
-      const poisonedPieces = gameState.activeEffects?.poisonedPieces || [];
-      if (!poisonedPieces.some(p => p.square === targetSquare)) {
-        return { valid: false, error: 'Target is not poisoned' };
-      }
-      return { valid: true };
-      
-    case 'sanctuary':
-    case 'cursed_square':
-      // Requires any square
-      if (!targetSquare) return { valid: false, error: 'No target square selected' };
-      return { valid: true };
-      
-    default:
-      return { valid: true };
+
+  // Target-required cards
+  if (!targetSquare) {
+    return { ok: false, reason: 'Missing targetSquare' };
   }
+
+  // Antidote: must target own poisoned piece
+  if (arcanaId === 'antidote') {
+    if (!piece || piece.color !== moverColor) {
+      return { ok: false, reason: 'Antidote must target your poisoned piece' };
+    }
+    const isPoisoned = Array.isArray(gameState?.activeEffects?.poisonedPieces)
+      && gameState.activeEffects.poisonedPieces.some(p => p.square === targetSquare);
+    if (!isPoisoned) {
+      return { ok: false, reason: 'Target is not poisoned' };
+    }
+    return { ok: true };
+  }
+
+  // Squire Support: must target own piece
+  if (arcanaId === 'squire_support') {
+    if (!piece || piece.color !== moverColor) {
+      return { ok: false, reason: 'Squire Support must target your piece' };
+    }
+    return { ok: true };
+  }
+
+  // Cursed Square: typically an empty square
+  if (arcanaId === 'cursed_square') {
+    if (piece) {
+      return { ok: false, reason: 'Cursed Square must target an empty square' };
+    }
+    return { ok: true };
+  }
+
+  // Execution: cannot target king
+  if (arcanaId === 'execution') {
+    if (!piece || piece.type === 'k') {
+      return { ok: false, reason: 'Cannot execute king or empty square' };
+    }
+    return { ok: true };
+  }
+
+  // Default allow if a piece exists (for other targeted cards)
+  return { ok: true };
 }
 
 /**
@@ -1017,7 +982,8 @@ function applyChaosTheory({ chess }) {
     const board = chess.board();
     let isValid = true;
 
-    for (let rank = 0; rank < 8; rank++) {
+    // 1) No pawns on first/last ranks
+    for (let rank = 0; rank < 8 && isValid; rank++) {
       for (let file = 0; file < 8; file++) {
         const piece = board[rank][file];
         if (piece && piece.type === 'p' && (rank === 0 || rank === 7)) {
@@ -1025,7 +991,21 @@ function applyChaosTheory({ chess }) {
           break;
         }
       }
-      if (!isValid) break;
+    }
+
+    // 2) Both kings must exist after shuffle
+    if (isValid) {
+      let wK = 0, bK = 0;
+      for (let r = 0; r < 8; r++) {
+        for (let f = 0; f < 8; f++) {
+          const p = board[r][f];
+          if (p?.type === 'k') {
+            if (p.color === 'w') wK++;
+            else if (p.color === 'b') bK++;
+          }
+        }
+      }
+      if (wK !== 1 || bK !== 1) isValid = false;
     }
 
     if (isValid) break;
@@ -1037,252 +1017,4 @@ function applyChaosTheory({ chess }) {
   }
 
   return { params: { shuffled } };
-}
-
-function applyMindControl({ chess, gameState, moverColor, params }) {
-  if (params?.targetSquare) {
-    const target = chess.get(params.targetSquare);
-    if (target && target.color !== moverColor && target.type !== 'k') {
-      const originalColor = target.color;
-      chess.remove(params.targetSquare);
-      chess.put({ type: target.type, color: moverColor }, params.targetSquare);
-      
-      gameState.activeEffects.mindControlled.push({
-        square: params.targetSquare,
-        originalColor: originalColor,
-        controlledBy: moverColor,
-        type: target.type,
-      });
-      
-      return { params: { square: params.targetSquare, piece: target.type, originalColor } };
-    }
-  }
-  return null;
-}
-
-function applyEnPassantMaster({ gameState, moverColor }) {
-  if (moverColor) {
-    gameState.activeEffects.enPassantMaster[moverColor] = true;
-    return { params: { color: moverColor } };
-  }
-  return null;
-}
-
-// ============ HELPER FUNCTIONS ============
-
-function findKing(chess, color) {
-  const board = chess.board();
-  for (let rank = 0; rank < 8; rank++) {
-    for (let file = 0; file < 8; file++) {
-      const piece = board[rank][file];
-      if (piece && piece.type === 'k' && piece.color === color) {
-        const fileChar = 'abcdefgh'[file];
-        const rankNum = 8 - rank;
-        return `${fileChar}${rankNum}`;
-      }
-    }
-  }
-  return null;
-}
-
-function canPieceTypeAttack(pieceType, fromSquare, toSquare) {
-  const fromFile = fromSquare.charCodeAt(0) - 97;
-  const fromRank = parseInt(fromSquare[1]);
-  const toFile = toSquare.charCodeAt(0) - 97;
-  const toRank = parseInt(toSquare[1]);
-  
-  const fileDiff = Math.abs(toFile - fromFile);
-  const rankDiff = Math.abs(toRank - fromRank);
-  
-  switch (pieceType) {
-    case 'r': // Rook: same file or rank
-      return fileDiff === 0 || rankDiff === 0;
-    case 'b': // Bishop: diagonal
-      return fileDiff === rankDiff && fileDiff > 0;
-    case 'q': // Queen: rook or bishop pattern
-      return fileDiff === 0 || rankDiff === 0 || fileDiff === rankDiff;
-    case 'n': // Knight: L-shape
-      return (fileDiff === 2 && rankDiff === 1) || (fileDiff === 1 && rankDiff === 2);
-    case 'p': // Pawn: diagonal capture only
-      return fileDiff === 1 && rankDiff === 1;
-    case 'k': // King: one square any direction
-      return fileDiff <= 1 && rankDiff <= 1 && (fileDiff > 0 || rankDiff > 0);
-    default:
-      return false;
-  }
-}
-
-function applyBerserkerPath(chess, from, to, color) {
-  const damaged = [];
-  const fromFile = from.charCodeAt(0) - 97;
-  const fromRank = parseInt(from[1]);
-  const toFile = to.charCodeAt(0) - 97;
-  const toRank = parseInt(to[1]);
-
-  if (fromFile === toFile) {
-    const step = toRank > fromRank ? 1 : -1;
-    for (let r = fromRank + step; r !== toRank; r += step) {
-      const sq = `${from[0]}${r}`;
-      const piece = chess.get(sq);
-      if (piece && piece.color !== color && piece.type !== 'k') {
-        chess.remove(sq);
-        damaged.push(sq);
-      }
-    }
-  } else if (fromRank === toRank) {
-    const step = toFile > fromFile ? 1 : -1;
-    for (let f = fromFile + step; f !== toFile; f += step) {
-      const sq = `${String.fromCharCode(97 + f)}${fromRank}`;
-      const piece = chess.get(sq);
-      if (piece && piece.color !== color && piece.type !== 'k') {
-        chess.remove(sq);
-        damaged.push(sq);
-      }
-    }
-  }
-  return damaged;
-}
-
-function chainLightningEffect(chess, origin, color, maxChains) {
-  const chained = [];
-  const adjacent = getAdjacentSquares(origin);
-  
-  for (const sq of adjacent) {
-    if (chained.length >= maxChains) break;
-    const piece = chess.get(sq);
-    if (piece && piece.color !== color && piece.type !== 'k') {
-      chess.remove(sq);
-      chained.push(sq);
-    }
-  }
-  return chained;
-}
-
-function destroyRook(chess, color) {
-  const board = chess.board();
-  for (let rank = 0; rank < 8; rank++) {
-    for (let file = 0; file < 8; file++) {
-      const piece = board[rank][file];
-      if (piece && piece.type === 'r' && piece.color === color) {
-        const fileChar = 'abcdefgh'[file];
-        const rankNum = 8 - rank;
-        const sq = `${fileChar}${rankNum}`;
-        chess.remove(sq);
-        return sq;
-      }
-    }
-  }
-  return null;
-}
-
-function revivePawns(gameState, color, count) {
-  const chess = gameState.chess;
-  const pool = gameState.capturedByColor[color];
-  const revived = [];
-  
-  const pawns = pool.filter(p => p.type === 'p');
-  const rank = color === 'w' ? '2' : '7';
-  const files = 'abcdefgh'.split('');
-  
-  for (let i = 0; i < Math.min(count, pawns.length); i++) {
-    for (const f of files) {
-      const sq = f + rank;
-      if (!chess.get(sq)) {
-        chess.put({ type: 'p', color }, sq);
-        revived.push(sq);
-        pool.splice(pool.indexOf(pawns[i]), 1);
-        break;
-      }
-    }
-  }
-  return revived;
-}
-
-function undoMoves(gameState, count) {
-  const history = gameState.moveHistory || [];
-  const undone = [];
-  
-  for (let i = 0; i < Math.min(count, history.length); i++) {
-    const lastFen = history.pop();
-    if (lastFen) {
-      gameState.chess.load(lastFen);
-      undone.push(i);
-    }
-  }
-  return undone;
-}
-
-function shufflePieces(chess, count) {
-  const board = chess.board();
-  const whitePieces = [];
-  const blackPieces = [];
-  
-  for (let rank = 0; rank < 8; rank++) {
-    for (let file = 0; file < 8; file++) {
-      const piece = board[rank][file];
-      if (piece && piece.type !== 'k') {
-        const fileChar = 'abcdefgh'[file];
-        const rankNum = 8 - rank;
-        const sq = `${fileChar}${rankNum}`;
-        if (piece.color === 'w') whitePieces.push({ sq, piece });
-        else blackPieces.push({ sq, piece });
-      }
-    }
-  }
-  
-  const shuffled = [];
-  const shuffleGroup = (pieces, count) => {
-    const selected = [];
-    for (let i = 0; i < Math.min(count, pieces.length); i++) {
-      const idx = Math.floor(Math.random() * pieces.length);
-      selected.push(pieces.splice(idx, 1)[0]);
-    }
-    
-    for (let i = selected.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const tempSq = selected[i].sq;
-      selected[i].sq = selected[j].sq;
-      selected[j].sq = tempSq;
-    }
-    
-    for (const { sq, piece } of selected) {
-      chess.remove(sq);
-    }
-    for (const { sq, piece } of selected) {
-      chess.put(piece, sq);
-      shuffled.push(sq);
-    }
-  };
-  
-  shuffleGroup(whitePieces, count);
-  shuffleGroup(blackPieces, count);
-  return shuffled;
-}
-
-function astralRebirthEffect(gameState, color) {
-  const chess = gameState.chess;
-  const pool = gameState.capturedByColor[color];
-  if (!pool || pool.length === 0) {
-    return null;
-  }
-
-  const last = pool.pop();
-  const type = last.type;
-  const rank = color === 'w' ? '1' : '8';
-  const files = 'abcdefgh'.split('');
-
-  for (const f of files) {
-    const sq = f + rank;
-    if (!chess.get(sq)) {
-      chess.put({ type, color }, sq);
-      gameState.lastMove = {
-        from: null,
-        to: sq,
-        san: `Rebirth ${type.toUpperCase()}@${sq}`,
-        captured: null,
-      };
-      return sq;
-    }
-  }
-  return null;
 }

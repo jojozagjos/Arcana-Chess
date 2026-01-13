@@ -190,6 +190,20 @@ export class GameManager {
           break;
         }
       }
+
+      // Redact arcana details for other players. Only the viewer sees their own full list.
+      if (base.arcanaByPlayer) {
+        const redacted = {};
+        for (const [pid, cards] of Object.entries(base.arcanaByPlayer)) {
+          if (pid === viewerId) {
+            redacted[pid] = cards;
+          } else {
+            const len = Array.isArray(cards) ? cards.length : 0;
+            redacted[pid] = Array.from({ length: len }, () => ({ hidden: true }));
+          }
+        }
+        base.arcanaByPlayer = redacted;
+      }
     } catch (e) {
       // Fail closed: if any error, remove lastMove to avoid leaking info
       base.lastMove = null;
@@ -210,6 +224,24 @@ export class GameManager {
     // Reentrancy guard to prevent double-apply from rapid duplicate emits
     if (gameState._busy) {
       throw new Error('Action in progress');
+    }
+    // Idempotency: ignore duplicate actions with the same actionId within a short TTL
+    const actionId = payload?.actionId;
+    const now = Date.now();
+    const TTL_MS = 10000;
+    if (!gameState._seenActions) gameState._seenActions = new Map();
+    // Prune old entries periodically (keep map small)
+    if (!gameState._lastPrune || now - gameState._lastPrune > TTL_MS) {
+      for (const [id, ts] of gameState._seenActions) {
+        if (now - ts > TTL_MS) gameState._seenActions.delete(id);
+      }
+      gameState._lastPrune = now;
+    }
+    if (actionId) {
+      if (gameState._seenActions.has(actionId)) {
+        return { ok: true, duplicate: true };
+      }
+      gameState._seenActions.set(actionId, now);
     }
     gameState._busy = true;
     try {
@@ -237,6 +269,10 @@ export class GameManager {
       const playerTurnChar = playerColor === 'white' ? 'w' : 'b';
       if (currentTurn !== playerTurnChar) {
         throw new Error('You can only draw a card on your turn');
+      }
+      // Disallow drawing after using an arcana card in the same turn
+      if (gameState.arcanaUsedThisTurn && gameState.arcanaUsedThisTurn[socket.id]) {
+        throw new Error('You cannot draw after using an arcana card');
       }
       // Do not allow drawing while the player's king is in check
       // chess.js exposes either in_check() or inCheck() depending on version, so guard both
@@ -276,12 +312,13 @@ export class GameManager {
       if (fenParts.length > 3) fenParts[3] = '-';
       chess.load(fenParts.join(' '));
       
-      // Emit to both players
+      // Emit to both players (redacted to opponent)
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
+          const isDrawer = pid === socket.id;
           this.io.to(pid).emit('arcanaDrawn', {
             playerId: socket.id,
-            arcana: newCard,
+            arcana: isDrawer ? newCard : null,
           });
           const personalised = this.serialiseGameStateForViewer(gameState, pid);
           this.io.to(pid).emit('gameUpdated', personalised);
@@ -411,6 +448,16 @@ export class GameManager {
     }
 
     // Regular move handling
+    // Basic payload validation for move shape
+    if (move) {
+      const sq = (s) => typeof s === 'string' && /^[a-h][1-8]$/.test(s);
+      if (!sq(move.from) || !sq(move.to)) {
+        throw new Error('Invalid move payload');
+      }
+      if (move.promotion && !['q','r','b','n'].includes(move.promotion)) {
+        throw new Error('Invalid promotion piece');
+      }
+    }
     const chess = gameState.chess;
     const moverColor = chess.turn();
 
@@ -967,36 +1014,17 @@ export class GameManager {
   }
 
   async performAIMove(gameState) {
-    const AI_TIMEOUT_MS = 5000; // 5 second timeout
-    
+    const TIMEOUT_MS = 5000;
+    const logicPromise = this._performAIMoveLogic(gameState);
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('AI move timed out')), TIMEOUT_MS));
+
     try {
-      // Race the AI logic against a timeout
-      await Promise.race([
-        this._performAIMoveLogic(gameState),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('AI move timeout')), AI_TIMEOUT_MS)
-        )
-      ]);
-    } catch (error) {
-      if (error.message === 'AI move timeout') {
-        console.warn('AI move timed out after 5s, falling back to random move');
-        // Fallback to random move
-        const moves = gameState.chess.moves({ verbose: true });
-        if (moves.length > 0) {
-          const randomMove = moves[Math.floor(Math.random() * moves.length)];
-          gameState.chess.move(randomMove);
-          gameState.moveHistory.push({
-            from: randomMove.from,
-            to: randomMove.to,
-            piece: randomMove.piece,
-            color: randomMove.color,
-            promotion: randomMove.promotion,
-          });
-          gameState.currentPlayer = gameState.chess.turn() === 'w' ? 'white' : 'black';
-        }
-      } else {
-        throw error;
-      }
+      return await Promise.race([logicPromise, timeout]);
+    } catch (err) {
+      // Keep game alive; notify clients the AI skipped due to timeout
+      this.io.to(gameState.roomId).emit('serverWarning', { type: 'ai_timeout', message: err.message });
+      gameState.pendingAI = false;
+      return null;
     }
   }
 

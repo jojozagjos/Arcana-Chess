@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js';
 import { validateArcanaMove } from '../arcana/arcanaValidation.js';
+import { canDrawAgain, isTurnFrozenFlag } from '../arcana/arcanaUtils.js';
 
 function assert(cond, msg = 'Assertion failed') { if (!cond) throw new Error(msg); }
 function assertEq(a, e, msg='') { if (a !== e) throw new Error(`${msg} expected ${e}, got ${a}`); }
@@ -39,7 +40,6 @@ test('Temporal Echo enforces exact delta', () => {
 
   // Helpers: canDrawAgain and isTurnFrozenFlag
   test('canDrawAgain enforces ply gap', () => {
-    const { canDrawAgain } = require('../arcana/arcanaUtils.js');
     const ok = canDrawAgain(10, 6);
     const no = canDrawAgain(10, 8);
     assert(ok === true);
@@ -47,7 +47,6 @@ test('Temporal Echo enforces exact delta', () => {
   });
 
   test('isTurnFrozenFlag reads timeFrozen flag', () => {
-    const { isTurnFrozenFlag } = require('../arcana/arcanaUtils.js');
     const effects = { timeFrozen: { w: true, b: false } };
     assert(isTurnFrozenFlag(effects, 'w') === true);
     assert(isTurnFrozenFlag(effects, 'b') === false);
