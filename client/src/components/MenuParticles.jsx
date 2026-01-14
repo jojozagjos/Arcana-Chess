@@ -155,7 +155,11 @@ function makeGlyphTexture(char, color = '#88c0d0') {
   ctx.textBaseline = 'middle';
   ctx.fillText(char, size / 2, size / 2 + 2);
   const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearMipMapLinearFilter;
+  // Use lightweight texture settings to reduce GPU memory and avoid context loss
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 1;
   tex.needsUpdate = true;
   return tex;
 }
@@ -165,6 +169,15 @@ function ParticleWrapper({ mouseRef, forceRef }) {
     const glyphs = ['♟', '♜', '★', '✦', '⚔'];
     return glyphs.map((g, i) => makeGlyphTexture(g, ['#88c0d0', '#f0a6ff', '#ffd97a', '#7ee7c7', '#c8b6ff'][i % 5]));
   });
+
+  // Dispose textures on unmount to prevent GPU leaks
+  useEffect(() => {
+    return () => {
+      textures.forEach((t) => {
+        try { t.dispose(); } catch (_) {}
+      });
+    };
+  }, [textures]);
 
   return <ParticleField mouseRefProp={mouseRef} forceRefProp={forceRef} textures={textures} />;
 }
@@ -188,7 +201,22 @@ export default function MenuParticlesCanvas() {
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       <div style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'auto' }} onMouseMove={handleMove} onMouseLeave={handleLeave} onClick={handleClick} />
-      <Canvas className="menu-particles" camera={{ position: [0, 0, 700], fov: 75 }} gl={{ antialias: true }} style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
+      <Canvas
+        className="menu-particles"
+        camera={{ position: [0, 0, 700], fov: 75 }}
+        gl={{ antialias: false, alpha: true, depth: false, stencil: false, powerPreference: 'low-power', preserveDrawingBuffer: false }}
+        onCreated={({ gl }) => {
+          // Handle WebGL context loss gracefully
+          const canvas = gl.domElement;
+          const handleLost = (e) => { e.preventDefault(); console.warn('WebGL context lost in MenuParticles'); };
+          const handleRestored = () => { console.log('WebGL context restored in MenuParticles'); gl.resetState(); };
+          canvas.addEventListener('webglcontextlost', handleLost, false);
+          canvas.addEventListener('webglcontextrestored', handleRestored, false);
+          // Reduce pixel ratio to save memory
+          try { gl.setPixelRatio && gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); } catch (_) {}
+        }}
+        style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}
+      >
         <ambientLight intensity={0.6} />
         <ParticleWrapper mouseRef={mouseRef} forceRef={forceRef} />
       </Canvas>

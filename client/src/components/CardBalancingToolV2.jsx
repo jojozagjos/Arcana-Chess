@@ -822,6 +822,15 @@ export function CardBalancingToolV2({ onBack }) {
             <Canvas
               camera={{ position: playerColor === 'white' ? [8, 10, 8] : [-8, 10, -8], fov: 40 }}
               shadows
+              gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' }}
+              onCreated={({ gl }) => {
+                const canvas = gl.domElement;
+                const handleLost = (e) => { e.preventDefault(); console.warn('WebGL context lost in CardBalancingToolV2'); };
+                const handleRestored = () => { console.log('WebGL context restored in CardBalancingToolV2'); try { gl.resetState(); } catch(_){} };
+                canvas.addEventListener('webglcontextlost', handleLost, false);
+                canvas.addEventListener('webglcontextrestored', handleRestored, false);
+                try { gl.setPixelRatio && gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); } catch (_) {}
+              }}
             >
               <color attach="background" args={["#0b1020"]} />
               <ambientLight intensity={0.4} />

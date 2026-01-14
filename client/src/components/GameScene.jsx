@@ -819,6 +819,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       <Canvas 
         camera={{ position: cameraPosition, fov: 40 }} 
         shadows
+        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' }}
         onCreated={({ gl }) => {
           // Handle WebGL context loss gracefully
           gl.domElement.addEventListener('webglcontextlost', (e) => {
@@ -827,7 +828,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           });
           gl.domElement.addEventListener('webglcontextrestored', () => {
             console.log('WebGL context restored in GameScene.');
+            try { gl.resetState(); } catch (_) {}
           });
+          // Cap pixel ratio for stability
+          try { gl.setPixelRatio && gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); } catch (_) {}
         }}
       >
         {/* Use the ascension-style lighting by default: slightly dimmer, dramatic "night" environment */}

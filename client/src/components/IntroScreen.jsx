@@ -169,6 +169,15 @@ export function IntroScreen({ onContinue }) {
       <Canvas
         camera={{ position: [0, 0, 8], fov: 60 }}
         style={{ background: '#000000ff', opacity, pointerEvents: 'none' }}
+        gl={{ antialias: false, alpha: true, depth: false, stencil: false, powerPreference: 'low-power', preserveDrawingBuffer: false }}
+        onCreated={({ gl }) => {
+          const canvas = gl.domElement;
+          const handleLost = (e) => { e.preventDefault(); console.warn('WebGL context lost in IntroScreen'); };
+          const handleRestored = () => { console.log('WebGL context restored in IntroScreen'); try { gl.resetState(); } catch(_){} };
+          canvas.addEventListener('webglcontextlost', handleLost, false);
+          canvas.addEventListener('webglcontextrestored', handleRestored, false);
+          try { gl.setPixelRatio && gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); } catch (_) {}
+        }}
       >
         <IntroScene phase={scenePhase} />
       </Canvas>

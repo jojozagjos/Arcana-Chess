@@ -584,7 +584,18 @@ export function Tutorial({ onBack }) {
             <div style={styles.ascensionText}>⚡ ASCENDED ⚡</div>
           </div>
         )}
-        <Canvas camera={{ position: [8, 10, 8], fov: 40 }}>
+        <Canvas
+          camera={{ position: [8, 10, 8], fov: 40 }}
+          gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: 'low-power' }}
+          onCreated={({ gl }) => {
+            const canvas = gl.domElement;
+            const handleLost = (e) => { e.preventDefault(); console.warn('WebGL context lost in Tutorial'); };
+            const handleRestored = () => { console.log('WebGL context restored in Tutorial'); try { gl.resetState(); } catch(_){} };
+            canvas.addEventListener('webglcontextlost', handleLost, false);
+            canvas.addEventListener('webglcontextrestored', handleRestored, false);
+            try { gl.setPixelRatio && gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8)); } catch (_) {}
+          }}
+        >
           <color attach="background" args={['#0b1020']} />
           <ambientLight intensity={hasAscended ? 0.7 : 0.5} />
           <directionalLight position={[10, 15, 5]} intensity={1.0} />
