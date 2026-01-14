@@ -12,6 +12,8 @@ import { soundManager } from './game/soundManager.js';
 export function App() {
   const SETTINGS_KEY = 'arcanaChess.settings';
 
+  const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing'];
+
   const [screen, setScreen] = useState('intro');
   const [audioReady, setAudioReady] = useState(false);
   const [gameState, setGameState] = useState(null);
@@ -106,6 +108,7 @@ export function App() {
     };
 
     const handleGameUpdated = (state) => {
+      console.log('[CLIENT] Received gameUpdated event:', state);
       setGameState(state);
       if (state.ascended && !ascendedInfo) {
         setAscendedInfo({ gameId: state.id, reason: state.ascensionTrigger });
@@ -147,7 +150,6 @@ export function App() {
 
   // Global music routing: play menu music on any menu-like screen; stop when entering gameplay/tutorial
   useEffect(() => {
-    const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing'];
     const isMenu = menuScreens.includes(screen);
     if (isMenu && audioReady && !globalSettings.audio?.muted) {
       soundManager.playMusic('music:menu', { crossfadeMs: 600 });

@@ -302,5 +302,9 @@ try {
     if (typeof saved.muted === 'boolean') soundManager.setEnabled(!saved.muted);
   }
 } catch (e) {
-  // ignore
+  if (typeof process !== 'undefined' &&
+      process.env &&
+      process.env.NODE_ENV !== 'production') {
+    console.warn('Failed to load audio settings from localStorage:', e);
+  }
 }

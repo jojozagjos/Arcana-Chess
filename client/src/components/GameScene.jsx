@@ -280,6 +280,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     };
 
     const handleArcanaUsed = (data) => {
+      console.log('[CLIENT] Received arcanaUsed event:', data);
       soundManager.play('cardUse');
       const isMyUse = data.playerId === socket?.id;
 

@@ -21,7 +21,6 @@ export const ARCANA_DEFINITIONS = [
     visual: { particles: true, animation: true, cutscene: false },
     visualLifecycle: { mode: 'clientOnly', duration: 'untilOpponentTurn' },
     soundKey: 'arcana:squire_support',
-    endsTurn: true,
   },
   {
     id: 'pawn_guard',

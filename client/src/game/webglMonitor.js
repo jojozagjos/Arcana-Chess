@@ -28,7 +28,7 @@ export class WebGLMonitor {
       maxVertexUniformVectors: this.gl.getParameter(this.gl.MAX_VERTEX_UNIFORM_VECTORS),
       maxFragmentUniformVectors: this.gl.getParameter(this.gl.MAX_FRAGMENT_UNIFORM_VECTORS),
       maxCombinedTextureImageUnits: this.gl.getParameter(this.gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS),
-      contextLost: this.gl.isContextLost(),
+      contextLost: this.gl ? this.gl.isContextLost() : false,
     };
 
     // Check if context is lost

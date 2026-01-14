@@ -997,8 +997,12 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
             selected.push(piecesCopy.splice(idx, 1)[0]);
           }
           
-          // Shuffle positions among selected pieces
-          const shuffledSquares = selected.map(p => p.sq).sort(() => Math.random() - 0.5);
+          // Shuffle positions among selected pieces using Fisher-Yates
+          const shuffledSquares = selected.map(p => p.sq);
+          for (let i = shuffledSquares.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffledSquares[i], shuffledSquares[j]] = [shuffledSquares[j], shuffledSquares[i]];
+          }
           
           // Remove all selected pieces first
           for (const { sq } of selected) {

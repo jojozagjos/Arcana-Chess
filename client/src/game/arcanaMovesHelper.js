@@ -68,9 +68,9 @@ function generateSpectralMarchMoves(chess, square, color) {
 
   for (const { df, dr } of directions) {
     let friendlyPassed = false;
-    for (let i = 1; i < 8; i++) {
-      const newFile = file + (df * i);
-      const newRank = rank + (dr * i);
+    for (let distance = 1; distance < 8; distance++) {
+      const newFile = file + (df * distance);
+      const newRank = rank + (dr * distance);
       
       if (newFile < 0 || newFile > 7 || newRank < 1 || newRank > 8) break;
       
@@ -203,9 +203,9 @@ function generateSharpshooterMoves(chess, square, color) {
   ];
 
   for (const { df, dr } of directions) {
-    for (let i = 1; i < 8; i++) {
-      const newFile = file + (df * i);
-      const newRank = rank + (dr * i);
+    for (let step = 1; step < 8; step++) {
+      const newFile = file + (df * step);
+      const newRank = rank + (dr * step);
       
       if (newFile < 0 || newFile > 7 || newRank < 1 || newRank > 8) break;
       

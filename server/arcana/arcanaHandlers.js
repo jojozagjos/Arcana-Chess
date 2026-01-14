@@ -98,8 +98,8 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
 
     // Validate targeting before applying
     const validation = validateArcanaTargeting(def.id, chess, params, moverColor, gameState);
-    if (!validation.valid) {
-      console.warn(`Arcana ${def.id} targeting validation failed: ${validation.error}`);
+    if (!validation.ok) {
+      console.warn(`Arcana ${def.id} targeting validation failed: ${validation.reason}`);
       continue; // Skip this arcana if targeting is invalid
     }
 
@@ -142,6 +142,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       };
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
+          console.log('[SERVER] Emitting arcanaUsed event to player:', pid, 'card:', def.id);
           io.to(pid).emit('arcanaUsed', {
             playerId: socketId,
             arcana: def,
@@ -1017,4 +1018,217 @@ function applyChaosTheory({ chess }) {
   }
 
   return { params: { shuffled } };
+}
+
+function applyEnPassantMaster({ gameState, moverColor }) {
+  // Mark that this player's pawns can perform en passant on any adjacent enemy pawn
+  if (!gameState.activeEffects) gameState.activeEffects = {};
+  if (!gameState.activeEffects.enPassantMaster) gameState.activeEffects.enPassantMaster = {};
+  gameState.activeEffects.enPassantMaster[moverColor] = true;
+  return { params: { color: moverColor } };
+}
+
+function applyMindControl({ chess, gameState, moverColor, params }) {
+  // Mark the target enemy piece as mind-controlled for this turn
+  const targetSquare = params?.targetSquare;
+  if (!targetSquare) return null;
+
+  const targetPiece = chess.get(targetSquare);
+  if (!targetPiece || targetPiece.color === moverColor) {
+    return null; // Must target enemy piece
+  }
+
+  if (!gameState.activeEffects) gameState.activeEffects = {};
+  if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
+  
+  gameState.activeEffects.mindControlled.push({
+    square: targetSquare,
+    controller: moverColor,
+  });
+
+  return { params: { targetSquare, color: moverColor } };
+}
+
+// ============ HELPER FUNCTIONS ============
+
+/**
+ * Find the king square for a given color
+ */
+function findKing(chess, color) {
+  const board = chess.board();
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const piece = board[rank][file];
+      if (piece && piece.type === 'k' && piece.color === color) {
+        return 'abcdefgh'[file] + (8 - rank);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if a piece type can attack a square (ignoring blocking pieces)
+ */
+function canPieceTypeAttack(pieceType, fromSquare, toSquare) {
+  const fromFile = fromSquare.charCodeAt(0) - 97;
+  const fromRank = parseInt(fromSquare[1]);
+  const toFile = toSquare.charCodeAt(0) - 97;
+  const toRank = parseInt(toSquare[1]);
+  
+  const fileDiff = Math.abs(toFile - fromFile);
+  const rankDiff = Math.abs(toRank - fromRank);
+  
+  switch (pieceType) {
+    case 'p': // Pawn can only attack diagonally one square
+      return fileDiff === 1 && rankDiff === 1;
+    case 'n': // Knight L-shape
+      return (fileDiff === 2 && rankDiff === 1) || (fileDiff === 1 && rankDiff === 2);
+    case 'b': // Bishop diagonal
+      return fileDiff === rankDiff && fileDiff > 0;
+    case 'r': // Rook straight
+      return (fileDiff === 0 && rankDiff > 0) || (rankDiff === 0 && fileDiff > 0);
+    case 'q': // Queen diagonal or straight
+      return (fileDiff === rankDiff && fileDiff > 0) || (fileDiff === 0 && rankDiff > 0) || (rankDiff === 0 && fileDiff > 0);
+    case 'k': // King one square in any direction
+      return fileDiff <= 1 && rankDiff <= 1 && (fileDiff > 0 || rankDiff > 0);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Revive captured pawns on the back rank
+ */
+function revivePawns(gameState, moverColor, maxCount) {
+  const chess = gameState.chess;
+  const backRank = moverColor === 'w' ? '1' : '8';
+  const revived = [];
+  
+  // Find empty squares on back rank
+  const emptySquares = [];
+  for (let file = 0; file < 8; file++) {
+    const square = 'abcdefgh'[file] + backRank;
+    if (!chess.get(square)) {
+      emptySquares.push(square);
+    }
+  }
+  
+  // Revive up to maxCount pawns
+  const count = Math.min(maxCount, emptySquares.length);
+  for (let i = 0; i < count; i++) {
+    chess.put({ type: 'p', color: moverColor }, emptySquares[i]);
+    revived.push(emptySquares[i]);
+  }
+  
+  return revived;
+}
+
+/**
+ * Astral rebirth effect - resurrect one captured piece onto back rank
+ */
+function astralRebirthEffect(gameState, moverColor) {
+  const chess = gameState.chess;
+  const backRank = moverColor === 'w' ? '1' : '8';
+  
+  // Find an empty square on back rank
+  for (let file = 0; file < 8; file++) {
+    const square = 'abcdefgh'[file] + backRank;
+    if (!chess.get(square)) {
+      // For simplicity, resurrect a knight (could be improved to track captured pieces)
+      chess.put({ type: 'n', color: moverColor }, square);
+      return square;
+    }
+  }
+  
+  return null; // No empty square found
+}
+
+/**
+ * Undo the last N moves
+ */
+function undoMoves(gameState, count) {
+  const chess = gameState.chess;
+  const undone = [];
+  
+  for (let i = 0; i < count; i++) {
+    const move = chess.undo();
+    if (move) {
+      undone.push(move);
+    } else {
+      break; // No more moves to undo
+    }
+  }
+  
+  return undone;
+}
+
+/**
+ * Shuffle N pieces on each side to random positions
+ */
+function shufflePieces(chess, piecesPerSide) {
+  const board = chess.board();
+  const whitePieces = [];
+  const blackPieces = [];
+  
+  // Collect all pieces (excluding kings)
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const piece = board[rank][file];
+      if (piece && piece.type !== 'k') {
+        const square = 'abcdefgh'[file] + (8 - rank);
+        if (piece.color === 'w') {
+          whitePieces.push({ square, piece });
+        } else {
+          blackPieces.push({ square, piece });
+        }
+      }
+    }
+  }
+  
+  // Shuffle N pieces from each side
+  const shuffleCount = Math.min(piecesPerSide, whitePieces.length, blackPieces.length);
+  const shuffled = [];
+  
+  // Randomly select pieces to shuffle
+  const whiteToShuffle = [];
+  const blackToShuffle = [];
+  
+  for (let i = 0; i < shuffleCount; i++) {
+    const whiteIdx = Math.floor(Math.random() * whitePieces.length);
+    const blackIdx = Math.floor(Math.random() * blackPieces.length);
+    whiteToShuffle.push(whitePieces.splice(whiteIdx, 1)[0]);
+    blackToShuffle.push(blackPieces.splice(blackIdx, 1)[0]);
+  }
+  
+  // Get all empty squares
+  const emptySquares = [];
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const square = 'abcdefgh'[file] + (8 - rank);
+      if (!chess.get(square)) {
+        emptySquares.push(square);
+      }
+    }
+  }
+  
+  // Remove selected pieces from board
+  whiteToShuffle.forEach(({ square }) => chess.remove(square));
+  blackToShuffle.forEach(({ square }) => chess.remove(square));
+  
+  // Add their old squares to empty squares
+  whiteToShuffle.forEach(({ square }) => emptySquares.push(square));
+  blackToShuffle.forEach(({ square }) => emptySquares.push(square));
+  
+  // Randomly place them on empty squares
+  [...whiteToShuffle, ...blackToShuffle].forEach(({ piece }) => {
+    if (emptySquares.length > 0) {
+      const idx = Math.floor(Math.random() * emptySquares.length);
+      const newSquare = emptySquares.splice(idx, 1)[0];
+      chess.put(piece, newSquare);
+      shuffled.push({ piece: piece.type, color: piece.color, to: newSquare });
+    }
+  });
+  
+  return shuffled;
 }

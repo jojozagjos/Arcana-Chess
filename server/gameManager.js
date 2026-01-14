@@ -343,6 +343,7 @@ export class GameManager {
 
     // Handle Use Arcana action (activate card before making a move)
     if (actionType === 'useArcana') {
+      console.log('[SERVER] Processing useArcana action:', { socketId: socket.id, arcanaUsed });
       if (!arcanaUsed || arcanaUsed.length === 0) {
         throw new Error('No arcana specified');
       }
@@ -393,6 +394,7 @@ export class GameManager {
         for (const pid of gameState.playerIds) {
           if (!pid.startsWith('AI-')) {
             const personalised = this.serialiseGameStateForViewer(gameState, pid);
+            console.log('[SERVER] Emitting gameUpdated to player:', pid);
             this.io.to(pid).emit('gameUpdated', personalised);
           }
         }
@@ -420,6 +422,16 @@ export class GameManager {
           if (!pid.startsWith('AI-')) {
             const personalised = this.serialiseGameStateForViewer(gameState, pid);
             this.io.to(pid).emit('gameUpdated', personalised);
+          }
+        }
+        
+        // If this is an AI game and it's now AI's turn, make the AI move
+        if (gameState.aiDifficulty && gameState.status === 'ongoing') {
+          await this.performAIMove(gameState);
+          const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
+          if (humanId) {
+            const personalised = this.serialiseGameStateForViewer(gameState, humanId);
+            this.io.to(humanId).emit('gameUpdated', personalised);
           }
         }
         
