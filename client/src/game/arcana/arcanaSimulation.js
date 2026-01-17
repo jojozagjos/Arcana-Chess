@@ -98,7 +98,7 @@ export function getTargetTypeForArcana(arcanaId) {
     // Utility cards
     line_of_sight: 'pieceWithMoves', // Only pieces that have legal moves
     antidote: 'poisoned', // Only poisoned pieces
-    cursed_square: 'square',
+    cursed_square: 'emptySquare', // Only empty squares
     mind_control: 'enemyPiece',
     
     // Cards that don't need targeting
@@ -242,6 +242,20 @@ export function getValidTargetSquares(chess, arcanaId, colorChar, gameState = {}
           // Any square is valid
           validSquares.push(square);
           break;
+          
+        case 'emptySquare':
+          // Only empty squares
+          if (!piece) {
+            validSquares.push(square);
+          }
+          break;
+          
+        case 'emptySquare':
+          // Only empty squares
+          if (!piece) {
+            validSquares.push(square);
+          }
+          break;
       }
     }
   }
@@ -286,6 +300,8 @@ export function validateArcanaTarget(chess, arcanaId, square, colorChar, gameSta
       return poisonedPieces.some(p => p.square === square);
     case 'square':
       return true;
+    case 'emptySquare':
+      return !chess.get(square);
     default:
       return false;
   }

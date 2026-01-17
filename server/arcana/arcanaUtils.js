@@ -28,6 +28,55 @@ export function pickWeightedArcana() {
 }
 
 /**
+ * Pick a weighted arcana biased by the strength of the sacrificed piece.
+ * pieceType: one of 'p','n','b','r','q' (king not allowed)
+ * Stronger pieces get a higher multiplier for rare/epic/legendary weights.
+ */
+export function pickWeightedArcanaForSacrifice(pieceType) {
+  // Base rarity weights (same as default)
+  const baseWeights = {
+    common: 50,
+    uncommon: 30,
+    rare: 15,
+    epic: 4,
+    legendary: 1,
+  };
+
+  // Strength multiplier by piece type (pawn=weakest -> queen=strongest)
+  const multipliers = {
+    p: 0.6, // pawn
+    n: 1.0, // knight
+    b: 1.0, // bishop
+    r: 1.5, // rook
+    q: 2.0, // queen
+  };
+
+  const mult = multipliers[pieceType] || 1.0;
+
+  // Apply multiplier to rarer categories to bias towards stronger results
+  const rarityWeights = {
+    common: Math.max(1, Math.round(baseWeights.common / mult)),
+    uncommon: Math.max(1, Math.round(baseWeights.uncommon / Math.sqrt(mult))),
+    rare: Math.max(1, Math.round(baseWeights.rare * Math.sqrt(mult))),
+    epic: Math.max(1, Math.round(baseWeights.epic * mult)),
+    legendary: Math.max(1, Math.round(baseWeights.legendary * mult)),
+  };
+
+  // Build weighted pool
+  const weightedPool = [];
+  for (const arcana of ARCANA_DEFINITIONS) {
+    const weight = rarityWeights[arcana.rarity] || 1;
+    for (let i = 0; i < weight; i++) {
+      weightedPool.push(arcana);
+    }
+  }
+
+  // Pick random from weighted pool
+  const idx = Math.floor(Math.random() * weightedPool.length);
+  return weightedPool[idx];
+}
+
+/**
  * Check if a king was removed from the board (for win condition)
  */
 export function checkForKingRemoval(chess) {

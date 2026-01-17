@@ -34,6 +34,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [rematchVote, setRematchVote] = useState(null); // 'voted' when player votes for rematch
   const [rematchVoteCount, setRematchVoteCount] = useState(0); // Number of players who voted for rematch
   const [rematchTotalPlayers, setRematchTotalPlayers] = useState(2); // Total players in game
+  const [opponentLeftDuringRematch, setOpponentLeftDuringRematch] = useState(false); // Track if opponent disconnected during rematch voting
   const [targetingMode, setTargetingMode] = useState(null); // { arcanaId, targetType: 'pawn'|'piece'|'square'|'enemyPiece', params: {} }
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null); // { square } when showing piece type choice
   const [effectsModule, setEffectsModule] = useState(null);
@@ -61,8 +62,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     return c;
   }, [gameState?.fen]);
 
-  // Track when we played a local move sound to avoid duplicate playback
-  const localMoveSoundRef = useRef(false);
+  // Track move keys for which we've already played a sound (de-dup across async paths)
+  const playedMoveKeysRef = useRef(new Set());
   const timeoutsRef = useRef([]);
   // Prevent accidental double-emit of actions during latency
   const pendingActionRef = useRef(false);
@@ -416,6 +417,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       timeoutsRef.current.push(timeout);
       setRematchVote(null);
       setRematchVoteCount(0);
+      setOpponentLeftDuringRematch(true); // Mark opponent as having left
     };
 
     socket.on('arcanaDrawn', handleArcanaDrawn);
@@ -540,16 +542,16 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       const move = { from: selectedSquare, to: square };
 
       // Play sound immediately on local move to ensure browser allows playback
+      const moveKey = `${selectedSquare}-${square}`;
       const targetPiecePre = chess.get(square);
       try {
-        if (targetPiecePre) {
-          soundManager.play('capture');
-        } else {
-          soundManager.play('move');
-        }
-        localMoveSoundRef.current = true;
+        if (targetPiecePre) soundManager.play('capture');
+        else soundManager.play('move');
+        // Record that we've played the sound for this move to avoid later duplicates
+        playedMoveKeysRef.current.add(moveKey);
       } catch (e) {
-        localMoveSoundRef.current = false;
+        // If playback failed, ensure the key is not marked as played
+        playedMoveKeysRef.current.delete(moveKey);
       }
 
       socket.emit(
@@ -558,13 +560,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         (res) => {
           if (!res || !res.ok) {
             setPendingMoveError(res?.error || 'Move rejected');
-            // If move failed, we shouldn't treat the sound as consumed
-            localMoveSoundRef.current = false;
+            // If move failed, ensure we don't treat the sound as consumed
+            playedMoveKeysRef.current.delete(moveKey);
           } else {
             // Server callback may also attempt to play sounds for moves coming from network.
-            // Skip duplicate playback if we already played for this local move.
-            if (localMoveSoundRef.current) {
-              localMoveSoundRef.current = false;
+            // Skip duplicate playback if we've already played for this move (via playedMoveKeysRef)
+            if (playedMoveKeysRef.current.has(moveKey)) {
+              // Clear the marker since the move has been fully acknowledged
+              playedMoveKeysRef.current.delete(moveKey);
             } else {
               const targetPiece = chess.get(square);
               if (targetPiece) soundManager.play('capture');
@@ -593,21 +596,19 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Handle promotion piece selection
   const handlePromotionChoice = (promotionPiece) => {
     if (!promotionDialog) return;
-    
+
     const { from, to } = promotionDialog;
     const move = { from, to, promotion: promotionPiece };
 
+    const moveKey = `${from}-${to}`;
     // Play sound immediately on local move
     const targetPiecePre = chess.get(to);
     try {
-      if (targetPiecePre) {
-        soundManager.play('capture');
-      } else {
-        soundManager.play('move');
-      }
-      localMoveSoundRef.current = true;
+      if (targetPiecePre) soundManager.play('capture');
+      else soundManager.play('move');
+      playedMoveKeysRef.current.add(moveKey);
     } catch (e) {
-      localMoveSoundRef.current = false;
+      playedMoveKeysRef.current.delete(moveKey);
     }
 
     socket.emit(
@@ -616,10 +617,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       (res) => {
         if (!res || !res.ok) {
           setPendingMoveError(res?.error || 'Move rejected');
-          localMoveSoundRef.current = false;
+          playedMoveKeysRef.current.delete(moveKey);
         } else {
-          if (localMoveSoundRef.current) {
-            localMoveSoundRef.current = false;
+          if (playedMoveKeysRef.current.has(moveKey)) {
+            playedMoveKeysRef.current.delete(moveKey);
           } else {
             const targetPiece = chess.get(to);
             if (targetPiece) soundManager.play('capture');
@@ -632,7 +633,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         }
       },
     );
-    
+
     setPromotionDialog(null);
   };
 
@@ -799,9 +800,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const myColorCode = myColor === 'white' ? 'w' : 'b';
 
     // If the mover is me, we already played the sound at the local gesture.
+    const lmShortKey = `${lm.from}-${lm.to}`;
     if (moverColor === myColorCode) {
-      // Clear local flag if set
-      if (localMoveSoundRef.current) localMoveSoundRef.current = false;
+      // Clear any recorded played marker for this move
+      if (playedMoveKeysRef.current.has(lmShortKey)) playedMoveKeysRef.current.delete(lmShortKey);
       return;
     }
 
@@ -809,6 +811,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     try {
       if (lm.captured) soundManager.play('capture');
       else soundManager.play('move');
+      // Mark that we've played the sound for this move to avoid duplicates from other paths
+      playedMoveKeysRef.current.add(lmShortKey);
     } catch (e) {
       // ignore playback errors
     }
@@ -1408,6 +1412,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           rematchVote={rematchVote}
           rematchVoteCount={rematchVoteCount}
           rematchTotalPlayers={rematchTotalPlayers}
+          opponentLeft={opponentLeftDuringRematch}
           onRematchVote={() => {
             setRematchVote('voted');
             socket.emit('voteRematch');
@@ -2076,7 +2081,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   );
 }
 
-function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, rematchTotalPlayers, onRematchVote, onReturnToMenu }) {
+function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, rematchTotalPlayers, opponentLeft, onRematchVote, onReturnToMenu }) {
   const isWinner = outcome.winnerSocketId === mySocketId;
   const title = isWinner ? '🏆 VICTORY!' : '💀 DEFEAT';
   const message = outcome.type === 'disconnect' 
@@ -2086,7 +2091,9 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, re
     : 'Game ended';
   const color = isWinner ? '#a3be8c' : '#bf616a';
   const voteCountText = `${rematchVoteCount}/${rematchTotalPlayers}`;
-  const rematchButtonText = rematchVote === 'voted' 
+  const rematchButtonText = opponentLeft 
+    ? '❌ Player Left'
+    : rematchVote === 'voted' 
     ? `✓ Voted for Rematch (${voteCountText})`
     : `🔄 Request Rematch (${voteCountText})`;
 
@@ -2101,9 +2108,10 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, re
               ...styles.gameEndButton,
               ...styles.gameEndButtonPrimary,
               ...(rematchVote === 'voted' ? styles.gameEndButtonVoted : {}),
+              ...(opponentLeft ? styles.gameEndButtonDisabled : {}),
             }}
             onClick={onRematchVote}
-            disabled={rematchVote === 'voted'}
+            disabled={rematchVote === 'voted' || opponentLeft}
           >
             {rematchButtonText}
           </button>
@@ -2646,6 +2654,13 @@ const styles = {
     border: '2px solid rgba(163,190,140,0.5)',
     cursor: 'not-allowed',
     opacity: 0.8,
+  },
+  gameEndButtonDisabled: {
+    background: 'rgba(191,97,106,0.25)',
+    color: '#bf616a',
+    border: '2px solid rgba(191,97,106,0.4)',
+    cursor: 'not-allowed',
+    opacity: 0.7,
   },
   promotionOverlay: {
     position: 'absolute',

@@ -189,7 +189,10 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{arcana.name}</div>
-          <div style={{ opacity: 0.95 }}>{hoverInfo}</div>
+          <div style={{ opacity: 0.95, marginBottom: 4 }}>{hoverInfo}</div>
+          <div style={{ fontSize: '0.7rem', opacity: 0.7, color: rarity === 'common' ? '#a0a0a0' : rarity === 'uncommon' ? '#1eff00' : rarity === 'rare' ? '#0070dd' : rarity === 'epic' ? '#a335ee' : '#ff8000' }}>
+            {rarityCapitalized} Rarity
+          </div>
         </div>
       )}
       {/* Placeholder overlay while loading when deferLoad is enabled */}

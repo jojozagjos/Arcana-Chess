@@ -87,7 +87,7 @@ export const ARCANA_DEFINITIONS = [
     rarity: 'common',
     category: 'movement',
     description: 'All your pawns can move two squares this turn, even if already moved.',
-    visual: { particles: true, animation: false, cutscene: false },
+    visual: { particles: false, animation: false, cutscene: false },
     soundKey: 'arcana:pawn_rush',
   },
   {
@@ -98,7 +98,6 @@ export const ARCANA_DEFINITIONS = [
     description: 'Move any piece one square toward the center of the board. Must still be a legal move and cannot capture.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:soft_push',
-    endsTurn: true,
   },
 
   // MOVEMENT ARCANA - UNCOMMON+

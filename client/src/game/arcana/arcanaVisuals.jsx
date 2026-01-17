@@ -106,7 +106,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
           color="#81d4fa"
           transparent
           opacity={0.35 * fadeOpacity}
-          side={THREE.DoubleSide}
+          
         />
       </mesh>
       
@@ -148,7 +148,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
           color="#4fc3f7"
           transparent
           opacity={0.4 * fadeOpacity}
-          side={THREE.DoubleSide}
+          
         />
       </mesh>
       
@@ -207,7 +207,7 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
           color={baseColor}
           transparent
           opacity={0.35 * fadeOpacity}
-          side={THREE.DoubleSide}
+          
         />
       </mesh>
       
@@ -600,7 +600,7 @@ export function SoftPushEffect({ square, onComplete }) {
               color="#ffccbc"
               transparent
               opacity={o * (1 - finishT)}
-              side={THREE.DoubleSide}
+              
             />
           </mesh>
         );
@@ -682,7 +682,6 @@ export function PawnRushEffect({ onComplete }) {
               color="#80deea"
               transparent
               opacity={(1 - p) * 0.7 * (1 - finishT)}
-              side={THREE.DoubleSide}
             />
           </mesh>
         );
@@ -697,7 +696,6 @@ export function PawnRushEffect({ onComplete }) {
           color="#4dd0e1"
           transparent
           opacity={(1 - progress) * 0.5 * (1 - finishT)}
-          side={THREE.DoubleSide}
         />
       </mesh>
     </group>
@@ -909,7 +907,6 @@ export function PoisonTouchEffect({ onComplete }) {
           color="#76ff03"
           transparent
           opacity={(1 - progress) * 0.3}
-          side={THREE.DoubleSide}
         />
       </mesh>
     </group>
@@ -965,7 +962,7 @@ export function IronFortressEffect({ onComplete }) {
           color="#cfd8dc"
           transparent
           opacity={(1 - progress) * 0.4 * (1 - finishT)}
-          side={THREE.DoubleSide}
+          
         />
       </mesh>
     </group>
@@ -1003,7 +1000,7 @@ export function DivineInterventionEffect({ onComplete }) {
           color="#ffecb3"
           transparent
           opacity={0.4 * (1 - progress * 0.5)}
-          side={THREE.DoubleSide}
+          
         />
       </mesh>
       
@@ -1022,7 +1019,7 @@ export function DivineInterventionEffect({ onComplete }) {
             color="#ffecb3"
             transparent
             opacity={0.6 * (1 - progress * 0.5)}
-            side={THREE.DoubleSide}
+            
           />
         </mesh>
       ))}
@@ -1050,7 +1047,7 @@ export function DivineInterventionEffect({ onComplete }) {
               color="#ffffff"
               transparent
               opacity={(1 - p) * 0.8}
-              side={THREE.DoubleSide}
+              
             />
           </mesh>
         );
@@ -1156,7 +1153,7 @@ export function TimeFreezeEffect({ onComplete }) {
           color="#81d4fa"
           transparent
           opacity={0.5 * (1 - progress * 0.3)}
-          side={THREE.DoubleSide}
+          
         />
       </mesh>
       
@@ -1537,7 +1534,7 @@ export function SanctuaryEffect({ square, onComplete }) {
           color="#ffeb3b"
           transparent
           opacity={opacity * 0.3}
-          side={THREE.DoubleSide}
+          
         />
       </mesh>
       
@@ -1606,7 +1603,7 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
           color="#ffeb3b"
           transparent
           opacity={0.25 * fadeOpacity}
-          side={THREE.DoubleSide}
+          
           depthWrite={false}
         />
       </mesh>
@@ -1619,7 +1616,7 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
           color="#ffeb3b"
           transparent
           opacity={0.4 * fadeOpacity}
-          side={THREE.DoubleSide}
+          
           depthWrite={false}
         />
       </mesh>
@@ -1657,54 +1654,34 @@ export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
   
   return (
     <group position={[x, 0, z]} ref={groupRef}>
-      {/* Dark vortex */}
-      <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.1, 0.45, 32]} />
+      {/* Dark ring on ground - non-emissive */}
+      <mesh position={[0, 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.2, 0.45, 32]} />
         <meshStandardMaterial
-          emissive="#8b0000"
-          emissiveIntensity={2}
-          color="#dc143c"
+          color="#4a0000"
           transparent
-          opacity={opacity * 0.5}
+          opacity={opacity * 0.4}
+          depthWrite={false}
         />
       </mesh>
       
-      {/* Cursed particles rising */}
-      {[...Array(20)].map((_, i) => {
-        const angle = (i / 20) * Math.PI * 2;
-        const r = 0.3 * Math.random() + 0.1;
-        const rise = ((progress * 2 + i * 0.05) % 1);
+      {/* Thin cursed particles rising */}
+      {[...Array(12)].map((_, i) => {
+        const angle = (i / 12) * Math.PI * 2;
+        const r = 0.25 * Math.random() + 0.08;
+        const rise = ((progress * 2 + i * 0.06) % 1);
         
         return (
           <mesh
             key={i}
-            position={[Math.cos(angle + progress * 3) * r, rise * 0.6, Math.sin(angle + progress * 3) * r]}
+            position={[Math.cos(angle + progress * 2.5) * r, rise * 0.4, Math.sin(angle + progress * 2.5) * r]}
           >
-            <sphereGeometry args={[0.015, 6, 6]} />
+            <sphereGeometry args={[0.012, 4, 4]} />
             <meshStandardMaterial
-              emissive="#8b0000"
-              emissiveIntensity={2}
-              color="#dc143c"
+              color="#8b0000"
               transparent
-              opacity={opacity * (1 - rise) * 0.8}
-            />
-          </mesh>
-        );
-      })}
-      
-      {/* Dark tendrils */}
-      {[...Array(4)].map((_, i) => {
-        const angle = (i / 4) * Math.PI * 2 + progress * 2;
-        
-        return (
-          <mesh key={i} position={[Math.cos(angle) * 0.3, 0.2, Math.sin(angle) * 0.3]}>
-            <cylinderGeometry args={[0.01, 0.02, 0.3, 8]} />
-            <meshStandardMaterial
-              emissive="#8b0000"
-              emissiveIntensity={2}
-              color="#dc143c"
-              transparent
-              opacity={opacity * 0.6}
+              opacity={opacity * (1 - rise) * 0.6}
+              depthWrite={false}
             />
           </mesh>
         );
@@ -1736,12 +1713,9 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
       <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} ref={glowRef}>
         <circleGeometry args={[0.48, 32]} />
         <meshStandardMaterial
-          emissive="#8b0000"
-          emissiveIntensity={1.2}
-          color="#dc143c"
+          color="#4a0000"
           transparent
-          opacity={0.3 * fadeOpacity}
-          side={THREE.DoubleSide}
+          opacity={0.25 * fadeOpacity}
           depthWrite={false}
         />
       </mesh>
@@ -1749,12 +1723,9 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.35, 0.42, 6]} />
         <meshStandardMaterial
-          emissive="#8b0000"
-          emissiveIntensity={2}
-          color="#dc143c"
+          color="#8b0000"
           transparent
-          opacity={0.4 * fadeOpacity}
-          side={THREE.DoubleSide}
+          opacity={0.35 * fadeOpacity}
           depthWrite={false}
         />
       </mesh>

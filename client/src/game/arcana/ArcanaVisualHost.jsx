@@ -3,6 +3,23 @@ import { useFrame } from '@react-three/fiber';
 import { squareToPosition } from './sharedHelpers.jsx';
 import { getArcanaEffectDuration } from './arcanaTimings.js';
 
+// Safe disposal utility to prevent WebGL context errors
+function safeDispose(obj) {
+  try {
+    if (obj?.geometry) {
+      obj.geometry.dispose();
+    }
+    if (obj?.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) {
+        m?.dispose?.();
+      }
+    }
+  } catch (e) {
+    // Silently ignore WebGL context errors during cleanup
+  }
+}
+
 // ArcanaVisualHost mounts visual components exported from arcanaVisuals.jsx
 // It expects `effectsModule` to be an object of visual components (loaded dynamically).
 export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState, pawnShields, showFog }) {
@@ -177,24 +194,28 @@ function EffectWrapper({ Effect, params, fading }) {
   }, [fading]);
 
   useEffect(() => {
-    // cleanup on unmount: restore materials
+    // cleanup on unmount: restore materials and dispose geometries/materials safely
     return () => {
       if (ref.current) {
         ref.current.traverse((obj) => {
-          if (!obj.material) return;
-          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-          for (const m of mats) {
-            const orig = materialOriginals.current.get(m);
-            if (orig) {
-              try { m.transparent = orig.transparent; } catch (e) {}
-              try { m.opacity = orig.opacity; } catch (e) {}
-              try { m.depthWrite = orig.depthWrite; } catch (e) {}
-              if (orig.uniforms && m.uniforms) {
-                if ('uOpacity' in m.uniforms && 'uOpacity' in orig.uniforms) try { m.uniforms.uOpacity.value = orig.uniforms.uOpacity.value; } catch (e) {}
-                if ('opacity' in m.uniforms && 'opacity' in orig.uniforms) try { m.uniforms.opacity.value = orig.uniforms.opacity.value; } catch (e) {}
+          // Restore material properties
+          if (obj.material) {
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            for (const m of mats) {
+              const orig = materialOriginals.current.get(m);
+              if (orig) {
+                try { m.transparent = orig.transparent; } catch (e) {}
+                try { m.opacity = orig.opacity; } catch (e) {}
+                try { m.depthWrite = orig.depthWrite; } catch (e) {}
+                if (orig.uniforms && m.uniforms) {
+                  if ('uOpacity' in m.uniforms && 'uOpacity' in orig.uniforms) try { m.uniforms.uOpacity.value = orig.uniforms.uOpacity.value; } catch (e) {}
+                  if ('opacity' in m.uniforms && 'opacity' in orig.uniforms) try { m.uniforms.opacity.value = orig.uniforms.opacity.value; } catch (e) {}
+                }
               }
             }
           }
+          // Safe dispose of geometry and material
+          safeDispose(obj);
         });
       }
       materialOriginals.current.clear();

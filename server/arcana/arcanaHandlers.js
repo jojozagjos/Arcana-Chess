@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { pickWeightedArcana, getAdjacentSquares } from './arcanaUtils.js';
+import { pickWeightedArcana, pickWeightedArcanaForSacrifice, getAdjacentSquares } from './arcanaUtils.js';
 
 /**
  * Validate arcana targeting before applying
@@ -660,9 +660,21 @@ function applySacrifice({ chess, gameState, socketId, moverColor, params }) {
     // Can sacrifice any piece EXCEPT king (game would end immediately)
     if (piece && piece.color === moverColor && piece.type !== 'k') {
       chess.remove(targetSquare);
-      const card1 = pickWeightedArcana();
-      const card2 = pickWeightedArcana();
-      gameState.arcanaByPlayer[socketId].push(card1, card2);
+      // Choose cards biased by the sacrificed piece type (stronger pieces -> better cards)
+      const card1 = pickWeightedArcanaForSacrifice(piece.type);
+      const card2 = pickWeightedArcanaForSacrifice(piece.type);
+        gameState.arcanaByPlayer[socketId].push(card1, card2);
+        // Notify the owning player immediately about the gained cards so the client
+        // can show draw animations (mirror Focus Fire behavior).
+        try {
+          if (io && socketId && !socketId.startsWith('AI-')) {
+            io.to(socketId).emit('arcanaDrawn', { playerId: socketId, arcana: card1, reason: 'Sacrifice reward' });
+            io.to(socketId).emit('arcanaDrawn', { playerId: socketId, arcana: card2, reason: 'Sacrifice reward' });
+          }
+        } catch (e) {
+          // Non-fatal: continue even if emit fails
+          console.warn('Failed to emit arcanaDrawn for sacrifice reward', e);
+        }
       return { params: { sacrificed: targetSquare, pieceType: piece.type, gained: [card1.id, card2.id] } };
     }
   }

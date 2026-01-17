@@ -111,8 +111,17 @@ export class LobbyManager {
   }
 
   getPublicLobbies() {
-    // Return all lobbies; client will show lock icon for private ones
-    return [...this.lobbies.values()];
+    // Return all lobbies with derived fields expected by clients
+    // (client expects `status` and `playerCount` for quick-match filtering)
+    return [...this.lobbies.values()].map((lobby) => {
+      const playerCount = Array.isArray(lobby.players) ? lobby.players.length : 0;
+      const status = playerCount < 2 ? 'waiting' : 'full';
+      return {
+        ...lobby,
+        playerCount,
+        status,
+      };
+    });
   }
 
   getLobbyForSocket(socketId) {
