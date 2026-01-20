@@ -23,6 +23,8 @@ const easeOutElastic = (t) => {
 function useFinishFade(onComplete, fadeMs = 400) {
   const [finishing, setFinishing] = useState(false);
   const [finishT, setFinishT] = useState(0);
+  const [completed, setCompleted] = useState(false);
+  const calledRef = useRef(false);
 
   useEffect(() => {
     if (!finishing) return undefined;
@@ -35,7 +37,11 @@ function useFinishFade(onComplete, fadeMs = 400) {
       setFinishT(nt);
       if (nt < 1) rafId = requestAnimationFrame(step);
       else {
-        if (onComplete) onComplete();
+        if (!calledRef.current) {
+          calledRef.current = true;
+          if (onComplete) onComplete();
+        }
+        setCompleted(true);
       }
     };
     rafId = requestAnimationFrame(step);
@@ -44,7 +50,7 @@ function useFinishFade(onComplete, fadeMs = 400) {
     };
   }, [finishing, fadeMs, onComplete]);
 
-  return { finishing, finishT, triggerFinish: () => setFinishing(true) };
+  return { finishing, finishT, completed, triggerFinish: () => setFinishing(true) };
 }
 
 // ============================================================================
@@ -105,6 +111,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
           emissiveIntensity={2.5}
           color="#81d4fa"
           transparent
+          depthWrite={false}
           opacity={0.35 * fadeOpacity}
           
         />
@@ -118,6 +125,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
           emissiveIntensity={1.5}
           color="#4fc3f7"
           transparent
+          depthWrite={false}
           opacity={0.2 * fadeOpacity}
           wireframe
         />
@@ -133,6 +141,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
               emissiveIntensity={3}
               color="#e1f5fe"
               transparent
+              depthWrite={false}
               opacity={0.8 * fadeOpacity}
             />
           </mesh>
@@ -147,6 +156,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
           emissiveIntensity={2}
           color="#4fc3f7"
           transparent
+          depthWrite={false}
           opacity={0.4 * fadeOpacity}
           
         />
@@ -206,6 +216,7 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
           emissiveIntensity={urgency * 1.5}
           color={baseColor}
           transparent
+          depthWrite={false}
           opacity={0.35 * fadeOpacity}
           
         />
@@ -251,6 +262,7 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
           emissiveIntensity={1}
           color={baseColor}
           transparent
+          depthWrite={false}
           opacity={0.25 * fadeOpacity}
         />
       </mesh>
@@ -285,6 +297,7 @@ function PoisonDrip({ angle, radius, color, speed, delay, fadeOpacity = 1 }) {
         emissiveIntensity={2}
         color={color}
         transparent
+        depthWrite={false}
         opacity={0.7 * fadeOpacity}
       />
     </mesh>
@@ -315,6 +328,7 @@ function PoisonBubble({ angle, radius, speed, size, phase, urgency, color, fadeO
         emissiveIntensity={3}
         color={color}
         transparent
+        depthWrite={false}
         opacity={0.5 * fadeOpacity}
       />
     </mesh>
@@ -355,6 +369,7 @@ export function SquireSupportEffect({ square }) {
           emissiveIntensity={2}
           color="#ffca28"
           transparent
+          depthWrite={false}
           opacity={0.25}
           wireframe
         />
@@ -368,6 +383,7 @@ export function SquireSupportEffect({ square }) {
           emissiveIntensity={1.5}
           color="#fff59d"
           transparent
+          depthWrite={false}
           opacity={0.2}
         />
       </mesh>
@@ -385,6 +401,7 @@ export function SquireSupportEffect({ square }) {
           emissiveIntensity={2}
           color="#ffd54f"
           transparent
+          depthWrite={false}
           opacity={0.5}
         />
       </mesh>
@@ -414,6 +431,7 @@ function OrbitingShield({ baseAngle, color }) {
         emissiveIntensity={3}
         color={color}
         transparent
+        depthWrite={false}
         opacity={0.8}
       />
     </mesh>
@@ -428,7 +446,7 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
   
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 450);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 450);
 
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -449,6 +467,8 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
   const baseOpacity = progress < 0.8 ? 1 : (1 - progress) * 5;
   const opacity = baseOpacity * (1 - finishT);
   
+  if (completed) return null;
+
   return (
     <group position={[x, 0, z]} ref={groupRef} scale={[scale, scale, scale]}>
       <mesh position={[0, 0.4, 0]}>
@@ -458,6 +478,7 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
           emissiveIntensity={3}
           color="#ffca28"
           transparent
+          depthWrite={false}
           opacity={opacity * 0.4}
           wireframe
         />
@@ -478,6 +499,7 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
               emissiveIntensity={4}
               color="#fff59d"
               transparent
+              depthWrite={false}
               opacity={opacity * 0.8}
             />
           </mesh>
@@ -507,7 +529,7 @@ export function FogOfWarEffect({ onComplete }) {
     }));
   }, []);
   
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 500);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 500);
 
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -520,6 +542,8 @@ export function FogOfWarEffect({ onComplete }) {
     // No rotation - removed the rotating group
   });
   
+  if (completed) return null;
+
   return (
     <group ref={groupRef}>
       {clouds.map((cloud, i) => (
@@ -554,6 +578,7 @@ function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete, finishT
         emissiveIntensity={0.2}
         color="#1f2a44"
         transparent
+        depthWrite={false}
         opacity={0.15 * fadeOpacity}
       />
     </mesh>
@@ -569,7 +594,7 @@ export function SoftPushEffect({ square, onComplete }) {
   
   const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 300);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 300);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -584,6 +609,8 @@ export function SoftPushEffect({ square, onComplete }) {
   const ringScale = easeOutCubic(progress) * 2 * (1 - finishT * 0.25);
   const opacity = (1 - easeOutCubic(progress)) * (1 - finishT);
   
+  if (completed) return null;
+
   return (
     <group position={[x, 0, z]}>
       {/* Expanding rings */}
@@ -599,6 +626,7 @@ export function SoftPushEffect({ square, onComplete }) {
               emissiveIntensity={2}
               color="#ffccbc"
               transparent
+              depthWrite={false}
               opacity={o * (1 - finishT)}
               
             />
@@ -614,6 +642,7 @@ export function SoftPushEffect({ square, onComplete }) {
           emissiveIntensity={3 * opacity}
           color="#ffab91"
           transparent
+          depthWrite={false}
           opacity={opacity * 0.5}
         />
       </mesh>
@@ -633,6 +662,7 @@ export function SoftPushEffect({ square, onComplete }) {
               emissiveIntensity={3}
               color="#ffccbc"
               transparent
+              depthWrite={false}
               opacity={opacity * 0.8}
             />
           </mesh>
@@ -647,59 +677,9 @@ export function SoftPushEffect({ square, onComplete }) {
 // ============================================================================
 
 export function PawnRushEffect({ onComplete }) {
-  const [progress, setProgress] = useState(0);
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 350);
-  
-  useFrame((state, delta) => {
-    setProgress(prev => {
-      const next = prev + delta * 1.2;
-      if (next >= 1) {
-        if (!finishing) triggerFinish();
-      }
-      return Math.min(next, 1);
-    });
-  });
-  
-  return (
-    <group>
-      {/* Speed lines across board */}
-      {[...Array(20)].map((_, i) => {
-        const x = (i % 5) * 2 - 4;
-        const z = Math.floor(i / 5) * 2 - 3;
-        const delay = i * 0.03;
-        const p = Math.max(0, Math.min(1, (progress - delay) / 0.6));
-        
-        return (
-          <mesh
-            key={i}
-            position={[x, 0.3, z + p * 2]}
-            rotation={[Math.PI / 2, 0, 0]}
-          >
-            <planeGeometry args={[0.1, 0.8 * p]} />
-            <meshStandardMaterial
-              emissive="#4dd0e1"
-              emissiveIntensity={3 * (1 - p) * (1 - finishT)}
-              color="#80deea"
-              transparent
-              opacity={(1 - p) * 0.7 * (1 - finishT)}
-            />
-          </mesh>
-        );
-      })}
-      
-      {/* Energy wave */}
-      <mesh position={[0, 0.1, progress * 8 - 4]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[10, 0.5]} />
-        <meshStandardMaterial
-          emissive="#00bcd4"
-          emissiveIntensity={4 * (1 - progress) * (1 - finishT)}
-          color="#4dd0e1"
-          transparent
-          opacity={(1 - progress) * 0.5 * (1 - finishT)}
-        />
-      </mesh>
-    </group>
-  );
+  // Disabled per user request: immediately complete and render nothing
+  useEffect(() => { if (onComplete) onComplete(); }, [onComplete]);
+  return null;
 }
 
 // ============================================================================
@@ -718,7 +698,7 @@ export function PhantomStepEffect({ square, onComplete }) {
     [1, 2], [1, -2], [-1, 2], [-1, -2]
   ], []);
   
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 350);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 350);
 
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -734,6 +714,8 @@ export function PhantomStepEffect({ square, onComplete }) {
     }
   });
   
+  if (completed) return null;
+
   return (
     <group position={[x, 0, z]} ref={groupRef}>
       {/* Central ghost sphere */}
@@ -744,6 +726,7 @@ export function PhantomStepEffect({ square, onComplete }) {
           emissiveIntensity={3}
           color="#e1bee7"
           transparent
+          depthWrite={false}
           opacity={(1 - progress) * 0.6 * (1 - finishT)}
         />
       </mesh>
@@ -764,6 +747,7 @@ export function PhantomStepEffect({ square, onComplete }) {
                 emissiveIntensity={3 * (1 - p) * (1 - finishT)}
                 color="#ce93d8"
                 transparent
+                depthWrite={false}
                 opacity={(1 - p) * 0.7 * (1 - finishT)}
               />
             </mesh>
@@ -776,6 +760,7 @@ export function PhantomStepEffect({ square, onComplete }) {
                 emissiveIntensity={2}
                 color="#e1bee7"
                 transparent
+                depthWrite={false}
                 opacity={p * 0.5 * (1 - progress) * (1 - finishT)}
               />
             </mesh>
@@ -795,7 +780,7 @@ export function SpectralMarchEffect({ square, onComplete }) {
   
   const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 300);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 300);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -807,6 +792,8 @@ export function SpectralMarchEffect({ square, onComplete }) {
     });
   });
   
+  if (completed) return null;
+
   return (
     <group position={[x, 0, z]}>
       {/* Spectral trail segments */}
@@ -824,6 +811,7 @@ export function SpectralMarchEffect({ square, onComplete }) {
               emissiveIntensity={2 * (1 - p) * (1 - finishT)}
               color="#7986cb"
               transparent
+              depthWrite={false}
               opacity={(1 - p) * 0.5 * (1 - finishT)}
               wireframe
             />
@@ -839,6 +827,7 @@ export function SpectralMarchEffect({ square, onComplete }) {
           emissiveIntensity={2 * (1 - progress) * (1 - finishT)}
           color="#b388ff"
           transparent
+          depthWrite={false}
           opacity={(1 - progress) * 0.4 * (1 - finishT)}
         />
       </mesh>
@@ -853,7 +842,7 @@ export function SpectralMarchEffect({ square, onComplete }) {
 export function PoisonTouchEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 300);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 300);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -869,6 +858,8 @@ export function PoisonTouchEffect({ onComplete }) {
     }
   });
   
+  if (completed) return null;
+
   return (
     <group ref={groupRef}>
       {/* Poison splash particles - green toxic effect */}
@@ -892,6 +883,7 @@ export function PoisonTouchEffect({ onComplete }) {
               emissiveIntensity={3 * (1 - progress)}
               color="#b2ff59"
               transparent
+              depthWrite={false}
               opacity={(1 - progress) * 0.8}
             />
           </mesh>
@@ -906,6 +898,7 @@ export function PoisonTouchEffect({ onComplete }) {
           emissiveIntensity={2 * (1 - progress)}
           color="#76ff03"
           transparent
+          depthWrite={false}
           opacity={(1 - progress) * 0.3}
         />
       </mesh>
@@ -920,7 +913,7 @@ export function PoisonTouchEffect({ onComplete }) {
 // Iron Fortress Effect
 export function IronFortressEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 400);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -933,6 +926,7 @@ export function IronFortressEffect({ onComplete }) {
   });
   
   // Create fortress walls around pawn starting ranks
+  if (completed) return null;
   return (
     <group>
       {/* Stone walls rising */}
@@ -948,6 +942,7 @@ export function IronFortressEffect({ onComplete }) {
             emissiveIntensity={1.5 * (1 - progress * 0.5) * (1 - finishT)}
             color="#90a4ae"
             transparent
+            depthWrite={false}
             opacity={0.7 * (1 - progress * 0.3) * (1 - finishT)}
           />
         </mesh>
@@ -961,6 +956,7 @@ export function IronFortressEffect({ onComplete }) {
           emissiveIntensity={2 * (1 - progress) * (1 - finishT)}
           color="#cfd8dc"
           transparent
+          depthWrite={false}
           opacity={(1 - progress) * 0.4 * (1 - finishT)}
           
         />
@@ -973,7 +969,7 @@ export function IronFortressEffect({ onComplete }) {
 export function DivineInterventionEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 400);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -989,6 +985,8 @@ export function DivineInterventionEffect({ onComplete }) {
     }
   });
   
+  if (completed) return null;
+
   return (
     <group ref={groupRef}>
       {/* Heavenly light beam */}
@@ -999,6 +997,7 @@ export function DivineInterventionEffect({ onComplete }) {
           emissiveIntensity={3 * easeOutCubic(progress)}
           color="#ffecb3"
           transparent
+          depthWrite={false}
           opacity={0.4 * (1 - progress * 0.5)}
           
         />
@@ -1018,6 +1017,7 @@ export function DivineInterventionEffect({ onComplete }) {
             emissiveIntensity={2}
             color="#ffecb3"
             transparent
+            depthWrite={false}
             opacity={0.6 * (1 - progress * 0.5)}
             
           />
@@ -1062,7 +1062,7 @@ export function ExecutionEffect({ square, onComplete }) {
   
   const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 450);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 450);
 
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -1074,6 +1074,8 @@ export function ExecutionEffect({ square, onComplete }) {
     });
   });
   
+  if (completed) return null;
+
   return (
     <group position={[x, 0, z]}>
       {/* Red X mark */}
@@ -1084,6 +1086,7 @@ export function ExecutionEffect({ square, onComplete }) {
           emissiveIntensity={4 * (1 - finishT)}
           color="#ff5252"
           transparent
+          depthWrite={false}
           opacity={(1 - progress * 0.3) * (1 - finishT)}
         />
       </mesh>
@@ -1094,6 +1097,7 @@ export function ExecutionEffect({ square, onComplete }) {
           emissiveIntensity={4 * (1 - finishT)}
           color="#ff5252"
           transparent
+          depthWrite={false}
           opacity={(1 - progress * 0.3) * (1 - finishT)}
         />
       </mesh>
@@ -1118,6 +1122,7 @@ export function ExecutionEffect({ square, onComplete }) {
               emissiveIntensity={3 * (1 - progress)}
               color="#ff5252"
               transparent
+              depthWrite={false}
               opacity={(1 - progress) * 0.9}
             />
           </mesh>
@@ -1130,7 +1135,7 @@ export function ExecutionEffect({ square, onComplete }) {
 // Time Freeze Effect
 export function TimeFreezeEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 350);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 350);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -1142,6 +1147,8 @@ export function TimeFreezeEffect({ onComplete }) {
     });
   });
   
+  if (completed) return null;
+
   return (
     <group>
       {/* Frozen clock hands */}
@@ -1152,6 +1159,7 @@ export function TimeFreezeEffect({ onComplete }) {
           emissiveIntensity={2 * easeOutCubic(progress)}
           color="#81d4fa"
           transparent
+          depthWrite={false}
           opacity={0.5 * (1 - progress * 0.3)}
           
         />
@@ -1180,6 +1188,7 @@ export function TimeFreezeEffect({ onComplete }) {
                   emissiveIntensity={2 * (1 - finishT)}
                   color="#b3e5fc"
                   transparent
+                  depthWrite={false}
                   opacity={(1 - progress * 0.5) * 0.7 * (1 - finishT)}
                 />
           </mesh>
@@ -1194,6 +1203,7 @@ export function TimeFreezeEffect({ onComplete }) {
           emissiveIntensity={1.5 * (1 - progress)}
           color="#81d4fa"
           transparent
+          depthWrite={false}
           opacity={(1 - progress) * 0.3}
         />
       </mesh>
@@ -1204,7 +1214,7 @@ export function TimeFreezeEffect({ onComplete }) {
 // Time Travel Effect - Rewind animation with temporal trails
 export function TimeTravelEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 500);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 500);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -1216,6 +1226,8 @@ export function TimeTravelEffect({ onComplete }) {
     });
   });
   
+  if (completed) return null;
+
   return (
     <group>
       {/* Reverse time spiral */}
@@ -1239,6 +1251,7 @@ export function TimeTravelEffect({ onComplete }) {
               emissiveIntensity={2 * (1 - progress * 0.5) * (1 - finishT)}
               color="#64b5f6"
               transparent
+              depthWrite={false}
               opacity={(1 - progress * 0.6) * 0.8 * (1 - finishT)}
             />
           </mesh>
@@ -1265,6 +1278,7 @@ export function TimeTravelEffect({ onComplete }) {
               emissiveIntensity={1.5 * (1 - progress)}
               color="#42a5f5"
               transparent
+              depthWrite={false}
               opacity={(1 - progress * 0.8) * 0.5}
             />
           </mesh>
@@ -1279,6 +1293,7 @@ export function TimeTravelEffect({ onComplete }) {
           emissiveIntensity={1.5 * (1 - progress)}
           color="#64b5f6"
           transparent
+          depthWrite={false}
           opacity={(1 - progress * 0.5) * 0.4}
         />
       </mesh>

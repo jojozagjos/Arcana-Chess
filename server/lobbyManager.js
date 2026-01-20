@@ -88,22 +88,26 @@ export class LobbyManager {
       this.socketToLobby.delete(socketId);
       return null;
     }
-
-    // Get all players before deletion
-    const allPlayers = [...lobby.players];
-    
-    // Remove this socket
+    // Remove this socket from lobby players
+    const idx = lobby.players.indexOf(socketId);
+    if (idx !== -1) lobby.players.splice(idx, 1);
+    // Unmap the leaving socket
     this.socketToLobby.delete(socketId);
-    
-    // Remove all other players from the lobby
-    allPlayers.forEach(playerId => {
-      this.socketToLobby.delete(playerId);
-    });
 
-    // Always delete the lobby when anyone leaves
-    this.lobbies.delete(lobbyId);
+    // If host left, reassign host to first remaining player if any
+    if (lobby.hostId === socketId && lobby.players.length > 0) {
+      lobby.hostId = lobby.players[0];
+    }
 
-    return { lobbyId, allPlayers };
+    // If lobby is now empty, delete it
+    if (lobby.players.length === 0) {
+      this.lobbies.delete(lobbyId);
+      return { lobbyId, closed: true };
+    }
+
+    // Persist updated lobby
+    this.lobbies.set(lobbyId, lobby);
+    return { lobbyId, lobby };
   }
 
   removeSocket(socketId) {

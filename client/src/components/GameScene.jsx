@@ -420,6 +420,38 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       setOpponentLeftDuringRematch(true); // Mark opponent as having left
     };
 
+    // Lightweight handlers for server-only events to provide feedback
+    const handlePiecePoisoned = (data) => {
+      try { soundManager.play('arcana:poison_touch'); } catch {}
+      const squares = Array.isArray(data?.squares) ? data.squares.join(', ') : '';
+      setPendingMoveError(squares ? `Pieces poisoned: ${squares}` : 'A piece has been poisoned');
+      const timeout = setTimeout(() => setPendingMoveError(''), 3000);
+      timeoutsRef.current.push(timeout);
+    };
+
+    const handleChainLightning = (data) => {
+      try { soundManager.play('arcana:chain_lightning'); } catch {}
+      const count = Array.isArray(data?.destroyedPieces) ? data.destroyedPieces.length : 0;
+      setPendingMoveError(`Chain Lightning triggered${count ? `: ${count} piece${count > 1 ? 's' : ''} destroyed` : ''}`);
+      const timeout = setTimeout(() => setPendingMoveError(''), 3000);
+      timeoutsRef.current.push(timeout);
+    };
+
+    const handleExtraMoveAvailable = (data) => {
+      try { soundManager.play('cardUse'); } catch {}
+      const typ = data?.type || 'extra-move';
+      setPendingMoveError(`Extra move available (${typ})`);
+      const timeout = setTimeout(() => setPendingMoveError(''), 2000);
+      timeoutsRef.current.push(timeout);
+    };
+
+    const handleServerWarning = (data) => {
+      const msg = data?.message || 'Server warning';
+      setPendingMoveError(msg);
+      const timeout = setTimeout(() => setPendingMoveError(''), 3000);
+      timeoutsRef.current.push(timeout);
+    };
+
     socket.on('arcanaDrawn', handleArcanaDrawn);
     socket.on('arcanaUsed', handleArcanaUsed);
     socket.on('ascended', handleAscended);
@@ -429,6 +461,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     socket.on('peekCardEmpty', handlePeekCardEmpty);
     socket.on('rematchVotesUpdated', handleRematchVotesUpdated);
     socket.on('rematchCancelled', handleRematchCancelled);
+    socket.on('piecePoisoned', handlePiecePoisoned);
+    socket.on('chainLightningTriggered', handleChainLightning);
+    socket.on('extraMoveAvailable', handleExtraMoveAvailable);
+    socket.on('serverWarning', handleServerWarning);
 
     return () => {
       socket.off('arcanaDrawn', handleArcanaDrawn);
@@ -440,6 +476,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       socket.off('peekCardEmpty', handlePeekCardEmpty);
       socket.off('rematchVotesUpdated', handleRematchVotesUpdated);
       socket.off('rematchCancelled', handleRematchCancelled);
+      socket.off('piecePoisoned', handlePiecePoisoned);
+      socket.off('chainLightningTriggered', handleChainLightning);
+      socket.off('extraMoveAvailable', handleExtraMoveAvailable);
+      socket.off('serverWarning', handleServerWarning);
       // Clean up all pending timeouts
       timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
       timeoutsRef.current = [];

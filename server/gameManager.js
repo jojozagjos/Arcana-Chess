@@ -383,7 +383,7 @@ export class GameManager {
             this.io.to(pid).emit('gameEnded', outcome);
           }
         }
-        return { gameState: serialised, appliedArcana };
+        return { gameState: this.serialiseGameState(gameState), appliedArcana };
       }
 
       // Track that this player used an arcana this turn
@@ -852,7 +852,11 @@ export class GameManager {
         
         // Notify player of bonus card
         if (!socket.id.startsWith('AI-')) {
-          this.io.to(socket.id).emit('arcanaDrawn', { card: bonusCard, reason: 'Focus Fire bonus' });
+          this.io.to(socket.id).emit('arcanaDrawn', {
+            playerId: socket.id,
+            arcana: bonusCard,
+            reason: 'Focus Fire bonus'
+          });
         }
       }
 
@@ -1034,7 +1038,15 @@ export class GameManager {
       return await Promise.race([logicPromise, timeout]);
     } catch (err) {
       // Keep game alive; notify clients the AI skipped due to timeout
-      this.io.to(gameState.roomId).emit('serverWarning', { type: 'ai_timeout', message: err.message });
+      try {
+        for (const pid of gameState.playerIds || []) {
+          if (!pid.startsWith('AI-')) {
+            this.io.to(pid).emit('serverWarning', { type: 'ai_timeout', message: err.message });
+          }
+        }
+      } catch (_) {
+        // Ignore emit failures; continue to clear pending flag
+      }
       gameState.pendingAI = false;
       return null;
     }
@@ -1655,7 +1667,7 @@ export class GameManager {
     for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {
         this.io.to(pid).emit('rematchVotesUpdated', {
-          voteCount: votes,
+          votes: votes,
           totalPlayers: totalPlayers,
         });
       }
@@ -1671,7 +1683,7 @@ export class GameManager {
 
   startRematchGame(finishedGameState, lobbyManager) {
     // Create new game with same players, swapped colors
-    const newPlayerIds = finishedGameState.playerIds.reverse();
+    const newPlayerIds = [...finishedGameState.playerIds].reverse();
     const newGameState = createInitialGameState({
       mode: finishedGameState.mode,
       playerIds: newPlayerIds,
@@ -1703,7 +1715,7 @@ export class GameManager {
     // Notify remaining players that rematch was cancelled
     for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {
-        this.io.to(pid).emit('rematchCancelled');
+        this.io.to(pid).emit('rematchCancelled', { message: 'Rematch cancelled' });
       }
     }
 

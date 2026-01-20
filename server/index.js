@@ -152,8 +152,11 @@ io.on('connection', (socket) => {
     try {
       const result = lobbyManager.leaveLobby(socket.id);
       if (result) {
-        // Notify all players in the lobby that it's closed
-        io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player left' });
+        if (result.closed) {
+          io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player left' });
+        } else if (result.lobby) {
+          io.to(result.lobby.id).emit('lobbyUpdated', result.lobby);
+        }
       }
       safeAck(ack, { ok: true });
     } catch (err) {
@@ -306,7 +309,11 @@ io.on('connection', (socket) => {
     console.log('Socket disconnected', socket.id);
     const result = lobbyManager.leaveLobby(socket.id);
     if (result) {
-      io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player disconnected' });
+      if (result.closed) {
+        io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player disconnected' });
+      } else if (result.lobby) {
+        io.to(result.lobby.id).emit('lobbyUpdated', result.lobby);
+      }
     }
     gameManager.handleDisconnect(socket.id);
   });

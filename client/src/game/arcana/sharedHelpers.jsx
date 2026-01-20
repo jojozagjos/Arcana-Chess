@@ -61,6 +61,7 @@ export function GhostPiece({ type, isWhite, fromSquare, toSquare }) {
       <meshStandardMaterial
         color={isWhite ? '#ffffff' : '#333333'}
         transparent
+        depthWrite={false}
         opacity={0.3}
         emissive={isWhite ? '#aaaaff' : '#ffaaaa'}
         emissiveIntensity={0.5}

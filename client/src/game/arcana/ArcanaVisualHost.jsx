@@ -121,6 +121,28 @@ function EffectWrapper({ Effect, params, fading }) {
   const materialOriginals = useRef(new Map());
   const [fadeOpacityState, setFadeOpacityState] = useState(1);
 
+  // On mount: ensure transparent materials do not write depth to avoid board see-through
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.traverse((obj) => {
+      if (!obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) {
+        if (!materialOriginals.current.has(m)) {
+          materialOriginals.current.set(m, {
+            transparent: m.transparent,
+            opacity: typeof m.opacity === 'number' ? m.opacity : 1,
+            depthWrite: m.depthWrite,
+            uniforms: m.uniforms ? { ...m.uniforms } : null,
+          });
+        }
+        try {
+          if (m.transparent) m.depthWrite = false;
+        } catch (e) {}
+      }
+    });
+  }, []);
+
   // Apply fading by reducing material opacity on each frame; also support ShaderMaterial uniforms
   useFrame(() => {
     if (!ref.current) return;
