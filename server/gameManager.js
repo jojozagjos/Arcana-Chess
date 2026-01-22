@@ -5,6 +5,25 @@ import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares } from './arcana/arcanaUtils.js';
 
 /**
+ * Helper: Validates that second capture is not adjacent to first kill square
+ * Used by both Double Strike and Berserker Rage cards
+ * @param {Object} activeEffect - The active effect object with firstKillSquare property
+ * @param {string} secondTargetSquare - Target square of the second capture
+ * @param {string} cardName - Name of the card for error message
+ * @throws {Error} If second capture is adjacent to first kill
+ */
+function validateNonAdjacentCapture(activeEffect, secondTargetSquare, cardName) {
+  if (!activeEffect || !activeEffect.firstKillSquare) return;
+  
+  const firstKillSquare = activeEffect.firstKillSquare;
+  const isAdjacent = getAdjacentSquares(firstKillSquare).includes(secondTargetSquare);
+  
+  if (isAdjacent) {
+    throw new Error(`${cardName}: second capture cannot be adjacent to the first kill!`);
+  }
+}
+
+/**
  * Creates the initial game state for a new game
  * @param {Object} config - Game configuration
  * @param {string} config.mode - Game mode ('Ascendant' or 'Classic')
@@ -608,24 +627,12 @@ export class GameManager {
 
     // Double Strike: Validate second capture is NOT adjacent to first kill
     if (gameState.activeEffects.doubleStrikeActive?.color === moverColor && candidate.captured) {
-      const firstKillSquare = gameState.activeEffects.doubleStrikeActive.from;
-      const secondTargetSquare = candidate.to;
-      const isAdjacent = getAdjacentSquares(firstKillSquare).includes(secondTargetSquare);
-      
-      if (isAdjacent) {
-        throw new Error('Double Strike: second capture cannot be adjacent to the first kill!');
-      }
+      validateNonAdjacentCapture(gameState.activeEffects.doubleStrikeActive, candidate.to, 'Double Strike');
     }
 
     // Berserker Rage: Validate second capture is NOT adjacent to first kill
     if (gameState.activeEffects.berserkerRageActive?.color === moverColor && candidate.captured) {
-      const firstKillSquare = gameState.activeEffects.berserkerRageActive.firstKillSquare;
-      const secondTargetSquare = candidate.to;
-      const isAdjacent = getAdjacentSquares(firstKillSquare).includes(secondTargetSquare);
-      
-      if (isAdjacent) {
-        throw new Error('Berserker Rage: second capture cannot be adjacent to the first kill!');
-      }
+      validateNonAdjacentCapture(gameState.activeEffects.berserkerRageActive, candidate.to, 'Berserker Rage');
     }
 
     // Check time freeze - skip opponent's turn

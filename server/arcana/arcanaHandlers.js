@@ -496,7 +496,7 @@ function applyDoubleStrike({ gameState, moverColor, moveResult }) {
     // Also set doubleStrikeActive for the extra move check
     gameState.activeEffects.doubleStrikeActive = {
       color: moverColor,
-      from: moveResult.to
+      firstKillSquare: moveResult.to
     };
     return { params: { firstKillSquare: moveResult.to, color: moverColor } };
   }
