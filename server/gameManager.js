@@ -589,6 +589,28 @@ export class GameManager {
       }
     }
 
+    // Double Strike: Validate second capture is NOT adjacent to first kill
+    if (gameState.activeEffects.doubleStrikeActive?.color === moverColor && candidate.captured) {
+      const firstKillSquare = gameState.activeEffects.doubleStrikeActive.from;
+      const secondTargetSquare = candidate.to;
+      const isAdjacent = getAdjacentSquares(firstKillSquare).includes(secondTargetSquare);
+      
+      if (isAdjacent) {
+        throw new Error('Double Strike: second capture cannot be adjacent to the first kill!');
+      }
+    }
+
+    // Berserker Rage: Validate second capture is NOT adjacent to first kill
+    if (gameState.activeEffects.berserkerRageActive?.color === moverColor && candidate.captured) {
+      const firstKillSquare = gameState.activeEffects.berserkerRageActive.firstKillSquare;
+      const secondTargetSquare = candidate.to;
+      const isAdjacent = getAdjacentSquares(firstKillSquare).includes(secondTargetSquare);
+      
+      if (isAdjacent) {
+        throw new Error('Berserker Rage: second capture cannot be adjacent to the first kill!');
+      }
+    }
+
     // Check time freeze - skip opponent's turn
     if (gameState.activeEffects.timeFrozen[moverColor]) {
       gameState.activeEffects.timeFrozen[moverColor] = false;
@@ -814,34 +836,9 @@ export class GameManager {
         }
       }
 
-      // Double Strike: After capturing with the same piece, allow a second capture if target is NOT adjacent
-      const doubleStrike = gameState.activeEffects.doubleStrike?.[moverColor];
-      if (doubleStrike && doubleStrike.active && doubleStrike.firstKillSquare && !doubleStrike.usedSecondKill) {
-        // Check if this capture is with the same piece and target is NOT adjacent to the first kill
-        const firstKill = doubleStrike.firstKillSquare;
-        const isAdjacent = getAdjacentSquares(firstKill).includes(result.to);
-        
-        if (!isAdjacent) {
-          // Valid second kill - mark as used
-          doubleStrike.usedSecondKill = true;
-          result.doubleStrikeSecondKill = true;
-        }
-      }
-
-      // Berserker Rage: Check if this was the second capture (must not be adjacent to first)
-      const berserker = gameState.activeEffects.berserkerRage?.[moverColor];
-      if (berserker && berserker.active && berserker.firstKillSquare && !berserker.usedSecondKill) {
-        // Check if this capture is adjacent to the first kill
-        const firstKill = berserker.firstKillSquare;
-        const isAdjacent = getAdjacentSquares(firstKill).includes(result.to);
-        
-        if (!isAdjacent) {
-          // Valid second kill - mark as used
-          berserker.usedSecondKill = true;
-          result.berserkerSecondKill = true;
-        }
-        // If adjacent, the capture still happens normally, but berserker rage doesn't trigger bonus
-      }
+      // Note: Double Strike and Berserker Rage adjacency validation now happens
+      // BEFORE the move is executed (see validation section above), not after capture.
+      // This prevents invalid adjacent captures from being made in the first place.
 
       // Focus Fire: draw an extra card on capture
       if (gameState.activeEffects.focusFire && gameState.activeEffects.focusFire[moverColor]) {

@@ -61,6 +61,17 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     }
     return { ok: true };
   }
+  
+  // Mind Control: cannot target king
+  if (arcanaId === 'mind_control') {
+    if (!piece || piece.type === 'k') {
+      return { ok: false, reason: 'Cannot mind control king' };
+    }
+    if (piece.color === moverColor) {
+      return { ok: false, reason: 'Cannot mind control your own pieces' };
+    }
+    return { ok: true };
+  }
 
   // Default allow if a piece exists (for other targeted cards)
   return { ok: true };
@@ -1048,6 +1059,11 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   const targetPiece = chess.get(targetSquare);
   if (!targetPiece || targetPiece.color === moverColor) {
     return null; // Must target enemy piece
+  }
+  
+  // Cannot mind control kings (game-breaking)
+  if (targetPiece.type === 'k') {
+    return null;
   }
 
   if (!gameState.activeEffects) gameState.activeEffects = {};
