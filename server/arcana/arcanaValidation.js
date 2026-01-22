@@ -53,7 +53,7 @@ export function validateArcanaMove(chess, move, activeEffects, moverColor) {
   }
 
   // Temporal Echo: Repeat last move pattern
-  if (activeEffects.temporalEcho && activeEffects.temporalEcho.color === moverColor) {
+  if (activeEffects.temporalEcho && activeEffects.temporalEcho.color === moverColor && activeEffects.temporalEcho.pattern) {
     const validMove = validateTemporalEcho(chess, fromSquare, toSquare, piece, activeEffects.temporalEcho.pattern);
     if (validMove) return validMove;
   }
@@ -183,6 +183,11 @@ function validateKnightOfStorms(chess, from, to, color) {
 }
 
 function validateTemporalEcho(chess, from, to, piece, pattern) {
+  // Ensure pattern exists
+  if (!pattern || pattern.fileDelta === undefined || pattern.rankDelta === undefined) {
+    return null;
+  }
+  
   const fromFile = from.charCodeAt(0);
   const fromRank = parseInt(from[1]);
   const toFile = to.charCodeAt(0);
