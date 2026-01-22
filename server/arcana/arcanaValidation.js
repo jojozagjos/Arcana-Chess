@@ -1,5 +1,11 @@
 /**
  * Validation for arcana-enhanced moves
+ * Checks if a move is legal with active arcana effects
+ * @param {Chess} chess - Chess.js instance
+ * @param {Object} move - Move object with from/to squares
+ * @param {Object} activeEffects - Current active arcana effects
+ * @param {string} moverColor - Color of the moving player ('w' or 'b')
+ * @returns {Object|null} Valid move object or null if invalid
  */
 
 export function validateArcanaMove(chess, move, activeEffects, moverColor) {

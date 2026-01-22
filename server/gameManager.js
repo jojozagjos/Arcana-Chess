@@ -4,6 +4,15 @@ import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares } from './arcana/arcanaUtils.js';
 
+/**
+ * Creates the initial game state for a new game
+ * @param {Object} config - Game configuration
+ * @param {string} config.mode - Game mode ('Ascendant' or 'Classic')
+ * @param {Array<string>} config.playerIds - Array of player socket IDs
+ * @param {number} [config.aiDifficulty] - AI difficulty level (1-3) if playing against AI
+ * @param {string} [config.playerColor] - Human player's color when playing against AI
+ * @returns {Object} Initial game state object
+ */
 function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor }) {
   const chess = new Chess();
   // No arcana at start - awarded on ascension
@@ -76,7 +85,15 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
 }
 
 
+/**
+ * GameManager - Manages all active chess games and handles game logic
+ * Server-authoritative: All validation and state changes happen on the server
+ */
 export class GameManager {
+  /**
+   * @param {SocketIO.Server} io - Socket.io server instance
+   * @param {LobbyManager} lobbyManager - Lobby manager instance
+   */
   constructor(io, lobbyManager) {
     this.io = io;
     this.lobbyManager = lobbyManager;
