@@ -2,7 +2,13 @@ import { Chess } from 'chess.js';
 import { pickWeightedArcana, pickWeightedArcanaForSacrifice, getAdjacentSquares } from './arcanaUtils.js';
 
 /**
- * Validate arcana targeting before applying
+ * Validates arcana targeting before applying effects
+ * @param {string} arcanaId - The ID of the arcana card
+ * @param {Chess} chess - Chess.js instance
+ * @param {Object} params - Targeting parameters (e.g., targetSquare)
+ * @param {string} moverColor - Color of the player using the card ('w' or 'b')
+ * @param {Object} gameState - Current game state
+ * @returns {Object} Validation result with ok boolean and optional reason
  */
 function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState) {
   const targetSquare = params?.targetSquare;
@@ -61,19 +67,30 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     }
     return { ok: true };
   }
+  
+  // Mind Control: cannot target king
+  if (arcanaId === 'mind_control') {
+    if (!piece || piece.type === 'k') {
+      return { ok: false, reason: 'Cannot mind control king' };
+    }
+    if (piece.color === moverColor) {
+      return { ok: false, reason: 'Cannot mind control your own pieces' };
+    }
+    return { ok: true };
+  }
 
   // Default allow if a piece exists (for other targeted cards)
   return { ok: true };
 }
 
 /**
- * Apply all arcana cards used in a turn
- * @param {string} socketId - Player who used the arcana
+ * Applies arcana card effects to the game state
+ * @param {string} socketId - Socket ID of the player using the arcana
  * @param {Object} gameState - Current game state
- * @param {Array} arcanaUsed - List of {arcanaId, params} objects
+ * @param {Array<Object>} arcanaUsed - Array of {arcanaId, params} objects
  * @param {Object} moveResult - Result of the move (if any)
- * @param {Object} io - Socket.io instance for emitting events
- * @returns {Array} Applied arcana definitions with params
+ * @param {SocketIO.Server} io - Socket.io instance for emitting events
+ * @returns {Array<Object>} Applied arcana definitions with params
  */
 export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
   if (!Array.isArray(arcanaUsed) || arcanaUsed.length === 0) return [];
@@ -479,7 +496,7 @@ function applyDoubleStrike({ gameState, moverColor, moveResult }) {
     // Also set doubleStrikeActive for the extra move check
     gameState.activeEffects.doubleStrikeActive = {
       color: moverColor,
-      from: moveResult.to
+      firstKillSquare: moveResult.to
     };
     return { params: { firstKillSquare: moveResult.to, color: moverColor } };
   }
@@ -1048,6 +1065,11 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   const targetPiece = chess.get(targetSquare);
   if (!targetPiece || targetPiece.color === moverColor) {
     return null; // Must target enemy piece
+  }
+  
+  // Cannot mind control kings (game-breaking)
+  if (targetPiece.type === 'k') {
+    return null;
   }
 
   if (!gameState.activeEffects) gameState.activeEffects = {};

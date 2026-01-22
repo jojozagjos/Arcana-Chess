@@ -4,6 +4,34 @@ import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares } from './arcana/arcanaUtils.js';
 
+/**
+ * Helper: Validates that second capture is not adjacent to first kill square
+ * Used by both Double Strike and Berserker Rage cards
+ * @param {Object} activeEffect - The active effect object with firstKillSquare property
+ * @param {string} secondTargetSquare - Target square of the second capture
+ * @param {string} cardName - Name of the card for error message
+ * @throws {Error} If second capture is adjacent to first kill
+ */
+function validateNonAdjacentCapture(activeEffect, secondTargetSquare, cardName) {
+  if (!activeEffect || !activeEffect.firstKillSquare) return;
+  
+  const firstKillSquare = activeEffect.firstKillSquare;
+  const isAdjacent = getAdjacentSquares(firstKillSquare).includes(secondTargetSquare);
+  
+  if (isAdjacent) {
+    throw new Error(`${cardName}: second capture cannot be adjacent to the first kill!`);
+  }
+}
+
+/**
+ * Creates the initial game state for a new game
+ * @param {Object} config - Game configuration
+ * @param {string} config.mode - Game mode ('Ascendant' or 'Classic')
+ * @param {Array<string>} config.playerIds - Array of player socket IDs
+ * @param {number} [config.aiDifficulty] - AI difficulty level (1-3) if playing against AI
+ * @param {string} [config.playerColor] - Human player's color when playing against AI
+ * @returns {Object} Initial game state object
+ */
 function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor }) {
   const chess = new Chess();
   // No arcana at start - awarded on ascension
@@ -76,7 +104,15 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
 }
 
 
+/**
+ * GameManager - Manages all active chess games and handles game logic
+ * Server-authoritative: All validation and state changes happen on the server
+ */
 export class GameManager {
+  /**
+   * @param {SocketIO.Server} io - Socket.io server instance
+   * @param {LobbyManager} lobbyManager - Lobby manager instance
+   */
   constructor(io, lobbyManager) {
     this.io = io;
     this.lobbyManager = lobbyManager;
@@ -589,6 +625,16 @@ export class GameManager {
       }
     }
 
+    // Double Strike: Validate second capture is NOT adjacent to first kill
+    if (gameState.activeEffects.doubleStrikeActive?.color === moverColor && candidate.captured) {
+      validateNonAdjacentCapture(gameState.activeEffects.doubleStrikeActive, candidate.to, 'Double Strike');
+    }
+
+    // Berserker Rage: Validate second capture is NOT adjacent to first kill
+    if (gameState.activeEffects.berserkerRageActive?.color === moverColor && candidate.captured) {
+      validateNonAdjacentCapture(gameState.activeEffects.berserkerRageActive, candidate.to, 'Berserker Rage');
+    }
+
     // Check time freeze - skip opponent's turn
     if (gameState.activeEffects.timeFrozen[moverColor]) {
       gameState.activeEffects.timeFrozen[moverColor] = false;
@@ -814,34 +860,9 @@ export class GameManager {
         }
       }
 
-      // Double Strike: After capturing with the same piece, allow a second capture if target is NOT adjacent
-      const doubleStrike = gameState.activeEffects.doubleStrike?.[moverColor];
-      if (doubleStrike && doubleStrike.active && doubleStrike.firstKillSquare && !doubleStrike.usedSecondKill) {
-        // Check if this capture is with the same piece and target is NOT adjacent to the first kill
-        const firstKill = doubleStrike.firstKillSquare;
-        const isAdjacent = getAdjacentSquares(firstKill).includes(result.to);
-        
-        if (!isAdjacent) {
-          // Valid second kill - mark as used
-          doubleStrike.usedSecondKill = true;
-          result.doubleStrikeSecondKill = true;
-        }
-      }
-
-      // Berserker Rage: Check if this was the second capture (must not be adjacent to first)
-      const berserker = gameState.activeEffects.berserkerRage?.[moverColor];
-      if (berserker && berserker.active && berserker.firstKillSquare && !berserker.usedSecondKill) {
-        // Check if this capture is adjacent to the first kill
-        const firstKill = berserker.firstKillSquare;
-        const isAdjacent = getAdjacentSquares(firstKill).includes(result.to);
-        
-        if (!isAdjacent) {
-          // Valid second kill - mark as used
-          berserker.usedSecondKill = true;
-          result.berserkerSecondKill = true;
-        }
-        // If adjacent, the capture still happens normally, but berserker rage doesn't trigger bonus
-      }
+      // Note: Double Strike and Berserker Rage adjacency validation now happens
+      // BEFORE the move is executed (see validation section above), not after capture.
+      // This prevents invalid adjacent captures from being made in the first place.
 
       // Focus Fire: draw an extra card on capture
       if (gameState.activeEffects.focusFire && gameState.activeEffects.focusFire[moverColor]) {

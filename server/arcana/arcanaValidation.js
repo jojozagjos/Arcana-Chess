@@ -1,5 +1,11 @@
 /**
  * Validation for arcana-enhanced moves
+ * Checks if a move is legal with active arcana effects
+ * @param {Chess} chess - Chess.js instance
+ * @param {Object} move - Move object with from/to squares
+ * @param {Object} activeEffects - Current active arcana effects
+ * @param {string} moverColor - Color of the moving player ('w' or 'b')
+ * @returns {Object|null} Valid move object or null if invalid
  */
 
 export function validateArcanaMove(chess, move, activeEffects, moverColor) {
@@ -53,7 +59,7 @@ export function validateArcanaMove(chess, move, activeEffects, moverColor) {
   }
 
   // Temporal Echo: Repeat last move pattern
-  if (activeEffects.temporalEcho && activeEffects.temporalEcho.color === moverColor) {
+  if (activeEffects.temporalEcho && activeEffects.temporalEcho.color === moverColor && activeEffects.temporalEcho.pattern) {
     const validMove = validateTemporalEcho(chess, fromSquare, toSquare, piece, activeEffects.temporalEcho.pattern);
     if (validMove) return validMove;
   }
@@ -183,6 +189,11 @@ function validateKnightOfStorms(chess, from, to, color) {
 }
 
 function validateTemporalEcho(chess, from, to, piece, pattern) {
+  // Ensure pattern exists
+  if (!pattern || pattern.fileDelta === undefined || pattern.rankDelta === undefined) {
+    return null;
+  }
+  
   const fromFile = from.charCodeAt(0);
   const fromRank = parseInt(from[1]);
   const toFile = to.charCodeAt(0);
