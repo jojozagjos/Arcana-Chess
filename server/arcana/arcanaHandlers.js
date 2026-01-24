@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { pickWeightedArcana, pickWeightedArcanaForSacrifice, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
+import { pickWeightedArcana, pickWeightedArcanaForSacrifice, getAdjacentSquares } from './arcanaUtils.js';
 
 /**
  * Validates arcana targeting before applying effects
@@ -96,30 +96,28 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
   if (!Array.isArray(arcanaUsed) || arcanaUsed.length === 0) return [];
   const available = gameState.arcanaByPlayer[socketId] || [];
   gameState.usedArcanaIdsByPlayer[socketId] ||= [];
+  // Backwards-compatible instanceId tracking: new arcana instances may include
+  // a stable `instanceId` property. Track used instanceIds separately so we
+  // don't accidentally allow reuse when hand indices shift.
+  gameState.usedArcanaInstanceIdsByPlayer ||= {};
+  gameState.usedArcanaInstanceIdsByPlayer[socketId] ||= [];
 
   const chess = gameState.chess;
   const appliedDefs = [];
 
   for (const use of arcanaUsed) {
-    // Find the card instance in the player's inventory.
-    const usedList = gameState.usedArcanaIdsByPlayer[socketId] || [];
-
+    // Prefer instanceId matching when provided (more robust against index shifts).
     let defIndex = -1;
-    // If caller provided an instanceId, require that exact instance and ensure it's unused.
-    if (use.instanceId) {
-      defIndex = available.findIndex((a) => a.instanceId === use.instanceId && !usedList.includes(a.instanceId));
-      if (defIndex === -1) {
-        console.warn(`[SECURITY] Player ${socketId} attempted to use missing or already-used instanceId=${use.instanceId}`);
-        continue;
-      }
-    } else {
-      // Fallback: find first unused card of this type
-      defIndex = available.findIndex((a) => a.id === use.arcanaId && !usedList.includes(a.instanceId));
-      if (defIndex === -1) {
-        console.warn(`[SECURITY] Player ${socketId} attempted to use arcana ${use.arcanaId} but has no unused instance available`);
-        continue;
-      }
+    if (use && use.instanceId !== undefined && use.instanceId !== null) {
+      defIndex = available.findIndex(a => a.id === use.arcanaId && a.instanceId === use.instanceId && !gameState.usedArcanaInstanceIdsByPlayer[socketId].includes(a.instanceId));
     }
+
+    // Fallback to index-based lookup for older clients/server state
+    if (defIndex === -1) {
+      defIndex = available.findIndex((a, idx) => a.id === use.arcanaId && !gameState.usedArcanaIdsByPlayer[socketId].includes(idx));
+    }
+
+    if (defIndex === -1) continue;
     const def = available[defIndex];
 
     // Get mover color from moveResult if available, otherwise from current turn
@@ -148,8 +146,12 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       params = result.params || params;
     }
 
-    // Mark as used by instanceId
-    gameState.usedArcanaIdsByPlayer[socketId].push(def.instanceId);
+    // Mark as used. Prefer canonical instanceId when available, otherwise mark by index.
+    if (def.instanceId !== undefined && def.instanceId !== null) {
+      gameState.usedArcanaInstanceIdsByPlayer[socketId].push(def.instanceId);
+    } else {
+      gameState.usedArcanaIdsByPlayer[socketId].push(defIndex);
+    }
     appliedDefs.push({ def, params });
 
     // Notify players; send full params only to the owner to avoid leaking private info
@@ -629,9 +631,9 @@ function applyPromotionRitual({ chess, moverColor, params }) {
     const pawn = chess.get(targetSquare);
     if (pawn && pawn.type === 'p' && pawn.color === moverColor) {
       chess.remove(targetSquare);
-        const card1 = makeArcanaInstance(pickWeightedArcanaForSacrifice(piece.type));
-        const card2 = makeArcanaInstance(pickWeightedArcanaForSacrifice(piece.type));
-        gameState.arcanaByPlayer[socketId].push(card1, card2);
+      chess.put({ type: 'q', color: moverColor }, targetSquare);
+      return { params: { square: targetSquare } };
+    }
   }
   return null;
 }
@@ -777,9 +779,8 @@ function applyArcaneCycle({ gameState, socketId, params }) {
   }
   
   // Draw a new common arcana
-    const newCard = pickWeightedArcana();
-    const newInst = makeArcanaInstance(newCard);
-    gameState.arcanaByPlayer[socketId].push(newInst);
+  const newCard = pickWeightedArcana();
+  gameState.arcanaByPlayer[socketId].push(newCard);
   return { params: { drewCard: newCard.id, discardIndex } };
 }
 
@@ -850,53 +851,48 @@ function applyPeekCard({ gameState, socketId, params, io }) {
   if (!opponentId) return null;
   
   const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
-
-  // Build a list of visible (unused) card indices so we don't reveal already-used cards
-  const usedInstanceIds = new Set(gameState.usedArcanaIdsByPlayer?.[opponentId] || []);
-  const visibleIndices = opponentCards.map((_, idx) => idx).filter(i => !usedInstanceIds.has(opponentCards[i]?.instanceId));
-
-  // If opponent has no visible (unused) cards, inform the player
-  if (visibleIndices.length === 0) {
+  
+  // Check if opponent has any cards - if not, inform the player
+  if (opponentCards.length === 0) {
     if (io) {
       io.to(socketId).emit('peekCardEmpty', {
-        message: 'Your opponent has no cards to peek at.'
+        message: 'Your opponent has no cards in their deck to peek at.'
       });
     }
     return null;
   }
-
-  // If cardIndex is provided, treat it as an index into the visible list
+  
+  // If cardIndex is provided, reveal that specific card
   if (params && params.cardIndex !== undefined) {
-    const visibleIdx = parseInt(params.cardIndex);
-    if (visibleIdx >= 0 && visibleIdx < visibleIndices.length) {
-      const originalIndex = visibleIndices[visibleIdx];
-      const revealedCard = opponentCards[originalIndex];
-      // Send the revealed card only to the peeker; cardIndex is the visible index
+    const cardIndex = parseInt(params.cardIndex);
+    if (cardIndex >= 0 && cardIndex < opponentCards.length) {
+      const revealedCard = opponentCards[cardIndex];
+      // Send the revealed card only to the peeker
       if (io) {
         io.to(socketId).emit('peekCardRevealed', {
           card: revealedCard,
-          cardIndex: visibleIdx,
+          cardIndex,
         });
       }
       // Clear any pending peek for this player
       if (gameState.pendingPeek) delete gameState.pendingPeek[socketId];
-      return { params: { revealedCard: revealedCard.id, cardIndex: visibleIdx } };
+      return { params: { revealedCard: revealedCard.id, cardIndex } };
     }
   }
-
-  // Initial activation: send opponent's visible card count to client for selection
+  
+  // Initial activation: send opponent's card count to client for selection
   if (io) {
     io.to(socketId).emit('peekCardSelection', {
-      cardCount: visibleIndices.length,
+      cardCount: opponentCards.length,
       opponentId,
     });
   }
-
-  // Mark pending peek with mapping from visible indices to original indices
+  
+  // Mark pending peek so the server can later resolve the selection
   gameState.pendingPeek ||= {};
-  gameState.pendingPeek[socketId] = { opponentId, visibleIndices, ts: Date.now() };
+  gameState.pendingPeek[socketId] = { opponentId, cardCount: opponentCards.length, ts: Date.now() };
 
-  return { params: { awaitingSelection: true, cardCount: visibleIndices.length } };
+  return { params: { awaitingSelection: true, cardCount: opponentCards.length } };
 }
 
 function applyAntidote({ gameState, params }) {
