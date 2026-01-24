@@ -19,6 +19,7 @@ export function MainMenu({
   quickMatchStatus,
   quickMatchLoading = false,
 }) {
+  const [showUpdateLog, setShowUpdateLog] = useState(true);
   // Music is handled globally in App; no per-mode control needed here  
   if (mode === 'root') {
     return (
@@ -35,6 +36,21 @@ export function MainMenu({
             <button className="menu-button" onClick={onPlayOnlineJoin}>Join game</button>
             <button className="menu-button" onClick={onQuickMatch} disabled={quickMatchLoading}>{quickMatchStatus || 'Find Match'}</button>
           </div>
+
+          {showUpdateLog && (
+            <div className="update-log" style={{ marginTop: 18, background: 'rgba(255,255,255,0.03)', padding: 12, borderRadius: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ color: '#cbd5e1' }}>Update Log</strong>
+                <button className="menu-secondary" onClick={() => setShowUpdateLog(false)} style={{ padding: '4px 8px' }}>Dismiss</button>
+              </div>
+              <div style={{ marginTop: 8, color: '#aab8c9', fontSize: '0.9rem' }}>
+                <div><strong>v1.0.0</strong> — Fixed rematch race & arcana ownership bugs.</div>
+                <div>• Rematch cancellation now notifies opponent clearly.</div>
+                <div>• Server enforces per-card instance ownership for arcana.</div>
+                <div>• Client no longer auto-returns to menu after game end.</div>
+              </div>
+            </div>
+          )}
 
           <div className="menu-secondary-row">
             <button className="menu-secondary" onClick={onTutorial}>Tutorial (WIP)</button>
