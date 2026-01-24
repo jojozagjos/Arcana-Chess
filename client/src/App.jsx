@@ -118,11 +118,19 @@ export function App() {
     const handleGameEnded = (outcome) => {
       console.log('Game ended:', outcome);
       setGameEndOutcome(outcome);
-      // Show outcome overlay, then return to menu after delay
-      setTimeout(() => {
-        setGameEndOutcome(null);
-        handleBackToMenu();
-      }, 5000);
+      // If a rematch is possible, keep the end overlay open so rematch UI can proceed.
+      const rematchVotes = outcome?.rematchVotes || 0;
+      const rematchTotal = outcome?.rematchTotalPlayers || 0;
+      const rematchPossible = rematchVotes > 0 || rematchTotal > 1;
+
+      if (!rematchPossible) {
+        // Show outcome overlay, then return to menu after delay
+        setTimeout(() => {
+          setGameEndOutcome(null);
+          handleBackToMenu();
+        }, 5000);
+      }
+      // If rematchPossible is true, do nothing: rematch events will handle navigation.
     };
 
     const handleAscended = (payload) => {
