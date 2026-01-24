@@ -102,6 +102,8 @@ export function App() {
 
   useEffect(() => {
     const handleGameStarted = (state) => {
+      // New game starting: clear any previous end-outcome and show game
+      setGameEndOutcome(null);
       setGameState(state);
       setAscendedInfo(state.ascended ? { gameId: state.id, reason: state.ascensionTrigger } : null);
       setScreen('game');
@@ -117,20 +119,9 @@ export function App() {
 
     const handleGameEnded = (outcome) => {
       console.log('Game ended:', outcome);
+      // Show outcome overlay and let the player decide when to return to menu.
+      // No automatic return to menu — user must click the Return button.
       setGameEndOutcome(outcome);
-      // If a rematch is possible, keep the end overlay open so rematch UI can proceed.
-      const rematchVotes = outcome?.rematchVotes || 0;
-      const rematchTotal = outcome?.rematchTotalPlayers || 0;
-      const rematchPossible = rematchVotes > 0 || rematchTotal > 1;
-
-      if (!rematchPossible) {
-        // Show outcome overlay, then return to menu after delay
-        setTimeout(() => {
-          setGameEndOutcome(null);
-          handleBackToMenu();
-        }, 5000);
-      }
-      // If rematchPossible is true, do nothing: rematch events will handle navigation.
     };
 
     const handleAscended = (payload) => {
