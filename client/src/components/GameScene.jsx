@@ -1438,6 +1438,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           stayUntilClick={cardReveal.stayUntilClick}
           isHidden={cardReveal.isHidden}
           onDismiss={() => {
+            // Inform server that the reveal animation finished so reveal-dependent
+            // effects (AI moves, VFX sequencing) can proceed server-side.
+            try {
+              socket.emit('arcanaRevealComplete', { playerId: cardReveal.playerId });
+            } catch (e) {}
             setCardReveal(null);
             // Unlock interactions after draw/use animation ends
             setIsCardAnimationPlaying(false);
@@ -1757,10 +1762,48 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
 }
 
 function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClick, isHidden, onDismiss }) {
+  // Hooks must always be called in the same order — declare them before any early returns
+  const [usePhase, setUsePhase] = React.useState(0);
+  const [useProgress, setUseProgress] = React.useState(0);
+
+  React.useEffect(() => {
+    if (type === 'use') {
+      const t1 = setTimeout(() => setUsePhase(1), 800);
+      const t2 = setTimeout(() => setUsePhase(2), 1800);
+      const startTime = Date.now();
+      const duration = 2000;
+      const progressInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(1, elapsed / duration);
+        setUseProgress(progress);
+        if (progress >= 1) clearInterval(progressInterval);
+      }, 50);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearInterval(progressInterval);
+      };
+    } else if (type === 'draw' && isHidden && !stayUntilClick && onDismiss) {
+      const autoDismissTimer = setTimeout(() => onDismiss(), 2000);
+      return () => clearTimeout(autoDismissTimer);
+    }
+  }, [type, isHidden, stayUntilClick, onDismiss]);
+
+  React.useEffect(() => {
+    if (type === 'use' && !stayUntilClick && onDismiss) {
+      const AUTO_DISMISS_MS = 3500;
+      const auto = setTimeout(() => onDismiss(), AUTO_DISMISS_MS);
+      return () => clearTimeout(auto);
+    }
+    return undefined;
+  }, [type, stayUntilClick, onDismiss]);
+
+  // Early return if no arcana provided
+  if (!arcana) return null;
+
   const isMe = playerId === mySocketId;
   const actionText = type === 'draw' ? 'drew' : 'used';
   const playerText = isMe ? 'You' : 'Opponent';
-  if (!arcana) return null;
 
   const rarityColors = {
     common: { glow: 'rgba(200, 200, 200, 0.8)', inner: '#c8c8c8' },
@@ -1772,57 +1815,8 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   const colors = rarityColors[arcana.rarity] || { glow: 'rgba(136, 192, 208, 0.8)', inner: '#88c0d0' };
 
   const handleClick = () => {
-    if (stayUntilClick && onDismiss) {
-      onDismiss();
-    }
+    if (stayUntilClick && onDismiss) onDismiss();
   };
-
-  // For use animation, we need state to track phases
-  const [usePhase, setUsePhase] = React.useState(0);
-  const [useProgress, setUseProgress] = React.useState(0);
-  
-  React.useEffect(() => {
-    if (type === 'use') {
-      // Phase 1: Card appears and pulses (0-1s)
-      // Phase 2: Card glows intensely (1-2s)  
-      // Phase 3: Card dissolves into energy (2-3.5s)
-      const t1 = setTimeout(() => setUsePhase(1), 800);
-      const t2 = setTimeout(() => setUsePhase(2), 1800);
-      
-      // Progress tracking for smooth particle transitions
-      const startTime = Date.now();
-      const duration = 2000; // 2 second glow phase
-      const progressInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(1, elapsed / duration);
-        setUseProgress(progress);
-        if (progress >= 1) clearInterval(progressInterval);
-      }, 50);
-      
-      return () => { 
-        clearTimeout(t1); 
-        clearTimeout(t2);
-        clearInterval(progressInterval);
-      };
-    } else if (type === 'draw' && isHidden && !stayUntilClick && onDismiss) {
-      // Auto-dismiss opponent draw notifications after 2 seconds
-      const autoDismissTimer = setTimeout(() => {
-        onDismiss();
-      }, 2000);
-      
-      return () => clearTimeout(autoDismissTimer);
-    }
-  }, [type, isHidden, stayUntilClick, onDismiss]);
-
-  // Auto-dismiss completed 'use' animations when they are not meant to stay until click
-  React.useEffect(() => {
-    if (type === 'use' && !stayUntilClick && onDismiss) {
-      const AUTO_DISMISS_MS = 3500; // matches usePhase + dissolve timing
-      const auto = setTimeout(() => onDismiss(), AUTO_DISMISS_MS);
-      return () => clearTimeout(auto);
-    }
-    return undefined;
-  }, [type, stayUntilClick, onDismiss]);
 
   return (
     <>

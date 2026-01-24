@@ -217,6 +217,18 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Client notifies server when the card reveal overlay animation is finished
+  socket.on('arcanaRevealComplete', (payload, ack) => {
+    try {
+      const playerId = payload?.playerId || socket.id;
+      gameManager.handleArcanaRevealComplete(playerId);
+      safeAck(ack, { ok: true });
+    } catch (err) {
+      console.error('arcanaRevealComplete error', err);
+      safeAck(ack, { ok: false, error: err.message || 'Failed to acknowledge reveal' });
+    }
+  });
+
   socket.on('forfeitGame', (payload, ack) => {
     try {
       const outcome = gameManager.forfeitGame(socket, payload || {});
@@ -234,6 +246,17 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('voteRematch error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to vote for rematch' });
+    }
+  });
+
+  // Client explicitly leaving the post-match screen (returning to menu)
+  socket.on('leavePostMatch', (payload, ack) => {
+    try {
+      gameManager.handlePlayerLeftPostMatch(socket);
+      safeAck(ack, { ok: true });
+    } catch (err) {
+      console.error('leavePostMatch error', err);
+      safeAck(ack, { ok: false, error: err.message || 'Failed to leave post-match' });
     }
   });
 

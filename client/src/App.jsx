@@ -239,14 +239,29 @@ export function App() {
         setLastArcanaEvent(null);
         setScreen('main-menu');
       });
-    } else {
-      // No active game, just return to menu
-      setGameState(null);
-      setGameEndOutcome(null);
-      setAscendedInfo(null);
-      setLastArcanaEvent(null);
-      setScreen('main-menu');
+      return;
     }
+
+    // If player is on the post-match screen, notify server so rematch can be
+    // cancelled for the other player instead of leaving them waiting.
+    if (gameState && gameState.status === 'finished') {
+      socket.emit('leavePostMatch', {}, (res) => {
+        // Ignore server errors here; proceed to clear client state
+        setGameState(null);
+        setGameEndOutcome(null);
+        setAscendedInfo(null);
+        setLastArcanaEvent(null);
+        setScreen('main-menu');
+      });
+      return;
+    }
+
+    // Default fallback: just return to menu
+    setGameState(null);
+    setGameEndOutcome(null);
+    setAscendedInfo(null);
+    setLastArcanaEvent(null);
+    setScreen('main-menu');
   };
 
   // Using external IntroScreen component (from ./components/IntroScreen.jsx)

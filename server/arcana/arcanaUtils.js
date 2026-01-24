@@ -77,6 +77,17 @@ export function pickWeightedArcanaForSacrifice(pieceType) {
 }
 
 /**
+ * Create a stable instance of an arcana card with a unique instanceId.
+ * This ensures tracking (used/discard) references a stable identifier rather than array indices.
+ */
+export function makeArcanaInstance(arcanaDef) {
+  if (!arcanaDef) return null;
+  const uid = `${arcanaDef.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  // Shallow clone to avoid mutating shared definition
+  return Object.assign({}, arcanaDef, { instanceId: uid });
+}
+
+/**
  * Check if a king was removed from the board (for win condition)
  */
 export function checkForKingRemoval(chess) {

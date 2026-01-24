@@ -117,7 +117,10 @@ export class LobbyManager {
   getPublicLobbies() {
     // Return all lobbies with derived fields expected by clients
     // (client expects `status` and `playerCount` for quick-match filtering)
-    return [...this.lobbies.values()].map((lobby) => {
+    return [...this.lobbies.values()]
+      // Exclude lobbies that contain AI players (no need to show AI games in public list)
+      .filter(lobby => !Array.isArray(lobby.players) || !lobby.players.some(id => typeof id === 'string' && id.startsWith('AI-')))
+      .map((lobby) => {
       const playerCount = Array.isArray(lobby.players) ? lobby.players.length : 0;
       const status = playerCount < 2 ? 'waiting' : 'full';
       return {

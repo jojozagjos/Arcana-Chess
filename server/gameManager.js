@@ -2,7 +2,10 @@ import { Chess } from 'chess.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
 import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
-import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares } from './arcana/arcanaUtils.js';
+import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
+
+// How long (ms) to wait for a client to acknowledge a card reveal before falling back
+const REVEAL_ACK_TIMEOUT_MS = 5000;
 
 /**
  * Helper: Validates that second capture is not adjacent to first kill square
@@ -120,6 +123,84 @@ export class GameManager {
     this.socketToGame = new Map(); // socketId -> gameId
   }
 
+  // Helper to emit `gameEnded` with rematch metadata so clients can decide
+  // whether to auto-return to menu or wait for rematch actions.
+  emitGameEndedToPlayer(pid, outcome, gameState) {
+    const rematchVotes = gameState?.rematchVotes ? Object.values(gameState.rematchVotes).filter(v => v === true).length : 0;
+    const rematchTotalPlayers = gameState ? (gameState.playerIds || []).filter(id => !id.startsWith('AI-')).length : 0;
+    this.io.to(pid).emit('gameEnded', { ...outcome, rematchVotes, rematchTotalPlayers });
+  }
+
+  /**
+   * Handle a reveal-complete acknowledgement from a client.
+   * Looks up the game and finalizes any reveal-dependent processing (AI moves, VFX triggers).
+   */
+  async handleArcanaRevealComplete(socketId) {
+    const gameId = this.socketToGame.get(socketId);
+    if (!gameId) return;
+    const gameState = this.games.get(gameId);
+    if (!gameState) return;
+
+    if (gameState.pendingReveal && gameState.pendingReveal.playerId === socketId) {
+      // Clear fallback timer if present
+      if (gameState.pendingReveal.timeoutId) {
+        clearTimeout(gameState.pendingReveal.timeoutId);
+      }
+      // Finalize reveal processing
+      await this._finalizeReveal(gameState);
+    }
+  }
+
+  // Internal: perform reveal-finalization work (AI move, emit updates)
+  async _finalizeReveal(gameState) {
+    // Clear pending flag
+    const pending = gameState.pendingReveal;
+    gameState.pendingReveal = null;
+
+    const chess = gameState.chess;
+
+    // If the reveal required the turn to end, perform the swap now
+    if (pending?.turnShouldEnd) {
+      try {
+        const fen = chess.fen();
+        const fenParts = fen.split(' ');
+        fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+        // Clear en-passant square when swapping without a real move to avoid invalid FEN
+        if (fenParts.length > 3) fenParts[3] = '-';
+        chess.load(fenParts.join(' '));
+
+        // Broadcast updated game state to players
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            const personalised = this.serialiseGameStateForViewer(gameState, pid);
+            this.io.to(pid).emit('gameUpdated', personalised);
+          }
+        }
+      } catch (e) {
+        console.error('Error swapping turn during finalizeReveal:', e);
+      }
+    }
+
+    // If this is an AI game and it's now AI's turn, make the AI move
+    if (gameState.aiDifficulty && gameState.status === 'ongoing') {
+      const activeChar = chess.turn();
+      const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
+      // Determine if the AI should move now (find any AI id matching activeChar)
+      const aiSocketId = gameState.playerIds.find((id) => id.startsWith('AI-'));
+      if (aiSocketId) {
+        // Let performAIMove decide; it checks gameState.chess.turn()
+        await this.performAIMove(gameState);
+        if (humanId) {
+          const personalised = this.serialiseGameStateForViewer(gameState, humanId);
+            this.io.to(humanId).emit('gameUpdated', personalised);
+          if (personalised.status === 'finished') {
+            this.emitGameEndedToPlayer(humanId, { type: 'ai-finished' }, gameState);
+          }
+        }
+      }
+    }
+  }
+
   startMultiplayerGame(socket, payload) {
     const { lobbyId } = payload || {};
     const lobby = this.lobbyManager.lobbies.get(lobbyId);
@@ -138,6 +219,22 @@ export class GameManager {
     }
 
     this.io.to(lobbyId).emit('gameStarted', this.serialiseGameState(gameState));
+    // Close the lobby since the game has started: remove lobby and clear socket->lobby mappings
+    try {
+      // Notify individual players that the lobby is closed (reason: game started)
+      for (const pid of lobby.players) {
+        if (!pid.startsWith('AI-')) {
+          this.io.to(pid).emit('lobbyClosed', { reason: 'Game started' });
+        }
+        // Remove mapping from socket to lobby
+        this.lobbyManager.socketToLobby.delete(pid);
+      }
+      // Delete lobby entry
+      this.lobbyManager.lobbies.delete(lobbyId);
+    } catch (e) {
+      console.warn('Failed to fully close lobby after game start', e);
+    }
+
     return this.serialiseGameState(gameState);
   }
 
@@ -178,13 +275,16 @@ export class GameManager {
   serialiseGameState(gameState) {
     // Convert used indices to used IDs for client display
     const usedArcanaPlain = {};
-    for (const [socketId, usedIndices] of Object.entries(gameState.usedArcanaIdsByPlayer || {})) {
+    for (const [socketId, usedInstanceIds] of Object.entries(gameState.usedArcanaIdsByPlayer || {})) {
       const playerArcana = gameState.arcanaByPlayer[socketId] || [];
-      // If it's an array of indices, convert to IDs; if it's a Set (old format), keep as-is for backward compatibility
-      if (Array.isArray(usedIndices)) {
-        usedArcanaPlain[socketId] = usedIndices.map(idx => playerArcana[idx]?.id).filter(Boolean);
+      // Map stored instanceIds to the arcana definition IDs for client display
+      if (Array.isArray(usedInstanceIds)) {
+        usedArcanaPlain[socketId] = usedInstanceIds
+          .map(instId => playerArcana.find(c => c.instanceId === instId)?.id)
+          .filter(Boolean);
       } else {
-        usedArcanaPlain[socketId] = Array.from(usedIndices);
+        // If it's a Set or other iterable, convert each instanceId to definition id
+        usedArcanaPlain[socketId] = Array.from(usedInstanceIds).map(instId => playerArcana.find(c => c.instanceId === instId)?.id).filter(Boolean);
       }
     }
 
@@ -318,21 +418,22 @@ export class GameManager {
         if (gameState.chess.inCheck()) throw new Error('You cannot draw while in check');
       }
       
-      // Check draw cooldown rule: "must wait 1 full turn between draws"
-      // Full turn = both players move once. So: 
-      // You draw (ply N) → opp move (N+1) → you move (N+2, blocked) → opp move (N+3) → you move (N+4, allowed)
-      // This means at least 4 plies must pass between draws
+      // Check draw cooldown rule: require at least 4 plies (half-moves) between draws.
+      // Using raw ply counts avoids ambiguity when FEN is swapped without adding to history.
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
-      const lastDrawPly = gameState.lastDrawTurn[socket.id]; // Track per-player, not per-color
-      
+      const lastDrawPly = gameState.lastDrawTurn[socket.id]; // stored as ply index per-player
+
       // First draw is always allowed (lastDrawPly is -99 initially)
       if (lastDrawPly >= 0 && currentPly - lastDrawPly < 4) {
+        console.log('[DRAW BLOCKED] socket=', socket.id, 'currentPly=', currentPly, 'lastDrawPly=', lastDrawPly);
         throw new Error('Must wait 1 full turn between draws');
       }
 
       const newCard = pickWeightedArcana();
-      gameState.arcanaByPlayer[socket.id].push(newCard);
-      gameState.lastDrawTurn[socket.id] = currentPly; // Track per-player, not per-color
+      const instanceCard = makeArcanaInstance(newCard);
+      gameState.arcanaByPlayer[socket.id].push(instanceCard);
+      // Store the ply index when this player drew
+      gameState.lastDrawTurn[socket.id] = currentPly; // Track per-player as ply count
       
       // Clear arcana used flag when drawing (ending turn)
       if (gameState.arcanaUsedThisTurn) {
@@ -354,25 +455,28 @@ export class GameManager {
           const isDrawer = pid === socket.id;
           this.io.to(pid).emit('arcanaDrawn', {
             playerId: socket.id,
-            arcana: isDrawer ? newCard : null,
+            arcana: isDrawer ? instanceCard : null,
           });
           const personalised = this.serialiseGameStateForViewer(gameState, pid);
           this.io.to(pid).emit('gameUpdated', personalised);
         }
       }
       
-      // If this is an AI game and the current turn is AI's, make the AI move
-      if (gameState.aiDifficulty && gameState.status === 'ongoing' && chess.turn() === (gameState.playerColors[socket.id] === 'white' ? 'b' : 'w')) {
-        await this.performAIMove(gameState);
-        const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
-        if (humanId) {
-          const personalised = this.serialiseGameStateForViewer(gameState, humanId);
-          this.io.to(humanId).emit('gameUpdated', personalised);
-          if (personalised.status === 'finished') {
-            this.io.to(humanId).emit('gameEnded', { type: 'ai-finished' });
-          }
+      // Defer reveal-dependent actions (such as AI response) until the client
+      // confirms the card reveal animation is complete. Fall back after a timeout
+      // so games don't stall if the client fails to ack.
+      if (!gameState.pendingReveal) gameState.pendingReveal = {};
+      // Clear any previous timer
+      if (gameState.pendingReveal.timeoutId) clearTimeout(gameState.pendingReveal.timeoutId);
+      gameState.pendingReveal.playerId = socket.id;
+      gameState.pendingReveal.timeoutId = setTimeout(async () => {
+        // Fallback: finalize reveal processing even if client didn't ack
+        try {
+          await this._finalizeReveal(gameState);
+        } catch (e) {
+          console.error('Error finalizing reveal (timeout):', e);
         }
-      }
+      }, REVEAL_ACK_TIMEOUT_MS);
       
       return { ok: true, drewCard: newCard };
     }
@@ -405,7 +509,14 @@ export class GameManager {
       const chess = gameState.chess;
 
       // Apply arcana effects (no move result since arcana is used before a move)
-      const appliedArcana = applyArcana(socket.id, gameState, arcanaUsed, null, this.io);
+      const appliedArcana = this.applyArcana
+        ? this.applyArcana(socket.id, gameState, arcanaUsed, null)
+        : applyArcana(socket.id, gameState, arcanaUsed, null, this.io);
+
+      // If nothing was applied, the requested arcana was not available to this player
+      if (!appliedArcana || appliedArcana.length === 0) {
+        throw new Error('Arcana not available or already used');
+      }
 
       // Check if arcana effects removed a king
       const arcanaKingCheck = checkForKingRemoval(chess);
@@ -416,7 +527,7 @@ export class GameManager {
           if (!pid.startsWith('AI-')) {
             const personalised = this.serialiseGameStateForViewer(gameState, pid);
             this.io.to(pid).emit('gameUpdated', personalised);
-            this.io.to(pid).emit('gameEnded', outcome);
+            this.emitGameEndedToPlayer(pid, outcome, gameState);
           }
         }
         return { gameState: this.serialiseGameState(gameState), appliedArcana };
@@ -446,31 +557,23 @@ export class GameManager {
         if (gameState.arcanaUsedThisTurn) {
           delete gameState.arcanaUsedThisTurn[socket.id];
         }
-        
-        // Pass turn by swapping active color
-        const fen = chess.fen();
-        const fenParts = fen.split(' ');
-        fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
-        chess.load(fenParts.join(' '));
-        
-        // Update serialized state (personalised per viewer for fog concealment)
-        for (const pid of gameState.playerIds) {
-          if (!pid.startsWith('AI-')) {
-            const personalised = this.serialiseGameStateForViewer(gameState, pid);
-            this.io.to(pid).emit('gameUpdated', personalised);
+
+        // Defer the actual turn swap until the client finishes the reveal animation.
+        // Store a pendingReveal marker with intent to end the turn; _finalizeReveal
+        // will perform the swap when acked (or after timeout).
+        if (!gameState.pendingReveal) gameState.pendingReveal = {};
+        if (gameState.pendingReveal.timeoutId) clearTimeout(gameState.pendingReveal.timeoutId);
+        gameState.pendingReveal.playerId = socket.id;
+        gameState.pendingReveal.turnShouldEnd = true;
+        gameState.pendingReveal.timeoutId = setTimeout(async () => {
+          try {
+            await this._finalizeReveal(gameState);
+          } catch (e) {
+            console.error('Error finalizing reveal (useArcana timeout):', e);
           }
-        }
-        
-        // If this is an AI game and it's now AI's turn, make the AI move
-        if (gameState.aiDifficulty && gameState.status === 'ongoing') {
-          await this.performAIMove(gameState);
-          const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
-          if (humanId) {
-            const personalised = this.serialiseGameStateForViewer(gameState, humanId);
-            this.io.to(humanId).emit('gameUpdated', personalised);
-          }
-        }
-        
+        }, REVEAL_ACK_TIMEOUT_MS);
+
+        // We already emitted `arcanaUsed` and `gameUpdated` above; return to caller.
         return { ok: true, appliedArcana, turnEnded: true };
       }
 
@@ -485,10 +588,19 @@ export class GameManager {
       if (!pending) throw new Error('No peek pending');
       const opponentId = pending.opponentId;
       const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
+
+      // pending.visibleIndices maps visible-selection indices -> original opponent array indices
+      const visibleIndices = pending.visibleIndices;
+      if (!Array.isArray(visibleIndices) || visibleIndices.length === 0) {
+        delete gameState.pendingPeek[socket.id];
+        throw new Error('No visible opponent cards to reveal');
+      }
+
       const idx = parseInt(cardIndex);
-      if (isNaN(idx) || idx < 0 || idx >= opponentCards.length) throw new Error('Invalid card index');
-      const revealedCard = opponentCards[idx];
-      // Reveal only to requesting player
+      if (isNaN(idx) || idx < 0 || idx >= visibleIndices.length) throw new Error('Invalid card index');
+      const originalIndex = visibleIndices[idx];
+      const revealedCard = opponentCards[originalIndex];
+      // Reveal only to requesting player; cardIndex is the visible index chosen by client
       this.io.to(socket.id).emit('peekCardRevealed', { card: revealedCard, cardIndex: idx });
       // Clear pending peek
       delete gameState.pendingPeek[socket.id];
@@ -715,7 +827,7 @@ export class GameManager {
         if (!pid.startsWith('AI-')) {
           const personalised = this.serialiseGameStateForViewer(gameState, pid);
           this.io.to(pid).emit('gameUpdated', personalised);
-          this.io.to(pid).emit('gameEnded', outcome);
+          this.emitGameEndedToPlayer(pid, outcome, gameState);
         }
       }
       return { gameState: this.serialiseGameState(gameState), appliedArcana: [] };
@@ -868,14 +980,15 @@ export class GameManager {
       if (gameState.activeEffects.focusFire && gameState.activeEffects.focusFire[moverColor]) {
         const { pickWeightedArcana } = await import('./arcana/arcanaUtils.js');
         const bonusCard = pickWeightedArcana();
-        gameState.arcanaByPlayer[socket.id].push(bonusCard);
+        const bonusInstance = makeArcanaInstance(bonusCard);
+        gameState.arcanaByPlayer[socket.id].push(bonusInstance);
         gameState.activeEffects.focusFire[moverColor] = false; // Clear after use
         
         // Notify player of bonus card
         if (!socket.id.startsWith('AI-')) {
           this.io.to(socket.id).emit('arcanaDrawn', {
             playerId: socket.id,
-            arcana: bonusCard,
+            arcana: bonusInstance,
             reason: 'Focus Fire bonus'
           });
         }
@@ -921,7 +1034,8 @@ export class GameManager {
       // Give each player 1 weighted-random arcana card
       for (const pid of gameState.playerIds) {
         const arcana = pickWeightedArcana();
-        gameState.arcanaByPlayer[pid].push(arcana);
+        const inst = makeArcanaInstance(arcana);
+        gameState.arcanaByPlayer[pid].push(inst);
       }
       
       const payload = { gameId, reason: 'firstCapture' };
@@ -1001,7 +1115,7 @@ export class GameManager {
     if (outcome) {
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
-          this.io.to(pid).emit('gameEnded', outcome);
+          this.emitGameEndedToPlayer(pid, outcome, gameState);
         }
       }
     }
@@ -1115,8 +1229,8 @@ export class GameManager {
     // === AI ARCANA LOGIC (only in Ascendant mode) ===
     if (gameState.ascended && gameState.mode === 'Ascendant' && aiSocketId) {
       const aiCards = gameState.arcanaByPlayer[aiSocketId] || [];
-      const usedIndices = gameState.usedArcanaIdsByPlayer[aiSocketId] || [];
-      const availableCards = aiCards.filter((card, idx) => !usedIndices.includes(idx));
+      const usedInstanceIds = gameState.usedArcanaIdsByPlayer[aiSocketId] || [];
+      const availableCards = aiCards.filter((card) => !usedInstanceIds.includes(card.instanceId));
       
       // Check if AI already used a card this turn
       const aiUsedCardThisTurn = gameState.aiUsedCardThisTurn || false;
@@ -1124,16 +1238,17 @@ export class GameManager {
       // AI Draw Card Logic (before using cards)
       if (!aiUsedCardThisTurn && Math.random() < settings.arcanaDrawChance && !gameState.lastDrawnBy?.startsWith('AI-')) {
         const newCard = pickWeightedArcana();
-        gameState.arcanaByPlayer[aiSocketId].push(newCard);
+        const newInst = makeArcanaInstance(newCard);
+        gameState.arcanaByPlayer[aiSocketId].push(newInst);
         gameState.lastDrawnBy = aiSocketId;
         
         // Notify human player that AI drew a card
         const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));
         if (humanId) {
           this.io.to(humanId).emit('arcanaDrawn', {
-            playerId: aiSocketId,
-            arcana: newCard,
-          });
+              playerId: aiSocketId,
+              arcana: newInst,
+            });
         }
         
         // After drawing, pass turn by swapping color
@@ -1328,7 +1443,8 @@ export class GameManager {
       // Give each player 1 weighted-random arcana card
       for (const pid of gameState.playerIds) {
         const arcana = pickWeightedArcana();
-        gameState.arcanaByPlayer[pid].push(arcana);
+        const inst = makeArcanaInstance(arcana);
+        gameState.arcanaByPlayer[pid].push(inst);
       }
       
       const payload = { gameId: gameState.id, reason: 'firstCapture' };
@@ -1465,9 +1581,11 @@ export class GameManager {
       }
     }
     
-    // Apply the arcana
-    const arcanaUsed = [{ arcanaId: card.id, params }];
-    const appliedArcana = applyArcana(aiSocketId, gameState, arcanaUsed, null, this.io);
+    // Apply the arcana. Include the instanceId for stricter server validation.
+    const arcanaUsed = [{ arcanaId: card.id, instanceId: card.instanceId, params }];
+    const appliedArcana = this.applyArcana
+      ? this.applyArcana(aiSocketId, gameState, arcanaUsed, null)
+      : applyArcana(aiSocketId, gameState, arcanaUsed, null, this.io);
     
     if (appliedArcana.length > 0) {
       return { success: true, endsTurn: turnEndingCards.includes(card.id) };
@@ -1653,9 +1771,9 @@ export class GameManager {
     const otherPlayerId = gameState.playerIds.find((id) => id !== socket.id);
     const outcome = { type: 'forfeit', loserSocketId: socket.id, winnerSocketId: otherPlayerId };
 
-    for (const pid of gameState.playerIds) {
+      for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {
-        this.io.to(pid).emit('gameEnded', outcome);
+        this.emitGameEndedToPlayer(pid, outcome, gameState);
       }
       // Clean up socket->game mapping for all player IDs
       this.socketToGame.delete(pid);
@@ -1729,14 +1847,15 @@ export class GameManager {
     return { ok: true, newGameState: this.serialiseGameState(newGameState) };
   }
 
-  cancelRematchGame(gameId) {
+  cancelRematchGame(gameId, reason) {
     const gameState = this.games.get(gameId);
     if (!gameState) return;
 
+    const message = reason || 'Rematch cancelled';
     // Notify remaining players that rematch was cancelled
     for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {
-        this.io.to(pid).emit('rematchCancelled', { message: 'Rematch cancelled' });
+        this.io.to(pid).emit('rematchCancelled', { message });
       }
     }
 
@@ -1759,15 +1878,43 @@ export class GameManager {
       const outcome = { type: 'disconnect', loserSocketId: socketId, winnerSocketId: otherPlayerId };
 
       if (otherPlayerId && !otherPlayerId.startsWith('AI-')) {
-        this.io.to(otherPlayerId).emit('gameEnded', outcome);
+        this.emitGameEndedToPlayer(otherPlayerId, outcome, gameState);
       }
     } else if (gameState.status === 'finished' && gameState.rematchVotes) {
-      // Game is finished - if player leaves, cancel rematch
-      this.cancelRematchGame(gameId);
+      // Game is finished - if player disconnects while rematch voting is active,
+      // cancel the rematch and notify the remaining player with a clear reason.
+      this.cancelRematchGame(gameId, 'Opponent disconnected from post-match screen');
       return;
     }
 
     this.games.delete(gameId);
     this.socketToGame.delete(socketId);
+  }
+
+  // Called when a player explicitly returns to the menu from the post-match screen
+  // (client remains connected but leaves the post-match state). This cancels any
+  // pending rematch votes and notifies the remaining player with a clear message.
+  handlePlayerLeftPostMatch(socket) {
+    const socketId = socket?.id || socket;
+    const gameId = this.socketToGame.get(socketId);
+    if (!gameId) return;
+    const gameState = this.games.get(gameId);
+    if (!gameState) return;
+    // Only act if this socket is still mapped to a finished game (post-match).
+    // If the mapping already points to a newly-started game (status !== 'finished'),
+    // a rematch has already been initiated and we must not delete the new game.
+    if (gameState.status === 'finished' && gameState.rematchVotes) {
+      this.cancelRematchGame(gameId, 'Opponent returned to menu');
+      return;
+    }
+
+    // If the game is finished but there are no rematch votes, just clean up mappings
+    // for this finished game without touching other (possibly newly created) games.
+    if (gameState.status === 'finished') {
+      this.games.delete(gameId);
+      for (const pid of gameState.playerIds) {
+        this.socketToGame.delete(pid);
+      }
+    }
   }
 }
