@@ -44,10 +44,14 @@ export function MainMenu({
                 <button className="menu-secondary" onClick={() => setShowUpdateLog(false)} style={{ padding: '4px 8px' }}>Dismiss</button>
               </div>
               <div style={{ marginTop: 8, color: '#aab8c9', fontSize: '0.9rem' }}>
-                <div><strong>v1.0.0</strong> — Fixed rematch race & arcana ownership bugs.</div>
-                <div>• Rematch cancellation now notifies opponent clearly.</div>
-                <div>• Server enforces per-card instance ownership for arcana.</div>
-                <div>• Client no longer auto-returns to menu after game end.</div>
+                <div><strong>v1.1.0</strong> — Stability, visuals, and dev-tool improvements.</div>
+                <div>• Fixed 'Find Match' button state when returning to the menu.</div>
+                <div>• Used arcana are now removed from player hands after use.</div>
+                <div>• Card visuals (particles/cutscenes) now start after the use-card animation to prevent duplicates.</div>
+                <div>• Draw cooldown adjusted: each player may draw again after one full turn.</div>
+                <div>• `pawn_guard` shield follows its pawn when moved (dev-tool and in-game parity).</div>
+                <div>• Dev Tool: `/api/test-card` now uses server logic, returns `afterState` and `applied` details, and supports `instanceId` and last-move testing.</div>
+                <div>• Automated and headless tests added; fixes committed and pushed.</div>
               </div>
             </div>
           )}
