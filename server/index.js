@@ -34,7 +34,7 @@ app.get('/api/arcana', (req, res) => {
 // Card testing endpoint for balancing tool
 app.post('/api/test-card', (req, res) => {
   try {
-    const { cardId, fen, params, playerColor } = req.body;
+    const { cardId, fen, params, playerColor, moveResult, instanceId } = req.body;
     const chess = new Chess(fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
     const colorChar = playerColor === 'white' ? 'w' : 'b';
 
@@ -54,7 +54,7 @@ app.post('/api/test-card', (req, res) => {
     };
 
     // Give the dev player one instance of the card so applyArcana can validate/remove it
-    gameState.arcanaByPlayer[devPlayerId] = [{ id: cardId, instanceId: `dev-${Date.now()}` }];
+    gameState.arcanaByPlayer[devPlayerId] = [{ id: cardId, instanceId: instanceId || `dev-${Date.now()}` }];
     gameState.arcanaByPlayer[opponentId] = [];
 
     // Snapshot before
@@ -62,7 +62,7 @@ app.post('/api/test-card', (req, res) => {
 
     // Apply the real arcana handler so dev tool reflects in-game behavior
     const arcanaUsed = [{ arcanaId: cardId, params: params || {} }];
-    const applied = applyArcana(devPlayerId, gameState, arcanaUsed, null, io);
+    const applied = applyArcana(devPlayerId, gameState, arcanaUsed, moveResult || null, io);
 
     // Snapshot after
     const afterState = { fen: chess.fen(), pieces: getAllPiecesFromChess(chess), pawnShields: gameState.pawnShields, activeEffects: gameState.activeEffects };

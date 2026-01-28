@@ -101,6 +101,8 @@ export function CardBalancingToolV2({ onBack }) {
   // Server validation state
   const [serverTestActive, setServerTestActive] = useState(false);
   const [serverTestResult, setServerTestResult] = useState(null);
+  const [includeLastMove, setIncludeLastMove] = useState(false);
+  const [instanceId, setInstanceId] = useState('');
   
   // Active visual arcana (for rendering cutscenes/effects)
   const [activeVisualArcana, setActiveVisualArcana] = useState(null);
@@ -204,27 +206,43 @@ export function CardBalancingToolV2({ onBack }) {
     addLog(`Testing ${selectedCard.name} with server...`, 'info');
 
     try {
-      // Create a test game
-      const testGameId = `test-${Date.now()}`;
-      const testPayload = {
-        arcanaId: selectedCard.id,
+      // Build request payload for REST test endpoint
+      const payload = {
+        cardId: selectedCard.id,
         fen: chess.fen(),
-        params: targetSquare ? { targetSquare } : {},
+        params: targetSquare ? { targetSquare } : (Object.keys(customParams).length ? customParams : {}),
+        playerColor,
       };
+      if (includeLastMove && moveHistory.length > 0) payload.moveResult = moveHistory[moveHistory.length - 1];
+      if (instanceId) payload.instanceId = instanceId;
 
-      // Send test request to server
-      socket.emit('balancingToolTest', testPayload, (response) => {
-        setServerTestActive(false);
-        
-        if (response.success) {
-          addLog(`✓ Server validation passed: ${selectedCard.name}`, 'success');
-          setServerTestResult({ success: true, data: response });
-          setValidationChecklist(prev => ({ ...prev, server: true }));
-        } else {
-          addLog(`✗ Server validation failed: ${response.error}`, 'error');
-          setServerTestResult({ success: false, error: response.error });
-        }
+      // POST to /api/test-card so the dev tool uses canonical server logic
+      const resp = await fetch('/api/test-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
+      const json = await resp.json();
+      setServerTestActive(false);
+
+      if (json.ok) {
+        addLog(`✓ Server validation passed: ${selectedCard.name}`, 'success');
+        setServerTestResult({ success: true, data: json });
+        // Apply returned afterState to local tool for accurate preview
+        if (json.afterState) {
+          if (json.afterState.activeEffects) setActiveEffects(json.afterState.activeEffects);
+          if (json.afterState.pawnShields) setPawnShields(json.afterState.pawnShields);
+          if (json.afterState.fen) {
+            const newChess = new Chess(json.afterState.fen);
+            setChess(newChess);
+            setFen(json.afterState.fen);
+          }
+        }
+        setValidationChecklist(prev => ({ ...prev, server: true }));
+      } else {
+        addLog(`✗ Server validation failed: ${json.error || 'Unknown'}`, 'error');
+        setServerTestResult({ success: false, error: json.error || 'Unknown' });
+      }
 
       // Timeout guard
       setTimeout(() => {
@@ -970,13 +988,29 @@ export function CardBalancingToolV2({ onBack }) {
             >
               {targetingMode ? 'Targeting...' : 'Test Card'}
             </button>
-            <button
-              style={{ ...styles.button, background: serverTestActive ? '#ff8800' : '#2a7a2a' }}
-              onClick={testWithServer}
-              disabled={!selectedCard || serverTestActive}
-            >
-              {serverTestActive ? 'Testing...' : 'Test with Server'}
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <label style={{ color: '#ddd', fontSize: 12 }}>Player:</label>
+              <select value={playerColor} onChange={(e) => setPlayerColor(e.target.value)} style={styles.selectSmall}>
+                <option value="white">White</option>
+                <option value="black">Black</option>
+              </select>
+              <label style={{ color: '#ddd', fontSize: 12, marginLeft: 8 }}>
+                <input type="checkbox" checked={includeLastMove} onChange={(e) => setIncludeLastMove(e.target.checked)} /> Include last move
+              </label>
+              <input
+                placeholder="Instance ID (optional)"
+                value={instanceId}
+                onChange={(e) => setInstanceId(e.target.value)}
+                style={{ ...styles.input, width: 180 }}
+              />
+              <button
+                style={{ ...styles.button, background: serverTestActive ? '#ff8800' : '#2a7a2a' }}
+                onClick={testWithServer}
+                disabled={!selectedCard || serverTestActive}
+              >
+                {serverTestActive ? 'Testing...' : 'Test with Server'}
+              </button>
+            </div>
             <button style={styles.button} onClick={resetTest}>Reset</button>
             {targetingMode && <span style={{ ...styles.infoText, color: '#00ddff', fontWeight: 'bold' }}>Click on a piece to target</span>}
             {!targetingMode && selectedSquare && <span style={styles.infoText}>Selected: {selectedSquare}</span>}
@@ -987,6 +1021,22 @@ export function CardBalancingToolV2({ onBack }) {
               <span style={{ ...styles.infoText, color: serverTestResult.success ? '#00ff00' : '#ff0000', fontWeight: 'bold' }}>
                 {serverTestResult.success ? '✓ Server OK' : `✗ ${serverTestResult.error}`}
               </span>
+            )}
+            {serverTestResult && serverTestResult.success && serverTestResult.data && (
+              <div style={{ marginTop: 8, color: '#ddd', fontSize: 12 }}>
+                <div><strong>Applied:</strong></div>
+                <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 120, overflow: 'auto', background: '#111', padding: 8, borderRadius: 6 }}>
+                  {JSON.stringify(serverTestResult.data.applied || serverTestResult.data.appliedArcana || serverTestResult.data.applied, null, 2)}
+                </pre>
+                {serverTestResult.data.afterState && (
+                  <>
+                    <div style={{ marginTop: 6 }}><strong>Active Effects:</strong></div>
+                    <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', background: '#111', padding: 8, borderRadius: 6 }}>
+                      {JSON.stringify(serverTestResult.data.afterState.activeEffects || serverTestResult.data.activeEffects, null, 2)}
+                    </pre>
+                  </>
+                )}
+              </div>
             )}
             
             {/* Active Shield Status */}
