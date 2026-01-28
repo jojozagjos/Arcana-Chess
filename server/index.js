@@ -41,7 +41,7 @@ app.post('/api/test-card', (req, res) => {
     // Build a small mock game state that mirrors the real gameState shape
     const devPlayerId = 'DEV-PLAYER';
     const opponentId = 'DEV-OPPONENT';
-    const gameState = {
+      const gameState = {
       id: 'dev-game',
       chess,
       playerIds: [devPlayerId, opponentId],
@@ -50,7 +50,31 @@ app.post('/api/test-card', (req, res) => {
       usedArcanaIdsByPlayer: {},
       usedArcanaInstanceIdsByPlayer: {},
       pawnShields: { w: null, b: null },
-      activeEffects: {},
+      activeEffects: {
+        ironFortress: { w: false, b: false },
+        bishopsBlessing: { w: null, b: null },
+        timeFrozen: { w: false, b: false },
+        cursedSquares: [],
+        sanctuaries: [],
+        fogOfWar: { w: false, b: false },
+        doubleStrike: { w: false, b: false },
+        doubleStrikeActive: null,
+        poisonTouch: { w: false, b: false },
+        poisonedPieces: [],
+        squireSupport: [],
+        queensGambit: { w: 0, b: 0 },
+        queensGambitUsed: { w: false, b: false },
+        divineIntervention: { w: false, b: false },
+        mirrorImages: [],
+        spectralMarch: { w: false, b: false },
+        phantomStep: { w: false, b: false },
+        pawnRush: { w: false, b: false },
+        sharpshooter: { w: false, b: false },
+        mindControlled: [],
+        enPassantMaster: { w: false, b: false },
+        temporalEcho: null,
+        knightOfStorms: { w: null, b: null },
+      },
     };
 
     // Give the dev player one instance of the card so applyArcana can validate/remove it
