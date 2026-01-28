@@ -78,6 +78,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const recentlyRevealedPeekKeysRef = useRef(new Set());
   // Track pending visual events for arcana use animations
   const pendingVisualEventsRef = useRef([]);
+  // Queue for arcana events that should only trigger visuals after animations finish
+  const pendingLastArcanaRef = useRef([]);
+  const lastProcessedArcanaAtRef = useRef(null);
+  const lastActiveVisualKeyRef = useRef(null);
   const USE_CARD_ANIM_MS = 800;
 
   const mySocketId = socket.id;
@@ -189,6 +193,23 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   useEffect(() => {
     if (!lastArcanaEvent) return;
+    // Avoid replaying the same event
+    if (lastArcanaEvent.at && lastProcessedArcanaAtRef.current === lastArcanaEvent.at) return;
+
+    // If a card animation is playing, queue the arcana event to be processed after animation finishes
+    if (isCardAnimationPlaying) {
+      pendingLastArcanaRef.current.push(lastArcanaEvent);
+      return;
+    }
+
+    // Otherwise process immediately, but avoid duplicating an active visual
+    const key = `${lastArcanaEvent.arcanaId}:${lastArcanaEvent.owner}`;
+    if (lastActiveVisualKeyRef.current === key) {
+      lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
+      return;
+    }
+    lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
+    lastActiveVisualKeyRef.current = key;
     setActiveVisualArcana(lastArcanaEvent);
     
     // Check if this arcana has cutscene enabled and a target square
@@ -249,6 +270,30 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     };
   }, [lastArcanaEvent, triggerCutscene]);
 
+  // When card animation finishes, flush any queued arcana events so visuals play after animation
+  useEffect(() => {
+    if (isCardAnimationPlaying) return; // still animating
+    if (!pendingLastArcanaRef.current || pendingLastArcanaRef.current.length === 0) return;
+
+    // Process queued events in order, but only one at a time to avoid overlap
+    const next = pendingLastArcanaRef.current.shift();
+    if (!next) return;
+    // avoid duplicates if we've just started the same visual
+    const nextKey = `${next.arcanaId}:${next.owner}`;
+    if (lastActiveVisualKeyRef.current === nextKey) {
+      lastProcessedArcanaAtRef.current = next.at || Date.now();
+      return;
+    }
+    lastProcessedArcanaAtRef.current = next.at || Date.now();
+    lastActiveVisualKeyRef.current = nextKey;
+    setActiveVisualArcana(next);
+    // Auto-clear visual after same duration used above
+    const t = setTimeout(() => {
+      setActiveVisualArcana(null);
+    }, 1500);
+    timeoutsRef.current.push(t);
+  }, [isCardAnimationPlaying]);
+
   // Load arcana visual effects module on demand when visuals or persistent effects are present
   useEffect(() => {
     const needsVisuals = !!(lastArcanaEvent || (gameState && gameState.activeEffects));
@@ -306,7 +351,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         const eventIndex = pendingVisualEventsRef.current.findIndex((e) => e.useId === useId);
         if (eventIndex !== -1) {
           const [event] = pendingVisualEventsRef.current.splice(eventIndex, 1);
-          setActiveVisualArcana({ arcanaId: event.cardId, actorColor: event.actorColor });
+          const key = `${event.cardId}:${data.playerId}`;
+          lastActiveVisualKeyRef.current = key;
+          setActiveVisualArcana({ arcanaId: event.cardId, actorColor: event.actorColor, key });
         }
         if (isMyUse) {
           setIsCardAnimationPlaying(false);

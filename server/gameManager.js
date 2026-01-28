@@ -273,19 +273,40 @@ export class GameManager {
   }
 
   serialiseGameState(gameState) {
-    // Convert used indices to used IDs for client display
+    // Convert used markers (legacy indices or instanceIds) to arcana definition IDs
     const usedArcanaPlain = {};
-    for (const [socketId, usedInstanceIds] of Object.entries(gameState.usedArcanaIdsByPlayer || {})) {
+    const byInstance = gameState.usedArcanaInstanceIdsByPlayer || {};
+    const byLegacy = gameState.usedArcanaIdsByPlayer || {};
+    const allPlayerIds = new Set([...Object.keys(byInstance), ...Object.keys(byLegacy)]);
+    for (const socketId of allPlayerIds) {
       const playerArcana = gameState.arcanaByPlayer[socketId] || [];
-      // Map stored instanceIds to the arcana definition IDs for client display
-      if (Array.isArray(usedInstanceIds)) {
-        usedArcanaPlain[socketId] = usedInstanceIds
-          .map(instId => playerArcana.find(c => c.instanceId === instId)?.id)
-          .filter(Boolean);
-      } else {
-        // If it's a Set or other iterable, convert each instanceId to definition id
-        usedArcanaPlain[socketId] = Array.from(usedInstanceIds).map(instId => playerArcana.find(c => c.instanceId === instId)?.id).filter(Boolean);
+      const ids = new Set();
+
+      // Instance-id based marks (preferred)
+      const instArr = Array.isArray(byInstance[socketId]) ? byInstance[socketId] : (byInstance[socketId] ? Array.from(byInstance[socketId]) : []);
+      for (const instId of instArr) {
+        const card = playerArcana.find(c => c.instanceId === instId);
+        if (card && card.id) ids.add(card.id);
       }
+
+      // Legacy marks: may be numeric indices or string instanceIds/ids
+      const legacy = byLegacy[socketId];
+      if (legacy) {
+        const legacyArr = Array.isArray(legacy) ? legacy : Array.from(legacy);
+        for (const v of legacyArr) {
+          if (typeof v === 'number') {
+            const card = playerArcana[v];
+            if (card && card.id) ids.add(card.id);
+          } else if (typeof v === 'string') {
+            // Could be an instanceId, or already an arcana id
+            const cardByInst = playerArcana.find(c => c.instanceId === v);
+            if (cardByInst && cardByInst.id) ids.add(cardByInst.id);
+            else ids.add(v);
+          }
+        }
+      }
+
+      usedArcanaPlain[socketId] = Array.from(ids);
     }
 
     return {
@@ -418,19 +439,24 @@ export class GameManager {
         if (gameState.chess.inCheck()) throw new Error('You cannot draw while in check');
       }
       
-      // Check draw cooldown rule: require at least 4 plies (half-moves) between draws.
+      // Check draw cooldown rule: require at least 2 plies (one full turn) between draws.
       // Using raw ply counts avoids ambiguity when FEN is swapped without adding to history.
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
       const lastDrawPly = gameState.lastDrawTurn[socket.id]; // stored as ply index per-player
 
       // First draw is always allowed (lastDrawPly is -99 initially)
-      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 4) {
+      // Enforce that at least 2 half-moves (opponent's move + your next turn) have passed
+      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 2) {
         console.log('[DRAW BLOCKED] socket=', socket.id, 'currentPly=', currentPly, 'lastDrawPly=', lastDrawPly);
         throw new Error('Must wait 1 full turn between draws');
       }
 
       const newCard = pickWeightedArcana();
       const instanceCard = makeArcanaInstance(newCard);
+      // Defensive: ensure player's arcana array exists (may be missing in some edge cases)
+      if (!gameState.arcanaByPlayer) gameState.arcanaByPlayer = {};
+      if (!Array.isArray(gameState.arcanaByPlayer[socket.id])) gameState.arcanaByPlayer[socket.id] = [];
+      if (!instanceCard) throw new Error('Failed to create arcana instance');
       gameState.arcanaByPlayer[socket.id].push(instanceCard);
       // Store the ply index when this player drew
       gameState.lastDrawTurn[socket.id] = currentPly; // Track per-player as ply count
@@ -843,10 +869,40 @@ export class GameManager {
     }
     // For pawn_guard: if the guarding pawn itself is captured, the shield is broken
     if (myShield && myShield.shieldType === 'behind' && myShield.pawnSquare) {
-      const guardPawn = chess.get(myShield.pawnSquare);
-      // If pawn no longer exists at its square (captured or moved away), clear shield
-      if (!guardPawn || guardPawn.type !== 'p' || guardPawn.color !== moverColor) {
-        gameState.pawnShields[moverColor] = null;
+      // If the guarding pawn moved this turn, update its tracked square and
+      // recompute which friendly piece (if any) is now behind it to protect.
+      if (result.from === myShield.pawnSquare) {
+        // Move the pawnSquare to the pawn's new location
+        myShield.pawnSquare = result.to;
+
+        // Recompute protected piece behind the pawn in same file
+        const file = result.to[0];
+        const rank = parseInt(result.to[1], 10);
+        const direction = moverColor === 'w' ? -1 : 1;
+        let foundSquare = null;
+        for (let r = rank + direction; moverColor === 'w' ? r >= 1 : r <= 8; r += direction) {
+          const checkSquare = `${file}${r}`;
+          const piece = chess.get(checkSquare);
+          if (piece) {
+            if (piece.color === moverColor) {
+              foundSquare = checkSquare;
+            }
+            break; // stop at first piece
+          }
+        }
+
+        if (foundSquare) {
+          myShield.square = foundSquare;
+        } else {
+          // No friendly piece behind pawn anymore - clear the shield
+          gameState.pawnShields[moverColor] = null;
+        }
+      } else {
+        // Guarding pawn didn't move this action: ensure it still exists at tracked square
+        const guardPawn = chess.get(myShield.pawnSquare);
+        if (!guardPawn || guardPawn.type !== 'p' || guardPawn.color !== moverColor) {
+          gameState.pawnShields[moverColor] = null;
+        }
       }
     }
 

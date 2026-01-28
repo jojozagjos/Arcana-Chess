@@ -104,6 +104,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
 
   const chess = gameState.chess;
   const appliedDefs = [];
+  const indicesToRemove = []; // Track indices for removal (in reverse order for safe splicing)
 
   for (const use of arcanaUsed) {
     // Prefer instanceId matching when provided (more robust against index shifts).
@@ -119,6 +120,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
 
     if (defIndex === -1) continue;
     const def = available[defIndex];
+    indicesToRemove.push(defIndex); // Mark for removal after this loop
 
     // Get mover color from moveResult if available, otherwise from current turn
     const moverColor = moveResult?.color || chess.turn();
@@ -185,6 +187,12 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
         }
       }
     }
+  }
+
+  // Remove used cards from the player's hand (in reverse order to avoid index shifts)
+  indicesToRemove.sort((a, b) => b - a);
+  for (const idx of indicesToRemove) {
+    available.splice(idx, 1);
   }
 
   return appliedDefs;

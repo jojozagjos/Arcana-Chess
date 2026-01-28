@@ -236,6 +236,8 @@ export function App() {
         setGameEndOutcome(null);
         setAscendedInfo(null);
         setLastArcanaEvent(null);
+        setQuickMatchStatus('');
+        setQuickMatchLoading(false);
         setScreen('main-menu');
       });
       return;
@@ -250,6 +252,8 @@ export function App() {
         setGameEndOutcome(null);
         setAscendedInfo(null);
         setLastArcanaEvent(null);
+        setQuickMatchStatus('');
+        setQuickMatchLoading(false);
         setScreen('main-menu');
       });
       return;
@@ -260,6 +264,8 @@ export function App() {
     setGameEndOutcome(null);
     setAscendedInfo(null);
     setLastArcanaEvent(null);
+    setQuickMatchStatus('');
+    setQuickMatchLoading(false);
     setScreen('main-menu');
   };
 

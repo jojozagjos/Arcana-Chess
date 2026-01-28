@@ -35,38 +35,41 @@ app.get('/api/arcana', (req, res) => {
 app.post('/api/test-card', (req, res) => {
   try {
     const { cardId, fen, params, playerColor } = req.body;
-    
     const chess = new Chess(fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
     const colorChar = playerColor === 'white' ? 'w' : 'b';
-    
-    // Get piece positions before
-    const beforeState = {
-      fen: chess.fen(),
-      pieces: getAllPiecesFromChess(chess),
+
+    // Build a small mock game state that mirrors the real gameState shape
+    const devPlayerId = 'DEV-PLAYER';
+    const opponentId = 'DEV-OPPONENT';
+    const gameState = {
+      id: 'dev-game',
+      chess,
+      playerIds: [devPlayerId, opponentId],
+      playerColors: { [devPlayerId]: playerColor || 'white', [opponentId]: playerColor === 'white' ? 'black' : 'white' },
+      arcanaByPlayer: {},
+      usedArcanaIdsByPlayer: {},
+      usedArcanaInstanceIdsByPlayer: {},
+      pawnShields: { w: null, b: null },
+      activeEffects: {},
     };
-    
-    // Simulate card effect (simplified server-side test)
-    const card = ARCANA_DEFINITIONS.find(c => c.id === cardId);
-    if (!card) {
-      return res.json({ ok: false, error: 'Card not found' });
-    }
-    
-    // Apply basic transformations based on card type
-    applyTestCardEffect(chess, card, params, colorChar);
-    
-    // Get piece positions after
-    const afterState = {
-      fen: chess.fen(),
-      pieces: getAllPiecesFromChess(chess),
-    };
-    
-    res.json({
-      ok: true,
-      card,
-      beforeState,
-      afterState,
-      params,
-    });
+
+    // Give the dev player one instance of the card so applyArcana can validate/remove it
+    gameState.arcanaByPlayer[devPlayerId] = [{ id: cardId, instanceId: `dev-${Date.now()}` }];
+    gameState.arcanaByPlayer[opponentId] = [];
+
+    // Snapshot before
+    const beforeState = { fen: chess.fen(), pieces: getAllPiecesFromChess(chess), pawnShields: gameState.pawnShields };
+
+    // Apply the real arcana handler so dev tool reflects in-game behavior
+    const arcanaUsed = [{ arcanaId: cardId, params: params || {} }];
+    const applied = applyArcana(devPlayerId, gameState, arcanaUsed, null, io);
+
+    // Snapshot after
+    const afterState = { fen: chess.fen(), pieces: getAllPiecesFromChess(chess), pawnShields: gameState.pawnShields, activeEffects: gameState.activeEffects };
+
+    const card = ARCANA_DEFINITIONS.find(c => c.id === cardId) || null;
+
+    res.json({ ok: true, card, applied, beforeState, afterState, params });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
