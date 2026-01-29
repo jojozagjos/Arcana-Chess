@@ -169,7 +169,7 @@ export function IntroScreen({ onContinue }) {
       <Canvas
         camera={{ position: [0, 0, 8], fov: 60 }}
         style={{ background: '#000000ff', opacity, pointerEvents: 'none' }}
-        gl={{ antialias: false, alpha: true, depth: false, stencil: false, powerPreference: 'low-power', preserveDrawingBuffer: false }}
+        gl={{ antialias: true, alpha: true, depth: true, stencil: false, powerPreference: 'low-power', preserveDrawingBuffer: false }}
         onCreated={({ gl }) => {
           const canvas = gl.domElement;
           const handleLost = (e) => { e.preventDefault(); console.warn('WebGL context lost in IntroScreen'); };

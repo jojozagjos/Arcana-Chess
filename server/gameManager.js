@@ -442,13 +442,18 @@ export class GameManager {
       // Check draw cooldown rule: require at least 2 plies (one full turn) between draws.
       // Using raw ply counts avoids ambiguity when FEN is swapped without adding to history.
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
+      // Defensive: ensure lastDrawTurn map exists and has a default
+      if (!gameState.lastDrawTurn) gameState.lastDrawTurn = {};
+      if (typeof gameState.lastDrawTurn[socket.id] === 'undefined') gameState.lastDrawTurn[socket.id] = -99;
       const lastDrawPly = gameState.lastDrawTurn[socket.id]; // stored as ply index per-player
 
       // First draw is always allowed (lastDrawPly is -99 initially)
-      // Enforce that at least 2 half-moves (opponent's move + your next turn) have passed
-      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 2) {
+      // Enforce that at least 1 half-move (opponent's move) has passed since your last draw.
+      // A draw action swaps active color without adding to history, so allowing the draw
+      // after the opponent has played one move is the intended behavior.
+      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 1) {
         console.log('[DRAW BLOCKED] socket=', socket.id, 'currentPly=', currentPly, 'lastDrawPly=', lastDrawPly);
-        throw new Error('Must wait 1 full turn between draws');
+        throw new Error('Must wait 1 opponent move between draws');
       }
 
       const newCard = pickWeightedArcana();

@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 
 // ArcanaCard component: displays card background, icon, and name
-export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo, deferLoad = false }) {
+export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo, deferLoad = false, style = {} }) {
   const [hovered, setHovered] = useState(false);
   const [tooltipStyle, setTooltipStyle] = useState(null);
   const [bgLoaded, setBgLoaded] = useState(false);
@@ -22,23 +22,26 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
 
   const dims = sizes[size] || sizes.medium;
 
+  const rootStyle = {
+    width: dims.width,
+    height: dims.height,
+    position: 'relative',
+    borderRadius: 8,
+    overflow: 'hidden',
+    cursor: onClick ? 'pointer' : 'default',
+    border: 'none',
+    opacity: isUsed ? 0.55 : 1,
+    transition: 'transform 0.18s ease, box-shadow 0.18s ease',
+    transformOrigin: 'center center',
+    boxSizing: 'border-box',
+    ...style,
+  };
+
   return (
     <div
-      style={{
-        width: dims.width,
-        height: dims.height,
-        position: 'relative',
-        borderRadius: 8,
-        overflow: 'hidden',
-          cursor: onClick ? 'pointer' : 'default',
-          border: 'none',
-          opacity: isUsed ? 0.55 : 1,
-          transition: 'transform 0.18s ease, box-shadow 0.18s ease',
-          // boxShadow: isSelected ? '0 0 18px rgba(47,111,237,0.65)' : '0 4px 12px rgba(0,0,0,0.4)',
-          transformOrigin: 'center center',
-      }}
+      style={rootStyle}
       onClick={onClick}
-        ref={cardRef}
+      ref={cardRef}
         onMouseEnter={(e) => {
           if (onClick) e.currentTarget.style.transform = 'scale(1.05)';
           setHovered(true);

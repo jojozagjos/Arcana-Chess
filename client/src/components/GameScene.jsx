@@ -41,6 +41,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [visionMoves, setVisionMoves] = useState([]); // Opponent legal moves when vision is active
   const [highlightedSquares, setHighlightedSquares] = useState([]); // For Line of Sight, Map Fragments, etc
   const [highlightColor, setHighlightColor] = useState('#88c0d0'); // Default cyan color for highlights
+  const [highlightedArcana, setHighlightedArcana] = useState(null); // which arcana produced highlightedSquares
   const [peekCardDialog, setPeekCardDialog] = useState(null); // { cardCount, opponentId } when selecting card to peek
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
   // Hover threat sources: set of squares (e.g. new Set(['e5','d4'])) that attack a simulated destination
@@ -382,25 +383,28 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         case 'line_of_sight': {
           const squares = params?.legalMoves || [];
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
+          setHighlightedArcana('line_of_sight');
           setHighlightColor('#88c0d0');
           // Auto-clear as a safety after a short duration
-          const t = setTimeout(() => setHighlightedSquares([]), 6000);
+          const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
           timeoutsRef.current.push(t);
           break;
         }
         case 'map_fragments': {
           const squares = params?.predictedSquares || [];
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
+          setHighlightedArcana('map_fragments');
           setHighlightColor('#bf616a');
-          const t = setTimeout(() => setHighlightedSquares([]), 6000);
+          const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
           timeoutsRef.current.push(t);
           break;
         }
         case 'quiet_thought': {
           const squares = params?.threats || [];
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
+          setHighlightedArcana('quiet_thought');
           setHighlightColor('#ff4444');
-          const t = setTimeout(() => setHighlightedSquares([]), 6000);
+          const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
           timeoutsRef.current.push(t);
           break;
         }
@@ -649,6 +653,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             setPendingMoveError(res?.error || 'Move rejected');
             // If move failed, ensure we don't treat the sound as consumed
             playedMoveKeysRef.current.delete(moveKey);
+            // Clear selection/promotion UI so user can retry safely
+            setPromotionDialog(null);
+            setSelectedSquare(null);
+            setLegalTargets([]);
           } else {
             // Server callback may also attempt to play sounds for moves coming from network.
             // Skip duplicate playback if we've already played for this move (via playedMoveKeysRef)
@@ -705,6 +713,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         if (!res || !res.ok) {
           setPendingMoveError(res?.error || 'Move rejected');
           playedMoveKeysRef.current.delete(moveKey);
+          // Clear selection/promotion UI on failure
+          setPromotionDialog(null);
+          setSelectedSquare(null);
+          setLegalTargets([]);
         } else {
           if (playedMoveKeysRef.current.has(moveKey)) {
             playedMoveKeysRef.current.delete(moveKey);
@@ -1011,6 +1023,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           visionMoves={visionMoves}
           highlightedSquares={highlightedSquares}
           highlightColor={highlightColor}
+          highlightedArcana={highlightedArcana}
         />
         <group>
           {piecesState.map((p) => {
@@ -1553,8 +1566,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   );
 }
 
-function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, onTileHover, hoverThreatSources, targetingMode, chess, myColor, visionMoves, highlightedSquares, highlightColor }) {
+function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, onTileHover, hoverThreatSources, targetingMode, chess, myColor, visionMoves, highlightedSquares, highlightColor, highlightedArcana }) {
   const tiles = [];
+
+  const [hoveredSquare, setHoveredSquare] = React.useState(null);
 
   const isLegalTarget = (fileIndex, rankIndex) => {
     const fileChar = 'abcdefgh'[fileIndex];
@@ -1653,23 +1668,36 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
       }
 
       const hoverThreat = isHoverThreatSource(file, rank);
+      const fileChar = 'abcdefgh'[file];
+      const rankNum = 8 - rank;
+      const sq = `${fileChar}${rankNum}`;
+      const isHoveringThis = hoveredSquare === sq;
+
       tiles.push(
-        <mesh
-          key={`${file}-${rank}`}
-          position={[file - 3.5, 0, rank - 3.5]}
-          receiveShadow
-          onPointerDown={() => onTileClick(file, rank)}
-          onPointerOver={() => onTileHover && onTileHover(file, rank, true)}
-          onPointerOut={() => onTileHover && onTileHover(file, rank, false)}
-        >
-          <boxGeometry args={[1, 0.1, 1]} />
-          <meshStandardMaterial
-            color={color}
-            transparent
-            opacity={opacity}
-            {...(hoverThreat ? { emissive: '#ff4444', emissiveIntensity: 1.2 } : {})}
-          />
-        </mesh>,
+        <group key={`${file}-${rank}`} position={[file - 3.5, 0, rank - 3.5]}>
+          <mesh
+            receiveShadow
+            onPointerDown={() => onTileClick(file, rank)}
+            onPointerOver={(e) => { e.stopPropagation(); setHoveredSquare(sq); onTileHover && onTileHover(file, rank, true); }}
+            onPointerOut={(e) => { e.stopPropagation(); setHoveredSquare(null); onTileHover && onTileHover(file, rank, false); }}
+          >
+            <boxGeometry args={[1, 0.1, 1]} />
+            <meshStandardMaterial
+              color={color}
+              transparent
+              opacity={opacity}
+              {...(hoverThreat ? { emissive: '#ff4444', emissiveIntensity: 1.2 } : {})}
+            />
+          </mesh>
+
+          {/* Line of Sight: when highlighted by line_of_sight and hovered, show risk overlay */}
+          {highlightedArcana === 'line_of_sight' && highlighted && isHoveringThis && (
+            <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[0.28, 0.45, 32]} />
+              <meshStandardMaterial emissive={highlightColor || '#88c0d0'} emissiveIntensity={2} transparent opacity={0.9} color={highlightColor || '#88c0d0'} />
+            </mesh>
+          )}
+        </group>,
       );
     }
   }
@@ -1845,8 +1873,8 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
     return undefined;
   }, [type, stayUntilClick, onDismiss]);
 
-  // Early return if no arcana provided
-  if (!arcana) return null;
+  // Early return only if there's nothing to show (no arcana AND not a hidden draw)
+  if (!arcana && !isHidden) return null;
 
   const isMe = playerId === mySocketId;
   const actionText = type === 'draw' ? 'drew' : 'used';
@@ -1859,7 +1887,13 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
     epic: { glow: 'rgba(156, 39, 176, 0.8)', inner: '#9c27b0' },
     legendary: { glow: 'rgba(255, 193, 7, 0.9)', inner: '#ffc107' },
   };
-  const colors = rarityColors[arcana.rarity] || { glow: 'rgba(136, 192, 208, 0.8)', inner: '#88c0d0' };
+  // For draw animations we don't want the rarity glow — use a neutral/transparent glow
+  const baseColors = rarityColors[(arcana && arcana.rarity) || 'common'] || { glow: 'rgba(136, 192, 208, 0.8)', inner: '#88c0d0' };
+  const isOpponentDraw = type === 'draw' && (isHidden || (playerId && mySocketId && playerId !== mySocketId));
+  const colors = {
+    glow: isOpponentDraw ? 'transparent' : baseColors.glow,
+    inner: baseColors.inner,
+  };
 
   const handleClick = () => {
     if (stayUntilClick && onDismiss) onDismiss();

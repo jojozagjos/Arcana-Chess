@@ -24,10 +24,10 @@ export function MainMenu({
   if (mode === 'root') {
     return (
       <div className="menu-container">
-        <MenuParticlesCanvas />
+        <MenuParticlesCanvas devMode={devMode} />
         <div className="menu-vignette" />
 
-        <div className="menu-ui">
+          <div className="menu-ui">
           <h1 className="menu-title">Arcana Chess</h1>
           {/* <p className="menu-subtitle">Arcana-infused 3D chess with multiplayer and AI.</p> */}
 
@@ -44,14 +44,13 @@ export function MainMenu({
                 <button className="menu-secondary" onClick={() => setShowUpdateLog(false)} style={{ padding: '4px 8px' }}>Dismiss</button>
               </div>
               <div style={{ marginTop: 8, color: '#aab8c9', fontSize: '0.9rem' }}>
-                <div><strong>v1.1.0</strong> — Stability, visuals, and dev-tool improvements.</div>
-                <div>• Fixed 'Find Match' button state when returning to the menu.</div>
-                <div>• Used arcana are now removed from player hands after use.</div>
-                <div>• Card visuals (particles/cutscenes) now start after the use-card animation to prevent duplicates.</div>
-                <div>• Draw cooldown adjusted: each player may draw again after one full turn.</div>
-                <div>• `pawn_guard` shield follows its pawn when moved (dev-tool and in-game parity).</div>
-                <div>• Dev Tool: `/api/test-card` now uses server logic, returns `afterState` and `applied` details, and supports `instanceId` and last-move testing.</div>
-                <div>• Automated and headless tests added; fixes committed and pushed.</div>
+                <div><strong>v1.2.0</strong> — Draw fixes, visuals, and particle improvements.</div>
+                <div>• Fixed draw cooldown: a player can draw again after one opponent half-move.</div>
+                <div>• Opponent draws now show the card-reveal animation (back-only); rarity glow hidden for opponents.</div>
+                <div>• Implemented DOM floating card overlay using ArcanaCard.jsx with stable per-card animations.</div>
+                <div>• Added multi-color nebula clusters and improved particle spawn tuning.</div>
+                <div>• Removed rune glyph fallback; using core textures for consistent visuals.</div>
+                <div>• Fixed build error and applied various UI/visual polish and dev-tool improvements.</div>
               </div>
             </div>
           )}

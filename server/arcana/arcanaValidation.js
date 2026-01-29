@@ -126,6 +126,12 @@ function validatePhantomStep(chess, from, to, piece) {
   const isKnightMove = (fileDiff === 2 && rankDiff === 1) || (fileDiff === 1 && rankDiff === 2);
   if (!isKnightMove) return null;
 
+  // Pawns are allowed to use Phantom Step, but must not land on their own promotion rank
+  if (piece.type === 'p') {
+    const ownPromotionRank = piece.color === 'w' ? 1 : 8;
+    if (toRank === ownPromotionRank) return null;
+  }
+
   const destPiece = chess.get(to);
   if (destPiece && destPiece.color === piece.color) return null;
 
@@ -142,6 +148,10 @@ function validatePawnRush(chess, from, to, color) {
 
   const direction = color === 'w' ? 1 : -1;
   if (toRank !== fromRank + (2 * direction)) return null;
+
+  // Prevent pawns from reaching their own promotion rank via Pawn Rush
+  const ownPromotionRank = color === 'w' ? 1 : 8;
+  if (toRank === ownPromotionRank) return null;
 
   const middleRank = fromRank + direction;
   const middleSquare = String.fromCharCode(fromFile) + middleRank;
@@ -209,6 +219,13 @@ function validateTemporalEcho(chess, from, to, piece, pattern) {
   const destPiece = chess.get(to);
   if (destPiece && destPiece.color === piece.color) return null;
 
+  // If a pawn is repeating a move, prevent it from landing on its own promotion rank
+  if (piece.type === 'p') {
+    const toRank = parseInt(to[1]);
+    const ownPromotionRank = piece.color === 'w' ? 1 : 8;
+    if (toRank === ownPromotionRank) return null;
+  }
+
   // Only check intervening squares for sliding moves (rook/bishop/queen patterns).
   // Knight-like or other non-linear deltas should NOT be blocked by intervening pieces.
   const isSlidingMove = (fileDelta === 0 || rankDelta === 0 || Math.abs(fileDelta) === Math.abs(rankDelta));
@@ -244,6 +261,10 @@ function validateEnPassantMaster(chess, from, to, color) {
 
   const direction = color === 'w' ? 1 : -1;
   if (toRank !== fromRank + direction) return null;
+
+  // Prevent en-passant variant from landing on own promotion rank
+  const ownPromotionRank = color === 'w' ? 1 : 8;
+  if (toRank === ownPromotionRank) return null;
 
   // The pawn to capture must be on the same rank as the source (adjacent horizontally)
   const adjacentSquare = String.fromCharCode(toFile) + fromRank;
