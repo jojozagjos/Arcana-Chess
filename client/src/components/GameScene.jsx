@@ -1892,7 +1892,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   const isOpponentDraw = type === 'draw' && (isHidden || (playerId && mySocketId && playerId !== mySocketId));
   const colors = {
     glow: isOpponentDraw ? 'transparent' : baseColors.glow,
-    inner: isOpponentDraw ? '#c8c8c8' : baseColors.inner,
+    inner: isOpponentDraw ? 'transparent' : baseColors.inner,
   };
 
   const handleClick = () => {
@@ -2129,12 +2129,12 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
                 height: 300,
                 borderRadius: 8,
                 background: 'linear-gradient(135deg, #2e3440 0%, #1a1f2e 100%)',
-                border: '2px solid #88c0d0',
+                border: isHidden ? '2px solid rgba(255,255,255,0.06)' : '2px solid #88c0d0',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontSize: '4rem',
-                color: '#88c0d0',
+                color: isHidden ? '#bcd8ef' : '#88c0d0',
                 boxShadow: `0 0 30px ${colors.glow}`,
               }}>
                 🂠
@@ -2178,7 +2178,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         {type === 'use' && usePhase >= 1 && useProgress > 0.05 && (
           <ParticleOverlay
             type={usePhase === 1 ? 'ring' : 'dissolve'}
-            rarity={arcana.rarity || 'common'}
+            rarity={arcana ? arcana.rarity : 'common'}
             active={true}
           />
         )}
@@ -2187,7 +2187,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         {type === 'draw' && (
           <ParticleOverlay
             type="draw"
-            rarity={arcana.rarity || 'common'}
+            rarity={arcana ? arcana.rarity : 'common'}
             active={true}
           />
         )}

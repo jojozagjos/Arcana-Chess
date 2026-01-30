@@ -8,6 +8,12 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
   const [iconLoaded, setIconLoaded] = useState(false);
   const cardRef = useRef(null);
   const TOOLTIP_MAX_W = 280;
+  const rarity = arcana.rarity || 'common';
+  const rarityCapitalized = rarity.charAt(0).toUpperCase() + rarity.slice(1);
+  const backgroundPath = `/cards/backgrounds/${rarityCapitalized}.png`;
+  const iconId = arcana.id.replace(/_/g, '-');
+  const iconPath = `/cards/icons/${iconId}.png`;
+
   const sizes = {
     small: { width: 80, height: 120, iconSize: 50, fontSize: '0.6rem' },
     medium: { width: 140, height: 210, iconSize: 90, fontSize: '0.75rem' },
@@ -30,40 +36,6 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
     boxSizing: 'border-box',
     ...style,
   };
-
-  // Defensive: if arcana is null/undefined (redacted for opponents), render a back/hidden placeholder
-  if (!arcana) {
-    return (
-      <div
-        style={rootStyle}
-        onClick={onClick}
-        ref={cardRef}
-        onMouseEnter={(e) => { if (onClick) e.currentTarget.style.transform = 'scale(1.03)'; setHovered(true); }}
-        onMouseLeave={(e) => { if (onClick) e.currentTarget.style.transform = 'scale(1)'; setHovered(false); }}
-      >
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'linear-gradient(180deg, rgba(18,24,34,0.95), rgba(6,10,18,0.95))',
-          color: '#cbd5e1',
-          fontWeight: 700,
-          zIndex: 1,
-          fontSize: dims.fontSize,
-        }}>
-          Hidden
-        </div>
-      </div>
-    );
-  }
-
-  const rarity = arcana.rarity || 'common';
-  const rarityCapitalized = rarity.charAt(0).toUpperCase() + rarity.slice(1);
-  const backgroundPath = `/cards/backgrounds/${rarityCapitalized}.png`;
-  const iconId = arcana.id.replace(/_/g, '-');
-  const iconPath = `/cards/icons/${iconId}.png`;
 
   return (
     <div
