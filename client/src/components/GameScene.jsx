@@ -1892,7 +1892,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   const isOpponentDraw = type === 'draw' && (isHidden || (playerId && mySocketId && playerId !== mySocketId));
   const colors = {
     glow: isOpponentDraw ? 'transparent' : baseColors.glow,
-    inner: baseColors.inner,
+    inner: isOpponentDraw ? '#c8c8c8' : baseColors.inner,
   };
 
   const handleClick = () => {
