@@ -46,11 +46,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
   // Hover threat sources: set of squares (e.g. new Set(['e5','d4'])) that attack a simulated destination
   const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
+  // WebGL context loss state - prevents flashing during recovery
+  const [isContextLost, setIsContextLost] = useState(false);
   
   // Camera cutscene system for card effects
   const { cutsceneTarget, triggerCutscene, clearCutscene } = useCameraCutscene();
   const controlsRef = useRef(null);
   const overlayRef = useRef(null);
+  // Store GL instance reference for context management
+  const glRef = useRef(null);
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -920,22 +924,70 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <CutsceneOverlay ref={overlayRef} />
+      {isContextLost && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          color: 'white',
+          fontSize: '18px',
+          fontFamily: 'Arial, sans-serif'
+        }}>
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <div style={{ marginBottom: '10px' }}>Recovering graphics...</div>
+            <div style={{ fontSize: '14px', opacity: 0.7 }}>Please wait</div>
+          </div>
+        </div>
+      )}
       <Canvas 
         camera={{ position: cameraPosition, fov: 40 }} 
         shadows
-        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance' }}
+        gl={{ 
+          antialias: true, 
+          alpha: true, 
+          preserveDrawingBuffer: true,  // Changed to true to prevent flashing on context loss
+          powerPreference: 'high-performance',
+          failIfMajorPerformanceCaveat: false  // Allow fallback to software rendering
+        }}
         onCreated={({ gl }) => {
-          // Handle WebGL context loss gracefully
+          glRef.current = gl;
+          
+          // Handle WebGL context loss gracefully - prevent screen flashing
           gl.domElement.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
-            console.warn('WebGL context lost in GameScene. Preventing default.');
+            setIsContextLost(true);
+            console.warn('WebGL context lost in GameScene. Recovering...');
           });
+          
           gl.domElement.addEventListener('webglcontextrestored', () => {
             console.log('WebGL context restored in GameScene.');
-            try { gl.resetState(); } catch (_) {}
+            // Restore context state
+            try { 
+              if (gl.resetState) gl.resetState(); 
+            } catch (err) {
+              console.warn('Unable to reset GL state:', err);
+            }
+            // Clear the context lost flag after a brief delay to ensure stability
+            setTimeout(() => {
+              setIsContextLost(false);
+            }, 500);
           });
-          // Cap pixel ratio for stability
-          try { gl.setPixelRatio && gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); } catch (_) {}
+          
+          // Cap pixel ratio for stability and performance
+          try { 
+            if (gl.setPixelRatio) {
+              gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); 
+            }
+          } catch (err) {
+            console.warn('Unable to set pixel ratio:', err);
+          }
         }}
       >
         {/* Use the ascension-style lighting by default: slightly dimmer, dramatic "night" environment */}
