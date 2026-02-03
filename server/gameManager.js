@@ -439,7 +439,8 @@ export class GameManager {
         if (gameState.chess.inCheck()) throw new Error('You cannot draw while in check');
       }
       
-      // Check draw cooldown rule: require at least 2 plies (one full turn) between draws.
+      // Check draw cooldown rule: require at least 3 plies between draws.
+      // After drawing, player must: 1) opponent moves, 2) player moves, 3) opponent moves, then can draw again.
       // Using raw ply counts avoids ambiguity when FEN is swapped without adding to history.
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
       // Defensive: ensure lastDrawTurn map exists and has a default
@@ -448,12 +449,11 @@ export class GameManager {
       const lastDrawPly = gameState.lastDrawTurn[socket.id]; // stored as ply index per-player
 
       // First draw is always allowed (lastDrawPly is -99 initially)
-      // Enforce that at least 1 half-move (opponent's move) has passed since your last draw.
-      // A draw action swaps active color without adding to history, so allowing the draw
-      // after the opponent has played one move is the intended behavior.
-      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 1) {
+      // Enforce that at least 3 plies have passed since your last draw.
+      // This ensures: opponent move -> your move -> opponent move -> you can draw
+      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 3) {
         console.log('[DRAW BLOCKED] socket=', socket.id, 'currentPly=', currentPly, 'lastDrawPly=', lastDrawPly);
-        throw new Error('Must wait 1 opponent move between draws');
+        throw new Error('Must wait for opponent move, then make a move, then opponent move before drawing again');
       }
 
       const newCard = pickWeightedArcana();
@@ -778,10 +778,31 @@ export class GameManager {
       validateNonAdjacentCapture(gameState.activeEffects.berserkerRageActive, candidate.to, 'Berserker Rage');
     }
 
-    // Check time freeze - skip opponent's turn
+    // Check time freeze - automatically skip this player's turn
     if (gameState.activeEffects.timeFrozen[moverColor]) {
       gameState.activeEffects.timeFrozen[moverColor] = false;
-      throw new Error('Your turn is frozen - wait one turn.');
+      
+      // Automatically swap turn to opponent
+      const fen = chess.fen();
+      const fenParts = fen.split(' ');
+      fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+      if (fenParts.length > 3) fenParts[3] = '-'; // Clear en-passant
+      chess.load(fenParts.join(' '));
+      
+      // Emit game update to show turn was skipped
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          const personalised = this.serialiseGameStateForViewer(gameState, pid);
+          this.io.to(pid).emit('gameUpdated', personalised);
+          this.io.to(pid).emit('turnSkipped', {
+            skippedPlayer: socket.id,
+            reason: 'Time Freeze'
+          });
+        }
+      }
+      
+      // Return special response indicating turn was skipped
+      return { ok: true, turnSkipped: true, reason: 'Time Freeze' };
     }
 
     // Save FEN to history for time_travel
@@ -1297,11 +1318,19 @@ export class GameManager {
       const aiUsedCardThisTurn = gameState.aiUsedCardThisTurn || false;
 
       // AI Draw Card Logic (before using cards)
-      if (!aiUsedCardThisTurn && Math.random() < settings.arcanaDrawChance && !gameState.lastDrawnBy?.startsWith('AI-')) {
+      // Check AI draw cooldown same as human players
+      const currentPly = chess.history().length;
+      if (!gameState.lastDrawTurn) gameState.lastDrawTurn = {};
+      if (typeof gameState.lastDrawTurn[aiSocketId] === 'undefined') gameState.lastDrawTurn[aiSocketId] = -99;
+      const aiLastDrawPly = gameState.lastDrawTurn[aiSocketId];
+      const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= 3;
+      
+      if (!aiUsedCardThisTurn && aiCanDraw && Math.random() < settings.arcanaDrawChance && !gameState.lastDrawnBy?.startsWith('AI-')) {
         const newCard = pickWeightedArcana();
         const newInst = makeArcanaInstance(newCard);
         gameState.arcanaByPlayer[aiSocketId].push(newInst);
         gameState.lastDrawnBy = aiSocketId;
+        gameState.lastDrawTurn[aiSocketId] = currentPly; // Track AI draw ply
         
         // Notify human player that AI drew a card
         const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));

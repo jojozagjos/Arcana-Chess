@@ -1098,9 +1098,12 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   if (!gameState.activeEffects) gameState.activeEffects = {};
   if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
   
+  const piece = chess.get(targetSquare);
   gameState.activeEffects.mindControlled.push({
     square: targetSquare,
     controller: moverColor,
+    originalColor: piece.color, // Store original color for proper reversion
+    type: piece.type, // Store piece type for validation during reversion
   });
 
   return { params: { targetSquare, color: moverColor } };
