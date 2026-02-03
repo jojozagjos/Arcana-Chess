@@ -4,6 +4,18 @@ import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
 
+// Logging utility
+const logger = {
+  debug: (...args) => {
+    if (process.env.DEBUG === 'true') {
+      console.log('[DEBUG]', ...args);
+    }
+  },
+  info: (...args) => console.log('[INFO]', ...args),
+  warn: (...args) => console.warn('[WARN]', ...args),
+  error: (...args) => console.error('[ERROR]', ...args),
+};
+
 // Game timing constants (milliseconds)
 const REVEAL_ACK_TIMEOUT_MS = 5000;
 const ACTION_TTL_MS = 10000;
@@ -143,11 +155,41 @@ export class GameManager {
     this.socketToGame = new Map(); // socketId -> gameId
   }
 
+  /**
+   * Broadcast game state update to all non-AI players
+   * @param {Object} gameState - Current game state
+   * @param {string} eventType - Socket event type to emit (default: 'gameUpdated')
+   * @param {Function} customDataFn - Optional function to generate custom data per player
+   */
+  broadcastGameUpdate(gameState, eventType = 'gameUpdated', customDataFn = null) {
+    for (const playerId of gameState.playerIds) {
+      if (!playerId.startsWith(AI_PREFIX)) {
+        const personalised = this.serialiseGameStateForViewer(gameState, playerId);
+        const data = customDataFn ? customDataFn(playerId, personalised) : personalised;
+        this.io.to(playerId).emit(eventType, data);
+      }
+    }
+  }
+
+  /**
+   * Get the captured square for a move (handles en passant special case)
+   * @param {Object} move - Chess.js move object
+   * @returns {string} The square where the captured piece was located
+   */
+  getCapturedSquare(move) {
+    let capturedSquare = move.to;
+    // En passant: captured pawn is on same rank as source, not target
+    if (move.flags && move.flags.includes('e')) {
+      capturedSquare = move.to[0] + move.from[1];
+    }
+    return capturedSquare;
+  }
+
   // Helper to emit `gameEnded` with rematch metadata so clients can decide
   // whether to auto-return to menu or wait for rematch actions.
   emitGameEndedToPlayer(pid, outcome, gameState) {
     const rematchVotes = gameState?.rematchVotes ? Object.values(gameState.rematchVotes).filter(v => v === true).length : 0;
-    const rematchTotalPlayers = gameState ? (gameState.playerIds || []).filter(id => !id.startsWith('AI-')).length : 0;
+    const rematchTotalPlayers = gameState ? (gameState.playerIds || []).filter(id => !id.startsWith(AI_PREFIX)).length : 0;
     this.io.to(pid).emit('gameEnded', { ...outcome, rematchVotes, rematchTotalPlayers });
   }
 
@@ -197,7 +239,7 @@ export class GameManager {
           }
         }
       } catch (e) {
-        console.error('Error swapping turn during finalizeReveal:', e);
+        logger.error('Error swapping turn during finalizeReveal:', e);
       }
     }
 
@@ -252,7 +294,7 @@ export class GameManager {
       // Delete lobby entry
       this.lobbyManager.lobbies.delete(lobbyId);
     } catch (e) {
-      console.warn('Failed to fully close lobby after game start', e);
+      logger.warn('Failed to fully close lobby after game start', e);
     }
 
     return this.serialiseGameState(gameState);
@@ -471,7 +513,7 @@ export class GameManager {
       // Enforce that at least DRAW_COOLDOWN_PLIES have passed since your last draw.
       // This ensures: opponent move -> your move -> opponent move -> you can draw
       if (lastDrawPly >= 0 && currentPly - lastDrawPly < DRAW_COOLDOWN_PLIES) {
-        console.log('[DRAW BLOCKED] socket=', socket.id, 'currentPly=', currentPly, 'lastDrawPly=', lastDrawPly);
+        logger.debug('Draw blocked:', { socket: socket.id, currentPly, lastDrawPly });
         throw new Error('Must wait for opponent move, then make a move, then opponent move before drawing again');
       }
 
@@ -524,7 +566,7 @@ export class GameManager {
         try {
           await this._finalizeReveal(gameState);
         } catch (e) {
-          console.error('Error finalizing reveal (timeout):', e);
+          logger.error('Error finalizing reveal (timeout):', e);
         }
       }, REVEAL_ACK_TIMEOUT_MS);
       
@@ -533,7 +575,7 @@ export class GameManager {
 
     // Handle Use Arcana action (activate card before making a move)
     if (actionType === 'useArcana') {
-      console.log('[SERVER] Processing useArcana action:', { socketId: socket.id, arcanaUsed });
+      logger.debug('Processing useArcana action:', { socketId: socket.id, arcanaUsed });
       if (!arcanaUsed || arcanaUsed.length === 0) {
         throw new Error('No arcana specified');
       }
@@ -588,13 +630,7 @@ export class GameManager {
       gameState.arcanaUsedThisTurn[socket.id] = true;
 
       // Emit game update to both players
-        for (const pid of gameState.playerIds) {
-          if (!pid.startsWith('AI-')) {
-            const personalised = this.serialiseGameStateForViewer(gameState, pid);
-            console.log('[SERVER] Emitting gameUpdated to player:', pid);
-            this.io.to(pid).emit('gameUpdated', personalised);
-          }
-        }
+      this.broadcastGameUpdate(gameState);
 
       // Check if any used card should end the turn
       const shouldEndTurn = arcanaUsed.some(use => {
@@ -619,7 +655,7 @@ export class GameManager {
           try {
             await this._finalizeReveal(gameState);
           } catch (e) {
-            console.error('Error finalizing reveal (useArcana timeout):', e);
+            logger.error('Error finalizing reveal (useArcana timeout):', e);
           }
         }, REVEAL_ACK_TIMEOUT_MS);
 
@@ -716,11 +752,7 @@ export class GameManager {
     const shield = gameState.pawnShields[opponentColor];
     if (shield && candidate.captured) {
       // For en passant, the captured pawn is not at candidate.to but at adjacent square
-      let capturedSquare = candidate.to;
-      if (candidate.flags && candidate.flags.includes('e')) {
-        // En passant: captured pawn is on same file as destination but same rank as source
-        capturedSquare = candidate.to[0] + candidate.from[1];
-      }
+      const capturedSquare = this.getCapturedSquare(candidate);
       
       if (capturedSquare === shield.square) {
         if (shield.shieldType === 'pawn') {
@@ -734,10 +766,7 @@ export class GameManager {
     // Iron Fortress: prevent ALL pawn captures
     if (gameState.activeEffects.ironFortress[opponentColor] && candidate.captured) {
       // For en passant, the captured pawn is not at candidate.to
-      let capturedSquare = candidate.to;
-      if (candidate.flags && candidate.flags.includes('e')) {
-        capturedSquare = candidate.to[0] + candidate.from[1];
-      }
+      const capturedSquare = this.getCapturedSquare(candidate);
       const targetPiece = chess.get(capturedSquare);
       if (targetPiece && targetPiece.type === 'p') {
         throw new Error('Iron Fortress protects all pawns from capture!');
@@ -746,10 +775,7 @@ export class GameManager {
 
     // Sanctuary: prevent captures on sanctuary squares
     if (gameState.activeEffects.sanctuaries && gameState.activeEffects.sanctuaries.length > 0 && candidate.captured) {
-      let capturedSquare = candidate.to;
-      if (candidate.flags && candidate.flags.includes('e')) {
-        capturedSquare = candidate.to[0] + candidate.from[1];
-      }
+      const capturedSquare = this.getCapturedSquare(candidate);
       const isSanctuary = gameState.activeEffects.sanctuaries.some(s => s.square === capturedSquare);
       if (isSanctuary) {
         throw new Error('Sanctuary protects that square from captures!');
@@ -799,11 +825,10 @@ export class GameManager {
       if (fenParts.length > 3) fenParts[3] = '-'; // Clear en-passant
       chess.load(fenParts.join(' '));
       
-      // Emit game update to show turn was skipped
+      // Emit game update and turn skipped notification
+      this.broadcastGameUpdate(gameState);
       for (const pid of gameState.playerIds) {
-        if (!pid.startsWith('AI-')) {
-          const personalised = this.serialiseGameStateForViewer(gameState, pid);
-          this.io.to(pid).emit('gameUpdated', personalised);
+        if (!pid.startsWith(AI_PREFIX)) {
           this.io.to(pid).emit('turnSkipped', {
             skippedPlayer: socket.id,
             reason: 'Time Freeze'
