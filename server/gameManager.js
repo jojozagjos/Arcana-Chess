@@ -4,8 +4,28 @@ import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
 
-// How long (ms) to wait for a client to acknowledge a card reveal before falling back
+// Game timing constants (milliseconds)
 const REVEAL_ACK_TIMEOUT_MS = 5000;
+const ACTION_TTL_MS = 10000;
+
+// Game configuration constants
+const INITIAL_DRAW_PLY = -99;
+const MOVE_HISTORY_LIMIT = 10;
+const DRAW_COOLDOWN_PLIES = 3;
+
+// Chess board constants
+const BOARD_SIZE = 8;
+const WHITE = 'white';
+const BLACK = 'black';
+const WHITE_CHAR = 'w';
+const BLACK_CHAR = 'b';
+
+// Game status constants
+const STATUS_ONGOING = 'ongoing';
+const STATUS_FINISHED = 'finished';
+
+// AI prefix
+const AI_PREFIX = 'AI-';
 
 /**
  * Helper: Validates that second capture is not adjacent to first kill square
@@ -45,12 +65,12 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
 
   // Basic color assignment: index 0 = white, index 1 = black
   const playerColors = {};
-  if (playerIds[0]) playerColors[playerIds[0]] = 'white';
-  if (playerIds[1]) playerColors[playerIds[1]] = 'black';
+  if (playerIds[0]) playerColors[playerIds[0]] = WHITE;
+  if (playerIds[1]) playerColors[playerIds[1]] = BLACK;
 
-  // Initialize lastDrawTurn per-player to -99 (never drawn)
+  // Initialize lastDrawTurn per-player to never drawn
   const lastDrawTurn = {};
-  for (const pid of playerIds) lastDrawTurn[pid] = -99;
+  for (const pid of playerIds) lastDrawTurn[pid] = INITIAL_DRAW_PLY;
 
   return {
     id: Math.random().toString(36).slice(2),
@@ -58,10 +78,10 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     chess,
     playerIds,
     aiDifficulty: aiDifficulty || null,
-    playerColor: playerColor || 'white',
+    playerColor: playerColor || WHITE,
     playerColors,
     currentTurnSocket: playerIds[0],
-    status: 'ongoing',
+    status: STATUS_ONGOING,
     ascended: mode === 'Classic' ? false : false,
     ascensionTrigger: mode === 'Classic' ? 'never' : 'firstCapture',
     arcanaByPlayer,
@@ -376,7 +396,7 @@ export class GameManager {
 
     const { move, arcanaUsed, actionType } = payload || {};
 
-    if (gameState.status !== 'ongoing') throw new Error('Game is not active');
+    if (gameState.status !== STATUS_ONGOING) throw new Error('Game is not active');
 
     // Reentrancy guard to prevent double-apply from rapid duplicate emits
     if (gameState._busy) {
@@ -385,12 +405,11 @@ export class GameManager {
     // Idempotency: ignore duplicate actions with the same actionId within a short TTL
     const actionId = payload?.actionId;
     const now = Date.now();
-    const TTL_MS = 10000;
     if (!gameState._seenActions) gameState._seenActions = new Map();
     // Prune old entries periodically (keep map small)
-    if (!gameState._lastPrune || now - gameState._lastPrune > TTL_MS) {
+    if (!gameState._lastPrune || now - gameState._lastPrune > ACTION_TTL_MS) {
       for (const [id, ts] of gameState._seenActions) {
-        if (now - ts > TTL_MS) gameState._seenActions.delete(id);
+        if (now - ts > ACTION_TTL_MS) gameState._seenActions.delete(id);
       }
       gameState._lastPrune = now;
     }
@@ -445,13 +464,13 @@ export class GameManager {
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
       // Defensive: ensure lastDrawTurn map exists and has a default
       if (!gameState.lastDrawTurn) gameState.lastDrawTurn = {};
-      if (typeof gameState.lastDrawTurn[socket.id] === 'undefined') gameState.lastDrawTurn[socket.id] = -99;
+      if (typeof gameState.lastDrawTurn[socket.id] === 'undefined') gameState.lastDrawTurn[socket.id] = INITIAL_DRAW_PLY;
       const lastDrawPly = gameState.lastDrawTurn[socket.id]; // stored as ply index per-player
 
-      // First draw is always allowed (lastDrawPly is -99 initially)
-      // Enforce that at least 3 plies have passed since your last draw.
+      // First draw is always allowed (lastDrawPly is INITIAL_DRAW_PLY initially)
+      // Enforce that at least DRAW_COOLDOWN_PLIES have passed since your last draw.
       // This ensures: opponent move -> your move -> opponent move -> you can draw
-      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 3) {
+      if (lastDrawPly >= 0 && currentPly - lastDrawPly < DRAW_COOLDOWN_PLIES) {
         console.log('[DRAW BLOCKED] socket=', socket.id, 'currentPly=', currentPly, 'lastDrawPly=', lastDrawPly);
         throw new Error('Must wait for opponent move, then make a move, then opponent move before drawing again');
       }
@@ -799,7 +818,7 @@ export class GameManager {
     // Save FEN to history for time_travel
     if (!gameState.moveHistory) gameState.moveHistory = [];
     gameState.moveHistory.push(chess.fen());
-    if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
+    if (gameState.moveHistory.length > MOVE_HISTORY_LIMIT) gameState.moveHistory.shift();
 
     // Execute the move
     let result;
@@ -1515,7 +1534,7 @@ export class GameManager {
     // Save FEN to history before AI move
     if (!gameState.moveHistory) gameState.moveHistory = [];
     gameState.moveHistory.push(chess.fen());
-    if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
+    if (gameState.moveHistory.length > MOVE_HISTORY_LIMIT) gameState.moveHistory.shift();
     
     const result = chess.move(selectedMove);
 
