@@ -1,22 +1,38 @@
 import { ARCANA_DEFINITIONS } from '../../shared/arcanaDefinitions.js';
 
+// Rarity weights for card distribution
+const RARITY_WEIGHTS = {
+  common: 50,
+  uncommon: 30,
+  rare: 15,
+  epic: 4,
+  legendary: 1,
+};
+
+// Piece strength multipliers for sacrifice bonuses
+const PIECE_STRENGTH_MULTIPLIERS = {
+  p: 0.6, // pawn
+  n: 1.0, // knight
+  b: 1.0, // bishop
+  r: 1.5, // rook
+  q: 2.0, // queen
+};
+
+// Board size constant
+const BOARD_SIZE = 8;
+
+// Draw cooldown constants
+const DEFAULT_DRAW_COOLDOWN = 4;
+const INITIAL_DRAW_PLY = -1;
+
 /**
  * Pick a random arcana card with weighted rarity distribution
  */
 export function pickWeightedArcana() {
-  // Rarity weights: common=50, uncommon=30, rare=15, epic=4, legendary=1
-  const rarityWeights = {
-    common: 50,
-    uncommon: 30,
-    rare: 15,
-    epic: 4,
-    legendary: 1,
-  };
-
   // Build weighted pool
   const weightedPool = [];
   for (const arcana of ARCANA_DEFINITIONS) {
-    const weight = rarityWeights[arcana.rarity] || 1;
+    const weight = RARITY_WEIGHTS[arcana.rarity] || 1;
     for (let i = 0; i < weight; i++) {
       weightedPool.push(arcana);
     }
@@ -33,33 +49,15 @@ export function pickWeightedArcana() {
  * Stronger pieces get a higher multiplier for rare/epic/legendary weights.
  */
 export function pickWeightedArcanaForSacrifice(pieceType) {
-  // Base rarity weights (same as default)
-  const baseWeights = {
-    common: 50,
-    uncommon: 30,
-    rare: 15,
-    epic: 4,
-    legendary: 1,
-  };
-
-  // Strength multiplier by piece type (pawn=weakest -> queen=strongest)
-  const multipliers = {
-    p: 0.6, // pawn
-    n: 1.0, // knight
-    b: 1.0, // bishop
-    r: 1.5, // rook
-    q: 2.0, // queen
-  };
-
-  const mult = multipliers[pieceType] || 1.0;
+  const mult = PIECE_STRENGTH_MULTIPLIERS[pieceType] || 1.0;
 
   // Apply multiplier to rarer categories to bias towards stronger results
   const rarityWeights = {
-    common: Math.max(1, Math.round(baseWeights.common / mult)),
-    uncommon: Math.max(1, Math.round(baseWeights.uncommon / Math.sqrt(mult))),
-    rare: Math.max(1, Math.round(baseWeights.rare * Math.sqrt(mult))),
-    epic: Math.max(1, Math.round(baseWeights.epic * mult)),
-    legendary: Math.max(1, Math.round(baseWeights.legendary * mult)),
+    common: Math.max(1, Math.round(RARITY_WEIGHTS.common / mult)),
+    uncommon: Math.max(1, Math.round(RARITY_WEIGHTS.uncommon / Math.sqrt(mult))),
+    rare: Math.max(1, Math.round(RARITY_WEIGHTS.rare * Math.sqrt(mult))),
+    epic: Math.max(1, Math.round(RARITY_WEIGHTS.epic * mult)),
+    legendary: Math.max(1, Math.round(RARITY_WEIGHTS.legendary * mult)),
   };
 
   // Build weighted pool
@@ -94,9 +92,9 @@ export function checkForKingRemoval(chess) {
   let whiteKing = false;
   let blackKing = false;
 
-  for (let rank = 0; rank < 8; rank++) {
-    for (let file = 0; file < 8; file++) {
-      const square = String.fromCharCode(97 + file) + (8 - rank);
+  for (let rank = 0; rank < BOARD_SIZE; rank++) {
+    for (let file = 0; file < BOARD_SIZE; file++) {
+      const square = String.fromCharCode(97 + file) + (BOARD_SIZE - rank);
       const piece = chess.get(square);
       if (piece?.type === 'k') {
         if (piece.color === 'w') whiteKing = true;
@@ -125,7 +123,7 @@ export function squareToCoords(square) {
 }
 
 export function coordsToSquare(file, rank) {
-  if (file < 0 || file > 7 || rank < 0 || rank > 7) return null;
+  if (file < 0 || file >= BOARD_SIZE || rank < 0 || rank >= BOARD_SIZE) return null;
   return String.fromCharCode(97 + file) + (rank + 1);
 }
 
@@ -151,7 +149,7 @@ export function getAdjacentSquares(square) {
       if (df === 0 && dr === 0) continue;
       const newFile = file + df;
       const newRank = rank + dr;
-      if (newFile >= 0 && newFile < 8 && newRank >= 1 && newRank <= 8) {
+      if (newFile >= 0 && newFile < BOARD_SIZE && newRank >= 1 && newRank <= BOARD_SIZE) {
         adjacent.push(`${String.fromCharCode(97 + newFile)}${newRank}`);
       }
     }
@@ -170,7 +168,7 @@ export function getDiagonalSquares(square) {
   const directions = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
   
   for (const [df, dr] of directions) {
-    for (let i = 1; i < 8; i++) {
+    for (let i = 1; i < BOARD_SIZE; i++) {
       const newSquare = coordsToSquare(file + df * i, rank + dr * i);
       if (newSquare) diagonals.push(newSquare);
       else break;
@@ -181,10 +179,10 @@ export function getDiagonalSquares(square) {
 }
 
 /**
- * Draw cooldown helper: requires a minimum ply gap between draws (default 4 plies).
+ * Draw cooldown helper: requires a minimum ply gap between draws.
  * Returns true if the player may draw again at currentPly.
  */
-export function canDrawAgain(currentPly, lastDrawPly, minGap = 4) {
+export function canDrawAgain(currentPly, lastDrawPly, minGap = DEFAULT_DRAW_COOLDOWN) {
   if (lastDrawPly === undefined || lastDrawPly === null || lastDrawPly < 0) return true;
   return (currentPly - lastDrawPly) >= minGap;
 }

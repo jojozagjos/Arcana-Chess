@@ -4,8 +4,40 @@ import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
 
-// How long (ms) to wait for a client to acknowledge a card reveal before falling back
+// Logging utility
+const logger = {
+  debug: (...args) => {
+    if (process.env.DEBUG === 'true') {
+      console.log('[DEBUG]', ...args);
+    }
+  },
+  info: (...args) => console.log('[INFO]', ...args),
+  warn: (...args) => console.warn('[WARN]', ...args),
+  error: (...args) => console.error('[ERROR]', ...args),
+};
+
+// Game timing constants (milliseconds)
 const REVEAL_ACK_TIMEOUT_MS = 5000;
+const ACTION_TTL_MS = 10000;
+
+// Game configuration constants
+const INITIAL_DRAW_PLY = -99;
+const MOVE_HISTORY_LIMIT = 10;
+const DRAW_COOLDOWN_PLIES = 3;
+
+// Chess board constants
+const BOARD_SIZE = 8;
+const WHITE = 'white';
+const BLACK = 'black';
+const WHITE_CHAR = 'w';
+const BLACK_CHAR = 'b';
+
+// Game status constants
+const STATUS_ONGOING = 'ongoing';
+const STATUS_FINISHED = 'finished';
+
+// AI prefix
+const AI_PREFIX = 'AI-';
 
 /**
  * Helper: Validates that second capture is not adjacent to first kill square
@@ -45,12 +77,12 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
 
   // Basic color assignment: index 0 = white, index 1 = black
   const playerColors = {};
-  if (playerIds[0]) playerColors[playerIds[0]] = 'white';
-  if (playerIds[1]) playerColors[playerIds[1]] = 'black';
+  if (playerIds[0]) playerColors[playerIds[0]] = WHITE;
+  if (playerIds[1]) playerColors[playerIds[1]] = BLACK;
 
-  // Initialize lastDrawTurn per-player to -99 (never drawn)
+  // Initialize lastDrawTurn per-player to never drawn
   const lastDrawTurn = {};
-  for (const pid of playerIds) lastDrawTurn[pid] = -99;
+  for (const pid of playerIds) lastDrawTurn[pid] = INITIAL_DRAW_PLY;
 
   return {
     id: Math.random().toString(36).slice(2),
@@ -58,10 +90,10 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     chess,
     playerIds,
     aiDifficulty: aiDifficulty || null,
-    playerColor: playerColor || 'white',
+    playerColor: playerColor || WHITE,
     playerColors,
     currentTurnSocket: playerIds[0],
-    status: 'ongoing',
+    status: STATUS_ONGOING,
     ascended: mode === 'Classic' ? false : false,
     ascensionTrigger: mode === 'Classic' ? 'never' : 'firstCapture',
     arcanaByPlayer,
@@ -123,11 +155,41 @@ export class GameManager {
     this.socketToGame = new Map(); // socketId -> gameId
   }
 
+  /**
+   * Broadcast game state update to all non-AI players
+   * @param {Object} gameState - Current game state
+   * @param {string} eventType - Socket event type to emit (default: 'gameUpdated')
+   * @param {Function} customDataFn - Optional function to generate custom data per player
+   */
+  broadcastGameUpdate(gameState, eventType = 'gameUpdated', customDataFn = null) {
+    for (const playerId of gameState.playerIds) {
+      if (!playerId.startsWith(AI_PREFIX)) {
+        const personalised = this.serialiseGameStateForViewer(gameState, playerId);
+        const data = customDataFn ? customDataFn(playerId, personalised) : personalised;
+        this.io.to(playerId).emit(eventType, data);
+      }
+    }
+  }
+
+  /**
+   * Get the captured square for a move (handles en passant special case)
+   * @param {Object} move - Chess.js move object
+   * @returns {string} The square where the captured piece was located
+   */
+  getCapturedSquare(move) {
+    let capturedSquare = move.to;
+    // En passant: captured pawn is on same rank as source, not target
+    if (move.flags && move.flags.includes('e')) {
+      capturedSquare = move.to[0] + move.from[1];
+    }
+    return capturedSquare;
+  }
+
   // Helper to emit `gameEnded` with rematch metadata so clients can decide
   // whether to auto-return to menu or wait for rematch actions.
   emitGameEndedToPlayer(pid, outcome, gameState) {
     const rematchVotes = gameState?.rematchVotes ? Object.values(gameState.rematchVotes).filter(v => v === true).length : 0;
-    const rematchTotalPlayers = gameState ? (gameState.playerIds || []).filter(id => !id.startsWith('AI-')).length : 0;
+    const rematchTotalPlayers = gameState ? (gameState.playerIds || []).filter(id => !id.startsWith(AI_PREFIX)).length : 0;
     this.io.to(pid).emit('gameEnded', { ...outcome, rematchVotes, rematchTotalPlayers });
   }
 
@@ -177,7 +239,7 @@ export class GameManager {
           }
         }
       } catch (e) {
-        console.error('Error swapping turn during finalizeReveal:', e);
+        logger.error('Error swapping turn during finalizeReveal:', e);
       }
     }
 
@@ -232,7 +294,7 @@ export class GameManager {
       // Delete lobby entry
       this.lobbyManager.lobbies.delete(lobbyId);
     } catch (e) {
-      console.warn('Failed to fully close lobby after game start', e);
+      logger.warn('Failed to fully close lobby after game start', e);
     }
 
     return this.serialiseGameState(gameState);
@@ -376,7 +438,7 @@ export class GameManager {
 
     const { move, arcanaUsed, actionType } = payload || {};
 
-    if (gameState.status !== 'ongoing') throw new Error('Game is not active');
+    if (gameState.status !== STATUS_ONGOING) throw new Error('Game is not active');
 
     // Reentrancy guard to prevent double-apply from rapid duplicate emits
     if (gameState._busy) {
@@ -385,12 +447,11 @@ export class GameManager {
     // Idempotency: ignore duplicate actions with the same actionId within a short TTL
     const actionId = payload?.actionId;
     const now = Date.now();
-    const TTL_MS = 10000;
     if (!gameState._seenActions) gameState._seenActions = new Map();
     // Prune old entries periodically (keep map small)
-    if (!gameState._lastPrune || now - gameState._lastPrune > TTL_MS) {
+    if (!gameState._lastPrune || now - gameState._lastPrune > ACTION_TTL_MS) {
       for (const [id, ts] of gameState._seenActions) {
-        if (now - ts > TTL_MS) gameState._seenActions.delete(id);
+        if (now - ts > ACTION_TTL_MS) gameState._seenActions.delete(id);
       }
       gameState._lastPrune = now;
     }
@@ -439,21 +500,21 @@ export class GameManager {
         if (gameState.chess.inCheck()) throw new Error('You cannot draw while in check');
       }
       
-      // Check draw cooldown rule: require at least 2 plies (one full turn) between draws.
+      // Check draw cooldown rule: require at least 3 plies between draws.
+      // After drawing, player must: 1) opponent moves, 2) player moves, 3) opponent moves, then can draw again.
       // Using raw ply counts avoids ambiguity when FEN is swapped without adding to history.
       const currentPly = gameState.chess.history().length; // number of half-moves played so far
       // Defensive: ensure lastDrawTurn map exists and has a default
       if (!gameState.lastDrawTurn) gameState.lastDrawTurn = {};
-      if (typeof gameState.lastDrawTurn[socket.id] === 'undefined') gameState.lastDrawTurn[socket.id] = -99;
+      if (typeof gameState.lastDrawTurn[socket.id] === 'undefined') gameState.lastDrawTurn[socket.id] = INITIAL_DRAW_PLY;
       const lastDrawPly = gameState.lastDrawTurn[socket.id]; // stored as ply index per-player
 
-      // First draw is always allowed (lastDrawPly is -99 initially)
-      // Enforce that at least 1 half-move (opponent's move) has passed since your last draw.
-      // A draw action swaps active color without adding to history, so allowing the draw
-      // after the opponent has played one move is the intended behavior.
-      if (lastDrawPly >= 0 && currentPly - lastDrawPly < 1) {
-        console.log('[DRAW BLOCKED] socket=', socket.id, 'currentPly=', currentPly, 'lastDrawPly=', lastDrawPly);
-        throw new Error('Must wait 1 opponent move between draws');
+      // First draw is always allowed (lastDrawPly is INITIAL_DRAW_PLY initially)
+      // Enforce that at least DRAW_COOLDOWN_PLIES have passed since your last draw.
+      // This ensures: opponent move -> your move -> opponent move -> you can draw
+      if (lastDrawPly >= 0 && currentPly - lastDrawPly < DRAW_COOLDOWN_PLIES) {
+        logger.debug('Draw blocked:', { socket: socket.id, currentPly, lastDrawPly });
+        throw new Error('Must wait for opponent move, then make a move, then opponent move before drawing again');
       }
 
       const newCard = pickWeightedArcana();
@@ -505,7 +566,7 @@ export class GameManager {
         try {
           await this._finalizeReveal(gameState);
         } catch (e) {
-          console.error('Error finalizing reveal (timeout):', e);
+          logger.error('Error finalizing reveal (timeout):', e);
         }
       }, REVEAL_ACK_TIMEOUT_MS);
       
@@ -514,7 +575,7 @@ export class GameManager {
 
     // Handle Use Arcana action (activate card before making a move)
     if (actionType === 'useArcana') {
-      console.log('[SERVER] Processing useArcana action:', { socketId: socket.id, arcanaUsed });
+      logger.debug('Processing useArcana action:', { socketId: socket.id, arcanaUsed });
       if (!arcanaUsed || arcanaUsed.length === 0) {
         throw new Error('No arcana specified');
       }
@@ -569,13 +630,7 @@ export class GameManager {
       gameState.arcanaUsedThisTurn[socket.id] = true;
 
       // Emit game update to both players
-        for (const pid of gameState.playerIds) {
-          if (!pid.startsWith('AI-')) {
-            const personalised = this.serialiseGameStateForViewer(gameState, pid);
-            console.log('[SERVER] Emitting gameUpdated to player:', pid);
-            this.io.to(pid).emit('gameUpdated', personalised);
-          }
-        }
+      this.broadcastGameUpdate(gameState);
 
       // Check if any used card should end the turn
       const shouldEndTurn = arcanaUsed.some(use => {
@@ -600,7 +655,7 @@ export class GameManager {
           try {
             await this._finalizeReveal(gameState);
           } catch (e) {
-            console.error('Error finalizing reveal (useArcana timeout):', e);
+            logger.error('Error finalizing reveal (useArcana timeout):', e);
           }
         }, REVEAL_ACK_TIMEOUT_MS);
 
@@ -652,16 +707,7 @@ export class GameManager {
     const chess = gameState.chess;
     const moverColor = chess.turn();
 
-    // Reset lastDrawnBy when it's this player's turn to move (not draw)
-    // This ensures draw validation only prevents consecutive draws, not draws after opponent's move
-    if (gameState.lastDrawnBy && gameState.playerColors[socket.id] === (moverColor === 'w' ? 'white' : 'black')) {
-      const lastDrawerColor = gameState.playerColors[gameState.lastDrawnBy];
-      const lastDrawerColorChar = lastDrawerColor === 'white' ? 'w' : 'b';
-      if (lastDrawerColorChar !== moverColor) {
-        // Opponent drew last, so reset
-        gameState.lastDrawnBy = null;
-      }
-    }
+    // Removed legacy lastDrawnBy tracking - using lastDrawTurn instead
 
     // Work with verbose moves so we can inspect captures and types
     const legalMoves = chess.moves({ verbose: true });
@@ -706,11 +752,7 @@ export class GameManager {
     const shield = gameState.pawnShields[opponentColor];
     if (shield && candidate.captured) {
       // For en passant, the captured pawn is not at candidate.to but at adjacent square
-      let capturedSquare = candidate.to;
-      if (candidate.flags && candidate.flags.includes('e')) {
-        // En passant: captured pawn is on same file as destination but same rank as source
-        capturedSquare = candidate.to[0] + candidate.from[1];
-      }
+      const capturedSquare = this.getCapturedSquare(candidate);
       
       if (capturedSquare === shield.square) {
         if (shield.shieldType === 'pawn') {
@@ -724,10 +766,7 @@ export class GameManager {
     // Iron Fortress: prevent ALL pawn captures
     if (gameState.activeEffects.ironFortress[opponentColor] && candidate.captured) {
       // For en passant, the captured pawn is not at candidate.to
-      let capturedSquare = candidate.to;
-      if (candidate.flags && candidate.flags.includes('e')) {
-        capturedSquare = candidate.to[0] + candidate.from[1];
-      }
+      const capturedSquare = this.getCapturedSquare(candidate);
       const targetPiece = chess.get(capturedSquare);
       if (targetPiece && targetPiece.type === 'p') {
         throw new Error('Iron Fortress protects all pawns from capture!');
@@ -736,10 +775,7 @@ export class GameManager {
 
     // Sanctuary: prevent captures on sanctuary squares
     if (gameState.activeEffects.sanctuaries && gameState.activeEffects.sanctuaries.length > 0 && candidate.captured) {
-      let capturedSquare = candidate.to;
-      if (candidate.flags && candidate.flags.includes('e')) {
-        capturedSquare = candidate.to[0] + candidate.from[1];
-      }
+      const capturedSquare = this.getCapturedSquare(candidate);
       const isSanctuary = gameState.activeEffects.sanctuaries.some(s => s.square === capturedSquare);
       if (isSanctuary) {
         throw new Error('Sanctuary protects that square from captures!');
@@ -778,16 +814,36 @@ export class GameManager {
       validateNonAdjacentCapture(gameState.activeEffects.berserkerRageActive, candidate.to, 'Berserker Rage');
     }
 
-    // Check time freeze - skip opponent's turn
+    // Check time freeze - automatically skip this player's turn
     if (gameState.activeEffects.timeFrozen[moverColor]) {
       gameState.activeEffects.timeFrozen[moverColor] = false;
-      throw new Error('Your turn is frozen - wait one turn.');
+      
+      // Automatically swap turn to opponent
+      const fen = chess.fen();
+      const fenParts = fen.split(' ');
+      fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+      if (fenParts.length > 3) fenParts[3] = '-'; // Clear en-passant
+      chess.load(fenParts.join(' '));
+      
+      // Emit game update and turn skipped notification
+      this.broadcastGameUpdate(gameState);
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith(AI_PREFIX)) {
+          this.io.to(pid).emit('turnSkipped', {
+            skippedPlayer: socket.id,
+            reason: 'Time Freeze'
+          });
+        }
+      }
+      
+      // Return special response indicating turn was skipped
+      return { ok: true, turnSkipped: true, reason: 'Time Freeze' };
     }
 
     // Save FEN to history for time_travel
     if (!gameState.moveHistory) gameState.moveHistory = [];
     gameState.moveHistory.push(chess.fen());
-    if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
+    if (gameState.moveHistory.length > MOVE_HISTORY_LIMIT) gameState.moveHistory.shift();
 
     // Execute the move
     let result;
@@ -1115,8 +1171,51 @@ export class GameManager {
 
     let outcome = null;
     if (chess.isCheckmate()) {
-      gameState.status = 'finished';
-      outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+      const checkmatedColor = chess.turn(); // The player who is checkmated ('w' or 'b')
+      
+      // Check if Divine Intervention can save the checkmated player
+      if (gameState.activeEffects.divineIntervention[checkmatedColor]) {
+        // Divine Intervention triggers: block checkmate and spawn a pawn
+        gameState.activeEffects.divineIntervention[checkmatedColor] = false;
+        
+        // Find an empty square on the back rank to spawn a pawn
+        const backRank = checkmatedColor === 'w' ? 1 : 8;
+        const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        let spawnSquare = null;
+        for (const file of files) {
+          const square = `${file}${backRank}`;
+          if (!chess.get(square)) {
+            spawnSquare = square;
+            break;
+          }
+        }
+        
+        // Spawn the pawn if an empty square was found
+        if (spawnSquare) {
+          chess.put({ type: 'p', color: checkmatedColor }, spawnSquare);
+          
+          // Emit divine intervention event to clients
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('divineIntervention', {
+                savedPlayer: checkmatedColor,
+                pawnSquare: spawnSquare
+              });
+            }
+          }
+          
+          // Checkmate is blocked - game continues
+          outcome = null;
+        } else {
+          // No empty square available - Divine Intervention fails
+          gameState.status = 'finished';
+          outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+        }
+      } else {
+        // No Divine Intervention - checkmate occurs
+        gameState.status = 'finished';
+        outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+      }
     } else if (chess.isStalemate() || chess.isDraw()) {
       gameState.status = 'finished';
       outcome = { type: 'draw' };
@@ -1297,11 +1396,18 @@ export class GameManager {
       const aiUsedCardThisTurn = gameState.aiUsedCardThisTurn || false;
 
       // AI Draw Card Logic (before using cards)
-      if (!aiUsedCardThisTurn && Math.random() < settings.arcanaDrawChance && !gameState.lastDrawnBy?.startsWith('AI-')) {
+      // Check AI draw cooldown same as human players
+      const currentPly = chess.history().length;
+      if (!gameState.lastDrawTurn) gameState.lastDrawTurn = {};
+      if (typeof gameState.lastDrawTurn[aiSocketId] === 'undefined') gameState.lastDrawTurn[aiSocketId] = -99;
+      const aiLastDrawPly = gameState.lastDrawTurn[aiSocketId];
+      const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= 3;
+      
+      if (!aiUsedCardThisTurn && aiCanDraw && Math.random() < settings.arcanaDrawChance) {
         const newCard = pickWeightedArcana();
         const newInst = makeArcanaInstance(newCard);
         gameState.arcanaByPlayer[aiSocketId].push(newInst);
-        gameState.lastDrawnBy = aiSocketId;
+        gameState.lastDrawTurn[aiSocketId] = currentPly; // Track AI draw ply
         
         // Notify human player that AI drew a card
         const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));
@@ -1453,7 +1559,7 @@ export class GameManager {
     // Save FEN to history before AI move
     if (!gameState.moveHistory) gameState.moveHistory = [];
     gameState.moveHistory.push(chess.fen());
-    if (gameState.moveHistory.length > 10) gameState.moveHistory.shift();
+    if (gameState.moveHistory.length > MOVE_HISTORY_LIMIT) gameState.moveHistory.shift();
     
     const result = chess.move(selectedMove);
 

@@ -88,21 +88,65 @@ async function run() {
   // Allow server to process ascension state
   await wait(300);
 
-  console.log('\n-- Step 1: White draws (should now succeed after ascension)');
-  const res1 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
-  console.log('draw response:', res1);
+  // After white captures, it's black's turn
+  console.log('\n-- Step 1: Black makes a move (e7-e5)');
+  const res1 = await playerAction(blackSock, { move: { from: 'e7', to: 'e5' } }, 5000);
+  console.log('black move response:', res1.ok ? 'ok' : res1);
 
   await wait(200);
 
-  console.log('\n-- Step 2: Black makes a legal reply move (e7-e5)');
-  const res2 = await playerAction(blackSock, { move: { from: 'e7', to: 'e5' } }, 5000);
-  console.log('black move response:', res2);
+  // Now it's white's turn - white can draw
+  console.log('\n-- Step 2: White draws (should succeed - first draw after ascension)');
+  const res2 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
+  console.log('white draw response:', res2.ok ? 'ok' : res2);
+  if (!res2.ok) {
+    console.error('ERROR: First draw should have succeeded!');
+  } else {
+    console.log('✓ First draw successful');
+  }
 
   await wait(200);
 
-  console.log('\n-- Step 6: White attempts to draw again (should now be ALLOWED)');
-  const res6 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
-  console.log('white draw (after sequence) response:', res6);
+  // After white draws, it's black's turn
+  console.log('\n-- Step 3: Black makes another move (f7-f6)');
+  const res3 = await playerAction(blackSock, { move: { from: 'f7', to: 'f6' } }, 5000);
+  console.log('black move response:', res3.ok ? 'ok' : res3);
+
+  await wait(200);
+
+  // Now it's white's turn - white tries to draw (only 1 ply since last draw, should be blocked)
+  console.log('\n-- Step 4: White tries to draw again (should be BLOCKED - only 1 ply has passed)');
+  const res4 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
+  console.log('white draw (immediate) response:', res4.ok ? 'ALLOWED (error!)' : 'BLOCKED (correct)');
+  if (res4.ok) {
+    console.error('ERROR: Draw should have been blocked but was allowed!');
+  } else {
+    console.log('✓ Draw correctly blocked');
+  }
+
+  await wait(200);
+
+  console.log('\n-- Step 5: White makes a regular move instead (g2-g3)');
+  const res5 = await playerAction(whiteSock, { move: { from: 'g2', to: 'g3' } }, 5000);
+  console.log('white move response:', res5.ok ? 'ok' : res5);
+
+  await wait(200);
+
+  console.log('\n-- Step 6: Black makes another move (g7-g6)');
+  const res6 = await playerAction(blackSock, { move: { from: 'g7', to: 'g6' } }, 5000);
+  console.log('black move response:', res6.ok ? 'ok' : res6);
+
+  await wait(200);
+
+  // Now it's white's turn - 3 plies have passed since white last drew (black move, white move, black move)
+  console.log('\n-- Step 7: White attempts to draw again (should now be ALLOWED - 3 plies have passed)');
+  const res7 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
+  console.log('white draw (after sequence) response:', res7.ok ? 'ALLOWED (correct)' : `BLOCKED: ${res7.error}`);
+  if (!res7.ok) {
+    console.error('ERROR: Draw should have been allowed but was blocked!', res7);
+  } else {
+    console.log('✓ Draw correctly allowed');
+  }
 
   // --- Additional checks: independence and draw-after-use ---
   await wait(300);

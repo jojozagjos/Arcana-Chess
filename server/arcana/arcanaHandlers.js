@@ -60,6 +60,14 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     return { ok: true };
   }
 
+  // Sanctuary: must target an empty square
+  if (arcanaId === 'sanctuary') {
+    if (piece) {
+      return { ok: false, reason: 'Sanctuary must target an empty square' };
+    }
+    return { ok: true };
+  }
+
   // Execution: cannot target king
   if (arcanaId === 'execution') {
     if (!piece || piece.type === 'k') {
@@ -606,9 +614,9 @@ function applyChainLightning({ gameState, moverColor }) {
 function applyCastleBreaker({ chess, gameState, moverColor }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
   
-  // Disable opponent's castling rights for 3 turns
+  // Disable opponent's castling rights for 3 opponent turns (= 6 plies due to turn alternation)
   gameState.activeEffects.castleBroken = gameState.activeEffects.castleBroken || { w: 0, b: 0 };
-  gameState.activeEffects.castleBroken[opponentColor] = 3; // Lasts 3 turns
+  gameState.activeEffects.castleBroken[opponentColor] = 6; // Lasts 3 opponent turns (6 plies total)
   
   return { params: { disabledColor: opponentColor, turns: 3 } };
 }
@@ -1098,9 +1106,12 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   if (!gameState.activeEffects) gameState.activeEffects = {};
   if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
   
+  const piece = chess.get(targetSquare);
   gameState.activeEffects.mindControlled.push({
     square: targetSquare,
     controller: moverColor,
+    originalColor: piece.color, // Store original color for proper reversion
+    type: piece.type, // Store piece type for validation during reversion
   });
 
   return { params: { targetSquare, color: moverColor } };
