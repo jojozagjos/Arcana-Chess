@@ -1136,8 +1136,52 @@ export class GameManager {
 
     let outcome = null;
     if (chess.isCheckmate()) {
-      gameState.status = 'finished';
-      outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+      const checkmatedColor = chess.turn(); // The player who is checkmated
+      const checkmatedColorChar = checkmatedColor === 'w' ? 'w' : 'b';
+      
+      // Check if Divine Intervention can save the checkmated player
+      if (gameState.activeEffects.divineIntervention[checkmatedColorChar]) {
+        // Divine Intervention triggers: block checkmate and spawn a pawn
+        gameState.activeEffects.divineIntervention[checkmatedColorChar] = false;
+        
+        // Find an empty square on the back rank to spawn a pawn
+        const backRank = checkmatedColor === 'w' ? 1 : 8;
+        const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        let spawnSquare = null;
+        for (const file of files) {
+          const square = `${file}${backRank}`;
+          if (!chess.get(square)) {
+            spawnSquare = square;
+            break;
+          }
+        }
+        
+        // Spawn the pawn if an empty square was found
+        if (spawnSquare) {
+          chess.put({ type: 'p', color: checkmatedColor }, spawnSquare);
+          
+          // Emit divine intervention event to clients
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('divineIntervention', {
+                savedPlayer: checkmatedColor,
+                pawnSquare: spawnSquare
+              });
+            }
+          }
+          
+          // Checkmate is blocked - game continues
+          outcome = null;
+        } else {
+          // No empty square available - Divine Intervention fails
+          gameState.status = 'finished';
+          outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+        }
+      } else {
+        // No Divine Intervention - checkmate occurs
+        gameState.status = 'finished';
+        outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+      }
     } else if (chess.isStalemate() || chess.isDraw()) {
       gameState.status = 'finished';
       outcome = { type: 'draw' };
