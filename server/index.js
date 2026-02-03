@@ -10,6 +10,16 @@ import { applyArcana } from './arcana/arcanaHandlers.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
 import { Chess } from 'chess.js';
 
+// Constants
+const BOARD_SIZE = 8;
+const DEFAULT_PORT = 4000;
+
+// Logging utility
+const logger = {
+  info: (...args) => console.log('[INFO]', ...args),
+  error: (...args) => console.error('[ERROR]', ...args),
+};
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -101,9 +111,9 @@ app.post('/api/test-card', (req, res) => {
 
 function getAllPiecesFromChess(chess) {
   const pieces = [];
-  for (let rank = 0; rank < 8; rank++) {
-    for (let file = 0; file < 8; file++) {
-      const square = String.fromCharCode(97 + file) + (8 - rank);
+  for (let rank = 0; rank < BOARD_SIZE; rank++) {
+    for (let file = 0; file < BOARD_SIZE; file++) {
+      const square = String.fromCharCode(97 + file) + (BOARD_SIZE - rank);
       const piece = chess.get(square);
       if (piece) pieces.push({ square, ...piece });
     }
@@ -144,7 +154,7 @@ gameManager.applyArcana = (socketId, gameState, arcanaUsed, moveResult) => {
 };
 
 io.on('connection', (socket) => {
-  console.log('Socket connected', socket.id);
+  logger.info('Socket connected', socket.id);
 
   const safeAck = (ack, payload) => {
     if (typeof ack === 'function') {
@@ -158,7 +168,7 @@ io.on('connection', (socket) => {
       safeAck(ack, { ok: true, lobby });
       io.to(lobby.id).emit('lobbyUpdated', lobby);
     } catch (err) {
-      console.error('createLobby error', err);
+      logger.error('createLobby error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to create lobby' });
     }
   });
@@ -170,7 +180,7 @@ io.on('connection', (socket) => {
       safeAck(ack, { ok: true, lobby });
       io.to(lobby.id).emit('lobbyUpdated', lobby);
     } catch (err) {
-      console.error('joinLobby error', err);
+      logger.error('joinLobby error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to join lobby' });
     }
   });
@@ -187,7 +197,7 @@ io.on('connection', (socket) => {
       }
       safeAck(ack, { ok: true });
     } catch (err) {
-      console.error('leaveLobby error', err);
+      logger.error('leaveLobby error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to leave lobby' });
     }
   });
@@ -199,7 +209,7 @@ io.on('connection', (socket) => {
       // Broadcast updated lobby to all players
       io.to(lobby.id).emit('lobbyUpdated', lobby);
     } catch (err) {
-      console.error('updateLobbySettings error', err);
+      logger.error('updateLobbySettings error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to update settings' });
     }
   });
@@ -209,7 +219,7 @@ io.on('connection', (socket) => {
       const lobbies = lobbyManager.getPublicLobbies();
       safeAck(ack, { ok: true, lobbies });
     } catch (err) {
-      console.error('listLobbies error', err);
+      logger.error('listLobbies error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to list lobbies' });
     }
   });
@@ -219,7 +229,7 @@ io.on('connection', (socket) => {
       const state = gameManager.startMultiplayerGame(socket, payload || {});
       safeAck(ack, { ok: true, gameState: state });
     } catch (err) {
-      console.error('startGame error', err);
+      logger.error('startGame error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to start game' });
     }
   });
@@ -229,7 +239,7 @@ io.on('connection', (socket) => {
       const state = await gameManager.startAIGame(socket, payload || {});
       safeAck(ack, { ok: true, gameState: state });
     } catch (err) {
-      console.error('startAIGame error', err);
+      logger.error('startAIGame error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to start AI game' });
     }
   });
@@ -239,7 +249,7 @@ io.on('connection', (socket) => {
       const result = await gameManager.handlePlayerAction(socket, payload || {});
       safeAck(ack, { ok: true, ...result });
     } catch (err) {
-      console.error('playerAction error', err);
+      logger.error('playerAction error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to apply move' });
     }
   });
@@ -251,7 +261,7 @@ io.on('connection', (socket) => {
       gameManager.handleArcanaRevealComplete(playerId);
       safeAck(ack, { ok: true });
     } catch (err) {
-      console.error('arcanaRevealComplete error', err);
+      logger.error('arcanaRevealComplete error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to acknowledge reveal' });
     }
   });
@@ -261,7 +271,7 @@ io.on('connection', (socket) => {
       const outcome = gameManager.forfeitGame(socket, payload || {});
       safeAck(ack, { ok: true, outcome });
     } catch (err) {
-      console.error('forfeitGame error', err);
+      logger.error('forfeitGame error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to forfeit game' });
     }
   });
@@ -271,7 +281,7 @@ io.on('connection', (socket) => {
       const result = gameManager.handleRematchVote(socket, lobbyManager);
       safeAck(ack, result);
     } catch (err) {
-      console.error('voteRematch error', err);
+      logger.error('voteRematch error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to vote for rematch' });
     }
   });
@@ -282,7 +292,7 @@ io.on('connection', (socket) => {
       gameManager.handlePlayerLeftPostMatch(socket);
       safeAck(ack, { ok: true });
     } catch (err) {
-      console.error('leavePostMatch error', err);
+      logger.error('leavePostMatch error', err);
       safeAck(ack, { ok: false, error: err.message || 'Failed to leave post-match' });
     }
   });
@@ -350,13 +360,13 @@ io.on('connection', (socket) => {
         safeAck(ack, { success: false, error: 'Arcana did not apply' });
       }
     } catch (err) {
-      console.error('Balancing tool test error:', err);
+      logger.error('Balancing tool test error:', err);
       safeAck(ack, { success: false, error: err.message });
     }
   });
 
   socket.on('disconnect', () => {
-    console.log('Socket disconnected', socket.id);
+    logger.info('Socket disconnected', socket.id);
     const result = lobbyManager.leaveLobby(socket.id);
     if (result) {
       if (result.closed) {
@@ -388,7 +398,7 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(publicPath));
 }
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || DEFAULT_PORT;
 server.listen(PORT, () => {
-  console.log(`Arcana Chess server running on port ${PORT}`);
+  logger.info(`Arcana Chess server running on port ${PORT}`);
 });
