@@ -614,9 +614,9 @@ function applyChainLightning({ gameState, moverColor }) {
 function applyCastleBreaker({ chess, gameState, moverColor }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
   
-  // Disable opponent's castling rights for 3 opponent turns (= 6 total turns due to interleaving)
+  // Disable opponent's castling rights for 3 opponent turns (= 6 plies due to turn alternation)
   gameState.activeEffects.castleBroken = gameState.activeEffects.castleBroken || { w: 0, b: 0 };
-  gameState.activeEffects.castleBroken[opponentColor] = 6; // Lasts 3 opponent turns (decremented every turn)
+  gameState.activeEffects.castleBroken[opponentColor] = 6; // Lasts 3 opponent turns (6 plies total)
   
   return { params: { disabledColor: opponentColor, turns: 3 } };
 }

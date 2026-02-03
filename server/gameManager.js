@@ -1127,13 +1127,12 @@ export class GameManager {
 
     let outcome = null;
     if (chess.isCheckmate()) {
-      const checkmatedColor = chess.turn(); // The player who is checkmated
-      const checkmatedColorChar = checkmatedColor === 'w' ? 'w' : 'b';
+      const checkmatedColor = chess.turn(); // The player who is checkmated ('w' or 'b')
       
       // Check if Divine Intervention can save the checkmated player
-      if (gameState.activeEffects.divineIntervention[checkmatedColorChar]) {
+      if (gameState.activeEffects.divineIntervention[checkmatedColor]) {
         // Divine Intervention triggers: block checkmate and spawn a pawn
-        gameState.activeEffects.divineIntervention[checkmatedColorChar] = false;
+        gameState.activeEffects.divineIntervention[checkmatedColor] = false;
         
         // Find an empty square on the back rank to spawn a pawn
         const backRank = checkmatedColor === 'w' ? 1 : 8;
