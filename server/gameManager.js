@@ -652,16 +652,7 @@ export class GameManager {
     const chess = gameState.chess;
     const moverColor = chess.turn();
 
-    // Reset lastDrawnBy when it's this player's turn to move (not draw)
-    // This ensures draw validation only prevents consecutive draws, not draws after opponent's move
-    if (gameState.lastDrawnBy && gameState.playerColors[socket.id] === (moverColor === 'w' ? 'white' : 'black')) {
-      const lastDrawerColor = gameState.playerColors[gameState.lastDrawnBy];
-      const lastDrawerColorChar = lastDrawerColor === 'white' ? 'w' : 'b';
-      if (lastDrawerColorChar !== moverColor) {
-        // Opponent drew last, so reset
-        gameState.lastDrawnBy = null;
-      }
-    }
+    // Removed legacy lastDrawnBy tracking - using lastDrawTurn instead
 
     // Work with verbose moves so we can inspect captures and types
     const legalMoves = chess.moves({ verbose: true });
@@ -1369,11 +1360,10 @@ export class GameManager {
       const aiLastDrawPly = gameState.lastDrawTurn[aiSocketId];
       const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= 3;
       
-      if (!aiUsedCardThisTurn && aiCanDraw && Math.random() < settings.arcanaDrawChance && !gameState.lastDrawnBy?.startsWith('AI-')) {
+      if (!aiUsedCardThisTurn && aiCanDraw && Math.random() < settings.arcanaDrawChance) {
         const newCard = pickWeightedArcana();
         const newInst = makeArcanaInstance(newCard);
         gameState.arcanaByPlayer[aiSocketId].push(newInst);
-        gameState.lastDrawnBy = aiSocketId;
         gameState.lastDrawTurn[aiSocketId] = currentPly; // Track AI draw ply
         
         // Notify human player that AI drew a card

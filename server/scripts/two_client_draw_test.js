@@ -100,9 +100,37 @@ async function run() {
 
   await wait(200);
 
-  console.log('\n-- Step 6: White attempts to draw again (should now be ALLOWED)');
+  console.log('\n-- Step 3: White tries to draw again (should be BLOCKED - only 1 ply has passed)');
+  const res3 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
+  console.log('white draw (immediate) response:', res3);
+  if (res3.ok) {
+    console.error('ERROR: Draw should have been blocked but was allowed!');
+  } else {
+    console.log('✓ Draw correctly blocked');
+  }
+
+  await wait(200);
+
+  console.log('\n-- Step 4: White makes a move instead (f2-f3)');
+  const res4 = await playerAction(whiteSock, { move: { from: 'f2', to: 'f3' } }, 5000);
+  console.log('white move response:', res4.ok ? 'ok' : res4);
+
+  await wait(200);
+
+  console.log('\n-- Step 5: Black makes another move (f7-f6)');
+  const res5 = await playerAction(blackSock, { move: { from: 'f7', to: 'f6' } }, 5000);
+  console.log('black move response:', res5.ok ? 'ok' : res5);
+
+  await wait(200);
+
+  console.log('\n-- Step 6: White attempts to draw again (should now be ALLOWED - 3 plies have passed)');
   const res6 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
   console.log('white draw (after sequence) response:', res6);
+  if (!res6.ok) {
+    console.error('ERROR: Draw should have been allowed but was blocked!');
+  } else {
+    console.log('✓ Draw correctly allowed');
+  }
 
   // --- Additional checks: independence and draw-after-use ---
   await wait(300);
