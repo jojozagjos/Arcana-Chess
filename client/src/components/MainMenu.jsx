@@ -6,6 +6,7 @@ import MenuParticlesCanvas from './MenuParticles.jsx';
 
 export function MainMenu({
   mode = 'root',
+  initialLobby = null,
   onPlayOnlineHost,
   onPlayOnlineJoin,
   onTutorial,
@@ -38,20 +39,15 @@ export function MainMenu({
           </div>
 
           {showUpdateLog && (
-            <div className="update-log" style={{ marginTop: 18, background: 'rgba(255,255,255,0.03)', padding: 12, borderRadius: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ color: '#cbd5e1' }}>Update Log</strong>
-                <button className="menu-secondary" onClick={() => setShowUpdateLog(false)} style={{ padding: '4px 8px' }}>Dismiss</button>
-              </div>
-              <div style={{ marginTop: 8, color: '#aab8c9', fontSize: '0.9rem' }}>
-                <div><strong>v1.2.0</strong> — Draw fixes, visuals, and particle improvements.</div>
-                <div>• Fixed draw cooldown: a player can draw again after one opponent half-move.</div>
-                <div>• Opponent draws now show the card-reveal animation (back-only); rarity glow hidden for opponents.</div>
-                <div>• Implemented DOM floating card overlay using ArcanaCard.jsx with stable per-card animations.</div>
-                <div>• Added multi-color nebula clusters and improved particle spawn tuning.</div>
-                <div>• Removed rune glyph fallback; using core textures for consistent visuals.</div>
-                <div>• Fixed build error and applied various UI/visual polish and dev-tool improvements.</div>
-              </div>
+            <div className="update-log">
+              <button className="dismiss-btn" onClick={() => setShowUpdateLog(false)}>✕</button>
+              <strong>Update Log</strong>
+              <div className="log-entry"><strong>v1.2.1</strong> — Quick fixes & polish (Feb 04, 2026)</div>
+              <div className="log-entry">• Fixed quick-match navigation to open the joined lobby UI.</div>
+              <div className="log-entry">• Restored tutorial Shield Pawn visuals and enabled targeting flow.</div>
+              <div className="log-entry">• Lazy-loaded main particle overlay to reduce initial bundle size.</div>
+              <div className="log-entry">• UI tweaks: update log moved to top-left for visibility.</div>
+              <div style={{ marginTop: 6, fontSize: '0.8rem', color: '#8f9fb3' }}>Dismiss to hide</div>
             </div>
           )}
 
@@ -79,7 +75,7 @@ export function MainMenu({
   }
 
   if (mode === 'join') {
-    return <JoinLobbyScreen onBack={onBack} />;
+    return <JoinLobbyScreen onBack={onBack} initialLobby={initialLobby} />;
   }
 
   return null;
@@ -459,14 +455,18 @@ function AIGameForm() {
   );
 }
 
-function JoinLobbyScreen({ onBack }) {
+function JoinLobbyScreen({ onBack, initialLobby = null }) {
   const [lobbies, setLobbies] = useState([]);
   const [status, setStatus] = useState('');
   const [joinCode, setJoinCode] = useState('');
-  const [joinedLobby, setJoinedLobby] = useState(null);
+  const [joinedLobby, setJoinedLobby] = useState(initialLobby || null);
   const [codePrompt, setCodePrompt] = useState(null); // { lobbyId, lobbyName }
   const [filter, setFilter] = useState('all'); // 'all' | 'public' | 'private'
   const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    if (initialLobby) setJoinedLobby(initialLobby);
+  }, [initialLobby]);
 
   const refreshLobbies = () => {
     setStatus('Loading lobbies...');

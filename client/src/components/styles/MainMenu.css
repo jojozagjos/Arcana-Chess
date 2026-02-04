@@ -112,3 +112,22 @@
   .menu-title { font-size: 3.6rem; }
   .menu-button { font-size: 1.12rem; padding: 18px 26px; }
 }
+
+/* Update log moved to top-left: use a compact panel */
+.update-log {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 3;
+  width: 320px;
+  background: rgba(5,6,10,0.92);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+  font-size: 0.9rem;
+  color: #cbd5e1;
+}
+
+.update-log strong { color: #e6eef8; display:block; margin-bottom:6px; }
+.update-log .dismiss-btn { position: absolute; top: 8px; right: 8px; background: transparent; border: none; color: #8f9fb3; cursor: pointer; }
+.update-log .log-entry { margin-bottom: 6px; color: #aab8c9; font-size: 0.85rem; }
