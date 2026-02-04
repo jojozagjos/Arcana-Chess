@@ -23,7 +23,7 @@ const ACTION_TTL_MS = 10000;
 // Game configuration constants
 const INITIAL_DRAW_PLY = -99;
 const MOVE_HISTORY_LIMIT = 10;
-const DRAW_COOLDOWN_PLIES = 3;
+const DRAW_COOLDOWN_PLIES = 1;
 
 // Chess board constants
 const BOARD_SIZE = 8;
@@ -514,7 +514,7 @@ export class GameManager {
       // This ensures: opponent move -> your move -> opponent move -> you can draw
       if (lastDrawPly >= 0 && currentPly - lastDrawPly < DRAW_COOLDOWN_PLIES) {
         logger.debug('Draw blocked:', { socket: socket.id, currentPly, lastDrawPly });
-        throw new Error('Must wait for opponent move, then make a move, then opponent move before drawing again');
+        throw new Error('Must wait 1 full turn between draws');
       }
 
       const newCard = pickWeightedArcana();
