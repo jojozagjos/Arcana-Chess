@@ -23,6 +23,7 @@ export function App() {
   const [devMode, setDevMode] = useState(false);
   const [quickMatchStatus, setQuickMatchStatus] = useState('');
   const [quickMatchLoading, setQuickMatchLoading] = useState(false);
+  const [quickJoinedLobby, setQuickJoinedLobby] = useState(null);
   const [menuFadeIn, setMenuFadeIn] = useState(false);
   const [globalSettings, setGlobalSettings] = useState(() => {
     try {
@@ -110,7 +111,7 @@ export function App() {
     };
 
     const handleGameUpdated = (state) => {
-      console.log('[CLIENT] Received gameUpdated event:', state);
+      // console.log('[CLIENT] Received gameUpdated event:', state);
       setGameState(state);
       if (state.ascended && !ascendedInfo) {
         setAscendedInfo({ gameId: state.id, reason: state.ascensionTrigger });
@@ -315,8 +316,9 @@ export function App() {
                         socket.emit('joinLobby', { lobbyId: availableLobby.id }, (joinRes) => {
                           if (joinRes && joinRes.ok) {
                             setQuickMatchStatus('');
-                            // navigate to lobby; loading state can remain until unmount
-                            setScreen('host-game');
+                            // store joined lobby and navigate to join screen so the lobby UI is shown
+                            setQuickJoinedLobby(joinRes.lobby);
+                            setScreen('join-game');
                           } else {
                             console.error('Failed to join lobby:', joinRes?.error);
                             finishAndClear('Failed to join the found game.');
@@ -361,7 +363,8 @@ export function App() {
       {screen === 'join-game' && (
         <MainMenu
           mode="join"
-          onBack={() => setScreen('main-menu')}
+          initialLobby={quickJoinedLobby}
+          onBack={() => { setQuickJoinedLobby(null); setScreen('main-menu'); }}
         />
       )}
       {screen === 'tutorial' && (

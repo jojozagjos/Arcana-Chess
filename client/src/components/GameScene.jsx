@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import { Chess } from 'chess.js';
@@ -11,7 +11,7 @@ import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares } f
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
-import { ParticleOverlay } from '../game/arcana/ParticleOverlay.jsx';
+const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.jsx').then(m => ({ default: m.default ?? m.ParticleOverlay })));
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import CutsceneOverlay from './CutsceneOverlay.jsx';
 import { getCutsceneConfig } from '../game/arcana/cutsceneDefinitions.js';
@@ -2228,20 +2228,24 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         
         {/* Use animation effects - GPU-accelerated particles */}
         {type === 'use' && usePhase >= 1 && useProgress > 0.05 && (
-          <ParticleOverlay
-            type={usePhase === 1 ? 'ring' : 'dissolve'}
-            rarity={arcana ? arcana.rarity : 'common'}
-            active={true}
-          />
+          <Suspense fallback={null}>
+            <ParticleOverlay
+              type={usePhase === 1 ? 'ring' : 'dissolve'}
+              rarity={arcana ? arcana.rarity : 'common'}
+              active={true}
+            />
+          </Suspense>
         )}
         
         {/* Draw animation particles */}
         {type === 'draw' && (
-          <ParticleOverlay
-            type="draw"
-            rarity={arcana ? arcana.rarity : 'common'}
-            active={true}
-          />
+          <Suspense fallback={null}>
+            <ParticleOverlay
+              type="draw"
+              rarity={arcana ? arcana.rarity : 'common'}
+              active={true}
+            />
+          </Suspense>
         )}
       </div>
     </>

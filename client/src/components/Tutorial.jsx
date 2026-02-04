@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Chess } from 'chess.js';
@@ -131,13 +131,13 @@ const TUTORIAL_STEPS = [
     title: 'Card Targeting',
     description:
       'Some cards require selecting a target. Shield Pawn needs you to select which pawn to protect. Valid targets will glow when the card is active.',
-    instruction: 'With Shield Pawn selected, click on your pawn at d2 to protect it from capture.',
+    instruction: 'With Shield Pawn selected, click on one of your pawns to protect it from capture.',
     setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
     showCards: true,
     demoCard: 'shield_pawn',
-    cardTargeting: false,
+    cardTargeting: true,
   },
   {
     id: 10,
@@ -1238,20 +1238,24 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
         
         {/* Use animation effects - GPU particle system */}
         {type === 'use' && usePhase >= 1 && (
-          <ParticleOverlay
-            type={usePhase === 1 ? 'ring' : 'dissolve'}
-            rarity={arcana.rarity || 'common'}
-            active={true}
-          />
+          <Suspense fallback={null}>
+            <ParticleOverlay
+              type={usePhase === 1 ? 'ring' : 'dissolve'}
+              rarity={arcana.rarity || 'common'}
+              active={true}
+            />
+          </Suspense>
         )}
         
         {/* Draw animation particles */}
         {type === 'draw' && (
-          <ParticleOverlay
-            type="draw"
-            rarity={arcana.rarity || 'common'}
-            active={true}
-          />
+          <Suspense fallback={null}>
+            <ParticleOverlay
+              type="draw"
+              rarity={arcana.rarity || 'common'}
+              active={true}
+            />
+          </Suspense>
         )}
         
         {/* Dissolve sparks during phase 2 */}

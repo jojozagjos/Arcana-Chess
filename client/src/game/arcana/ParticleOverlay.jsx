@@ -4,6 +4,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Particles from '@tsparticles/react';
 import { loadSlim } from '@tsparticles/slim';
 import {
@@ -18,6 +19,9 @@ import {
 // Track if engine is initialized
 let engineInitialized = false;
 let initPromise = null;
+
+// Debug: indicate module loaded (useful when lazy-imported)
+try { console.log('[ParticleOverlay] module loaded'); } catch (e) {}
 
 /**
  * Initialize the tsparticles engine (call once at app startup)
@@ -79,14 +83,23 @@ export function ParticleOverlay({
 
   // Initialize engine on mount
   const particlesInit = useCallback(async (engine) => {
+    try { console.log('[ParticleOverlay] particlesInit called, engineInitialized=', engineInitialized); } catch (e) {}
     if (!engineInitialized) {
+      console.debug('[ParticleOverlay] initializing engine');
       if (!initPromise) {
         initPromise = initParticleEngine(engine);
       }
       await initPromise;
+      console.debug('[ParticleOverlay] engine initialized');
+      try { console.log('[ParticleOverlay] tsParticles engine initialized (initPromise resolved)'); } catch (e) {}
       setIsReady(true);
     }
   }, []);
+
+  // Debug: log mount for easier troubleshooting in tutorial
+  useEffect(() => {
+    console.debug('[ParticleOverlay] mounted', { id: idRef.current, type, rarity });
+  }, [type, rarity]);
 
   // Handle particle animation completion
   useEffect(() => {
@@ -105,17 +118,16 @@ export function ParticleOverlay({
   }, [active, type, onComplete]);
 
   if (!active) return null;
+  const containerStyle = {
+    position: 'fixed', // use fixed so overlay escapes parent stacking contexts
+    inset: 0,
+    pointerEvents: 'none',
+    zIndex: 1,
+    ...style,
+  };
 
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        zIndex: 1,
-        ...style,
-      }}
-    >
+  const overlay = (
+    <div style={containerStyle}>
       <Particles
         id={idRef.current}
         init={particlesInit}
@@ -127,6 +139,12 @@ export function ParticleOverlay({
       />
     </div>
   );
+
+  if (typeof document !== 'undefined' && document.body) {
+    return createPortal(overlay, document.body);
+  }
+
+  return overlay;
 }
 
 export default ParticleOverlay;
