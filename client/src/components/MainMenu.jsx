@@ -42,11 +42,11 @@ export function MainMenu({
             <div className="update-log">
               <button className="dismiss-btn" onClick={() => setShowUpdateLog(false)}>✕</button>
               <strong>Update Log</strong>
-              <div className="log-entry"><strong>v1.2.1</strong> — Quick fixes & polish (Feb 04, 2026)</div>
-              <div className="log-entry">• Fixed quick-match navigation to open the joined lobby UI.</div>
-              <div className="log-entry">• Restored tutorial Shield Pawn visuals and enabled targeting flow.</div>
-              <div className="log-entry">• Lazy-loaded main particle overlay to reduce initial bundle size.</div>
-              <div className="log-entry">• UI tweaks: update log moved to top-left for visibility.</div>
+              <div className="log-entry"><strong>v1.2.2</strong> — Dev-tool & parity fixes (Feb 05, 2026)</div>
+              <div className="log-entry">• Dev Tool: server-validated reveal arcana (Line of Sight, Vision, Map Fragments, Quiet Thought) now show exact in-game highlights.</div>
+              <div className="log-entry">• Dev Tool: deferred Focus Fire sound to play on capture (matches server behavior).</div>
+              <div className="log-entry">• Dev Tool: fixed captured-piece recording (avoids runtime error on capture).</div>
+              <div className="log-entry">• Various small UI and visual polish from last release (v1.2.1).</div>
               <div style={{ marginTop: 6, fontSize: '0.8rem', color: '#8f9fb3' }}>Dismiss to hide</div>
             </div>
           )}
