@@ -316,6 +316,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
       soundManager.play('cardDraw');
+      // If this draw was triggered by Focus Fire (bonus on capture), play its arcana sound
+      try {
+        if (data && data.reason && typeof data.reason === 'string' && data.reason.toLowerCase().includes('focus fire')) {
+          soundManager.play('arcana:focus_fire');
+        }
+      } catch (e) {
+        console.warn('Failed to play focus_fire sound on arcanaDrawn', e);
+      }
       
       // Only stay until click for YOUR draws, auto-dismiss opponent draws
       const isMyDraw = data.playerId === socket?.id;
@@ -372,8 +380,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     };
 
     const handleArcanaTriggered = (payload) => {
-      // Play sound effect for arcana activation (soundManager handles null gracefully)
-      soundManager.play(payload.soundKey);
+      // Play sound effect for arcana activation, except skip focus_fire here
+      try {
+        if (!(payload && payload.arcanaId === 'focus_fire')) {
+          soundManager.play(payload.soundKey);
+        }
+      } catch (e) {
+        console.warn('Failed to play arcana trigger sound', e);
+      }
       
       // Client-side highlights for utility cards - ONLY show if YOU used the card
       const { arcanaId, params, owner } = payload || {};

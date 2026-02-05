@@ -182,16 +182,43 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
         soundKey: def.soundKey,
         visual: def.visual,
       };
+
       for (const pid of gameState.playerIds) {
-        if (!pid.startsWith('AI-')) {
+        if (pid.startsWith('AI-')) continue;
+        try {
+          // Defensive: skip if the target socket id is not currently connected.
+          // Socket.IO v4 exposes sockets via `io.sockets.sockets.get(id)`; older
+          // environments may use an object map. Handle both safely.
+          let socketConnected = true;
+          if (io && io.sockets && io.sockets.sockets) {
+            const store = io.sockets.sockets;
+            if (typeof store.get === 'function') {
+              socketConnected = !!store.get(pid);
+            } else if (typeof store[pid] !== 'undefined') {
+              socketConnected = true;
+            } else {
+              socketConnected = false;
+            }
+          }
+
+          if (!socketConnected) {
+            console.warn('[SERVER] Skipping emit to disconnected socket:', pid);
+            continue;
+          }
+
           console.log('[SERVER] Emitting arcanaUsed event to player:', pid, 'card:', def.id);
           io.to(pid).emit('arcanaUsed', {
             playerId: socketId,
             arcana: def,
           });
+
           // Full payload to the owner, redacted payload to others
           const payload = pid === socketId ? ownerPayload : redactedPayload;
           io.to(pid).emit('arcanaTriggered', payload);
+        } catch (err) {
+          // Non-fatal: log and continue. This prevents a single emit failure
+          // (for example due to a stale socket reference) from throwing.
+          console.warn('[SERVER] Failed to emit arcana events to', pid, err && err.message ? err.message : err);
         }
       }
     }
@@ -557,7 +584,7 @@ export function applyPoisonAfterCapture(chess, captureSquare, moverColor, gameSt
     const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)];
     gameState.activeEffects.poisonedPieces.push({
       square: randomTarget,
-      turnsLeft: 3,
+      turnsLeft: 6,
       poisonedBy: moverColor
     });
     return [randomTarget];

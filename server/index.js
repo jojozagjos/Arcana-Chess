@@ -44,7 +44,7 @@ app.get('/api/arcana', (req, res) => {
 // Card testing endpoint for balancing tool
 app.post('/api/test-card', (req, res) => {
   try {
-    const { cardId, fen, params, playerColor, moveResult, instanceId } = req.body;
+    const { cardId, fen, params, playerColor, moveResult, instanceId, activeEffects: clientActiveEffects, pawnShields: clientPawnShields, lastMove: clientLastMove } = req.body;
     const chess = new Chess(fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
     const colorChar = playerColor === 'white' ? 'w' : 'b';
 
@@ -59,19 +59,23 @@ app.post('/api/test-card', (req, res) => {
       arcanaByPlayer: {},
       usedArcanaIdsByPlayer: {},
       usedArcanaInstanceIdsByPlayer: {},
-      pawnShields: { w: null, b: null },
-      activeEffects: {
+      lastMove: clientLastMove || moveResult || null,
+      pawnShields: clientPawnShields || { w: null, b: null },
+      capturedByColor: { w: [], b: [] },
+      activeEffects: clientActiveEffects || {
         ironFortress: { w: false, b: false },
         bishopsBlessing: { w: null, b: null },
         timeFrozen: { w: false, b: false },
         cursedSquares: [],
         sanctuaries: [],
         fogOfWar: { w: false, b: false },
+        vision: { w: null, b: null },
         doubleStrike: { w: false, b: false },
         doubleStrikeActive: null,
         poisonTouch: { w: false, b: false },
         poisonedPieces: [],
         squireSupport: [],
+        focusFire: { w: false, b: false },
         queensGambit: { w: 0, b: 0 },
         queensGambitUsed: { w: false, b: false },
         divineIntervention: { w: false, b: false },
@@ -80,11 +84,15 @@ app.post('/api/test-card', (req, res) => {
         phantomStep: { w: false, b: false },
         pawnRush: { w: false, b: false },
         sharpshooter: { w: false, b: false },
+        knightOfStorms: { w: null, b: null },
+        berserkerRage: { w: null, b: null },
         mindControlled: [],
         enPassantMaster: { w: false, b: false },
         temporalEcho: null,
-        knightOfStorms: { w: null, b: null },
+        chainLightning: { w: false, b: false },
+        castleBroken: { w: 0, b: 0 },
       },
+      moveHistory: [],
     };
 
     // Give the dev player one instance of the card so applyArcana can validate/remove it
@@ -92,14 +100,27 @@ app.post('/api/test-card', (req, res) => {
     gameState.arcanaByPlayer[opponentId] = [];
 
     // Snapshot before
-    const beforeState = { fen: chess.fen(), pieces: getAllPiecesFromChess(chess), pawnShields: gameState.pawnShields };
+    const beforeState = { 
+      fen: chess.fen(), 
+      pieces: getAllPiecesFromChess(chess), 
+      pawnShields: gameState.pawnShields,
+      activeEffects: JSON.parse(JSON.stringify(gameState.activeEffects)),
+      lastMove: gameState.lastMove,
+    };
 
     // Apply the real arcana handler so dev tool reflects in-game behavior
     const arcanaUsed = [{ arcanaId: cardId, params: params || {} }];
-    const applied = applyArcana(devPlayerId, gameState, arcanaUsed, moveResult || null, io);
+    const applied = applyArcana(devPlayerId, gameState, arcanaUsed, moveResult || clientLastMove || null, io);
 
     // Snapshot after
-    const afterState = { fen: chess.fen(), pieces: getAllPiecesFromChess(chess), pawnShields: gameState.pawnShields, activeEffects: gameState.activeEffects };
+    const afterState = { 
+      fen: chess.fen(), 
+      pieces: getAllPiecesFromChess(chess), 
+      pawnShields: gameState.pawnShields, 
+      activeEffects: gameState.activeEffects,
+      lastMove: gameState.lastMove,
+      capturedByColor: gameState.capturedByColor,
+    };
 
     const card = ARCANA_DEFINITIONS.find(c => c.id === cardId) || null;
 

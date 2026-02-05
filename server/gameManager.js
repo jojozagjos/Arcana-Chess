@@ -114,7 +114,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
-      poisonedPieces: [],  // [{ square, turnsLeft: 3, poisonedBy }]
+      poisonedPieces: [],  // [{ square, turnsLeft: 6, poisonedBy }]
       squireSupport: [],   // [{ square, turnsLeft: 1 }]
       focusFire: { w: false, b: false },  // next capture draws extra card
       queensGambit: { w: 0, b: 0 }, // extra moves remaining

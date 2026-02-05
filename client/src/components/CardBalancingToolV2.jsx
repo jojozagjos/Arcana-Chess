@@ -64,9 +64,41 @@ export function CardBalancingToolV2({ onBack }) {
   const [playerColor, setPlayerColor] = useState('white');
   const [effectsModule, setEffectsModule] = useState(null);
   const [logMessages, setLogMessages] = useState([]);
-  const [activeEffects, setActiveEffects] = useState({});
+  // Initialize activeEffects with complete structure matching server gameState
+  const [activeEffects, setActiveEffects] = useState({
+    ironFortress: { w: false, b: false },
+    bishopsBlessing: { w: null, b: null },
+    timeFrozen: { w: false, b: false },
+    cursedSquares: [],
+    sanctuaries: [],
+    fogOfWar: { w: false, b: false },
+    vision: { w: null, b: null },
+    doubleStrike: { w: false, b: false },
+    doubleStrikeActive: null,
+    poisonTouch: { w: false, b: false },
+    poisonedPieces: [],
+    squireSupport: [],
+    focusFire: { w: false, b: false },
+    queensGambit: { w: 0, b: 0 },
+    queensGambitUsed: { w: false, b: false },
+    divineIntervention: { w: false, b: false },
+    mirrorImages: [],
+    spectralMarch: { w: false, b: false },
+    phantomStep: { w: false, b: false },
+    pawnRush: { w: false, b: false },
+    sharpshooter: { w: false, b: false },
+    knightOfStorms: { w: null, b: null },
+    berserkerRage: { w: null, b: null },
+    mindControlled: [],
+    enPassantMaster: { w: false, b: false },
+    temporalEcho: null,
+    chainLightning: { w: false, b: false },
+    castleBroken: { w: 0, b: 0 },
+  });
   const [pawnShields, setPawnShields] = useState({ w: null, b: null });
   const [shieldTurnCounter, setShieldTurnCounter] = useState({ w: 0, b: 0 });
+  const [lastMove, setLastMove] = useState(null);
+  const [capturedByColor, setCapturedByColor] = useState({ w: [], b: [] });
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [targetSquare, setTargetSquare] = useState(null);
   const [targetingMode, setTargetingMode] = useState(false);
@@ -101,8 +133,6 @@ export function CardBalancingToolV2({ onBack }) {
   // Server validation state
   const [serverTestActive, setServerTestActive] = useState(false);
   const [serverTestResult, setServerTestResult] = useState(null);
-  const [includeLastMove, setIncludeLastMove] = useState(false);
-  const [instanceId, setInstanceId] = useState('');
   
   // Active visual arcana (for rendering cutscenes/effects)
   const [activeVisualArcana, setActiveVisualArcana] = useState(null);
@@ -178,9 +208,40 @@ export function CardBalancingToolV2({ onBack }) {
     setCustomParams({});
     setPawnShields({ w: null, b: null });
     setShieldTurnCounter({ w: 0, b: 0 });
-    setActiveEffects({});
+    setActiveEffects({
+      ironFortress: { w: false, b: false },
+      bishopsBlessing: { w: null, b: null },
+      timeFrozen: { w: false, b: false },
+      cursedSquares: [],
+      sanctuaries: [],
+      fogOfWar: { w: false, b: false },
+      vision: { w: null, b: null },
+      doubleStrike: { w: false, b: false },
+      doubleStrikeActive: null,
+      poisonTouch: { w: false, b: false },
+      poisonedPieces: [],
+      squireSupport: [],
+      focusFire: { w: false, b: false },
+      queensGambit: { w: 0, b: 0 },
+      queensGambitUsed: { w: false, b: false },
+      divineIntervention: { w: false, b: false },
+      mirrorImages: [],
+      spectralMarch: { w: false, b: false },
+      phantomStep: { w: false, b: false },
+      pawnRush: { w: false, b: false },
+      sharpshooter: { w: false, b: false },
+      knightOfStorms: { w: null, b: null },
+      berserkerRage: { w: null, b: null },
+      mindControlled: [],
+      enPassantMaster: { w: false, b: false },
+      temporalEcho: null,
+      chainLightning: { w: false, b: false },
+      castleBroken: { w: 0, b: 0 },
+    });
     setVisualEffects([]);
     setMoveHistory([]);
+    setLastMove(null);
+    setCapturedByColor({ w: [], b: [] });
     setLegalTargets([]);
     setCutsceneActive(false);
     setGrayscaleIntensity(0);
@@ -206,15 +267,18 @@ export function CardBalancingToolV2({ onBack }) {
     addLog(`Testing ${selectedCard.name} with server...`, 'info');
 
     try {
-      // Build request payload for REST test endpoint
+      // Build request payload for REST test endpoint with complete game state
       const payload = {
         cardId: selectedCard.id,
         fen: chess.fen(),
         params: targetSquare ? { targetSquare } : (Object.keys(customParams).length ? customParams : {}),
         playerColor,
+        activeEffects,
+        pawnShields,
+        lastMove,
       };
-      if (includeLastMove && moveHistory.length > 0) payload.moveResult = moveHistory[moveHistory.length - 1];
-      if (instanceId) payload.instanceId = instanceId;
+      // Always include lastMove for cards that depend on it (temporal_echo, time_travel, berserker_rage, etc.)
+      if (lastMove) payload.moveResult = lastMove;
 
       // POST to /api/test-card so the dev tool uses canonical server logic
       const resp = await fetch('/api/test-card', {
@@ -232,6 +296,8 @@ export function CardBalancingToolV2({ onBack }) {
         if (json.afterState) {
           if (json.afterState.activeEffects) setActiveEffects(json.afterState.activeEffects);
           if (json.afterState.pawnShields) setPawnShields(json.afterState.pawnShields);
+          if (json.afterState.lastMove) setLastMove(json.afterState.lastMove);
+          if (json.afterState.capturedByColor) setCapturedByColor(json.afterState.capturedByColor);
           if (json.afterState.fen) {
             const newChess = new Chess(json.afterState.fen);
             setChess(newChess);
@@ -260,7 +326,7 @@ export function CardBalancingToolV2({ onBack }) {
     }
   };
 
-  const testCard = () => {
+  const testCard = async () => {
     if (!selectedCard) return;
 
     // Play card draw sound first (when you select/activate the card)
@@ -268,6 +334,17 @@ export function CardBalancingToolV2({ onBack }) {
       soundManager.play('cardDraw');
     } catch (err) {
       addLog(`Sound error: ${err.message}`, 'warning');
+    }
+
+    // Play card sound if present (use soundKey)
+    // Note: some cards (e.g. focus_fire) should not play on activation — only on capture
+    if (selectedCard.soundKey && selectedCard.id !== 'focus_fire') {
+      try {
+        soundManager.play(selectedCard.soundKey);
+        setValidationChecklist(prev => ({ ...prev, sound: true }));
+      } catch (err) {
+        addLog(`Sound error: ${err.message}`, 'warning');
+      }
     }
 
     // Check if card needs a target
@@ -308,9 +385,167 @@ export function CardBalancingToolV2({ onBack }) {
       
       addLog(`Select a ${targetDescription} for ${selectedCard.name} (${validSquares.length} valid targets highlighted)`, 'info');
     } else {
-      // Apply immediately for cards that don't need targets
+      // Apply immediately for cards that don't need targets - use server validation
       const colorChar = playerColor === 'white' ? 'w' : 'b';
-      applyCardEffect(selectedCard, {}, colorChar);
+      await applyCardEffectWithServer(selectedCard, {}, colorChar);
+    }
+  };
+
+  // Server-validated card application - ensures 1:1 game behavior
+  const applyCardEffectWithServer = async (card, params, colorChar) => {
+    setServerTestActive(true);
+    addLog(`Applying ${card.name} via server...`, 'info');
+
+    try {
+      const payload = {
+        cardId: card.id,
+        fen: chess.fen(),
+        params: params || {},
+        playerColor: colorChar === 'w' ? 'white' : 'black',
+        activeEffects,
+        pawnShields,
+        lastMove,
+      };
+      if (lastMove) payload.moveResult = lastMove;
+
+      const resp = await fetch('/api/test-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await resp.json();
+      setServerTestActive(false);
+
+      if (json.ok) {
+        addLog(`✓ ${card.name} applied successfully`, 'success');
+        setValidationChecklist(prev => ({ ...prev, server: true, logic: true }));
+        
+        // Apply server-validated state updates
+        if (json.afterState) {
+          if (json.afterState.activeEffects) setActiveEffects(json.afterState.activeEffects);
+          if (json.afterState.pawnShields) setPawnShields(json.afterState.pawnShields);
+          if (json.afterState.lastMove) setLastMove(json.afterState.lastMove);
+          if (json.afterState.capturedByColor) setCapturedByColor(json.afterState.capturedByColor);
+          if (json.afterState.fen) {
+            const newChess = new Chess(json.afterState.fen);
+            setChess(newChess);
+            setFen(json.afterState.fen);
+          }
+        }
+
+        // If server provided explicit applied params (e.g. legalMoves for line_of_sight),
+        // prefer those for client-side highlights/visuals so the dev tool matches server.
+        const appliedParams = (json.applied && json.applied[0] && json.applied[0].params) ? json.applied[0].params : params || {};
+
+        // Reveal-style arcana should update highlighted squares in the balancing tool
+        switch (card.id) {
+          case 'line_of_sight': {
+            const squares = appliedParams.legalMoves || [];
+            setHighlightedSquares(Array.isArray(squares) ? squares : []);
+            setHighlightedArcana('line_of_sight');
+            setHighlightColor('#88c0d0');
+            const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
+            timeoutsRef.current.push(t);
+            break;
+          }
+          case 'map_fragments': {
+            const squares = appliedParams.predictedSquares || [];
+            setHighlightedSquares(Array.isArray(squares) ? squares : []);
+            setHighlightedArcana('map_fragments');
+            setHighlightColor('#bf616a');
+            const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
+            timeoutsRef.current.push(t);
+            break;
+          }
+          case 'quiet_thought': {
+            const squares = appliedParams.threats || [];
+            setHighlightedSquares(Array.isArray(squares) ? squares : []);
+            setHighlightedArcana('quiet_thought');
+            setHighlightColor('#ff4444');
+            const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
+            timeoutsRef.current.push(t);
+            break;
+          }
+          case 'vision': {
+            const squares = appliedParams.moves || [];
+            if (Array.isArray(squares) && squares.length) {
+              setHighlightedSquares(squares);
+              setHighlightColor('#bf616a');
+              const t = setTimeout(() => setHighlightedSquares([]), 6000);
+              timeoutsRef.current.push(t);
+            }
+            break;
+          }
+          default:
+            break;
+        }
+
+        // Trigger visuals/sounds using the resolved params
+        triggerCardVisualsAndSounds(card, appliedParams, colorChar);
+      } else {
+        addLog(`✗ Server validation failed: ${json.error || 'Unknown'}`, 'error');
+        setServerTestResult({ success: false, error: json.error || 'Unknown' });
+      }
+    } catch (err) {
+      setServerTestActive(false);
+      addLog(`Server error: ${err.message}`, 'error');
+    }
+  };
+
+  // Trigger visuals and sounds after server validation
+  const triggerCardVisualsAndSounds = (card, params, colorChar) => {
+    const visualParams = { ...(params || {}), actorColor: colorChar };
+
+    // Play sound effect if card has one (use soundKey)
+    if (card.soundKey) {
+      try {
+        soundManager.play(card.soundKey);
+        setValidationChecklist(prev => ({ ...prev, sound: true }));
+      } catch (err) {
+        addLog(`Sound error: ${err.message}`, 'warning');
+      }
+    }
+
+    // Trigger visual effect if card has one
+    if (card.visual?.particles || card.visual?.effect) {
+      setValidationChecklist(prev => ({ ...prev, visuals: true }));
+
+      const pascalCase = (id) => id.split(/[_-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
+
+      const triggerVisual = (effectsMod) => {
+        const compName = `${pascalCase(card.id)}Effect`;
+        if (!effectsMod || !effectsMod[compName]) {
+          addLog(`No visual component for ${card.id} (${compName})`, 'info');
+          return;
+        }
+
+        setActiveVisualArcana({ arcanaId: card.id, params: visualParams });
+        const duration = getArcanaEffectDuration(card.id);
+        setTimeout(() => setActiveVisualArcana(null), duration || 3000);
+      };
+
+      if (!effectsModule || Object.keys(effectsModule).length === 0) {
+        import('../game/arcana/arcanaVisuals.jsx')
+          .then((m) => {
+            setEffectsModule(m);
+            triggerVisual(m);
+          })
+          .catch((err) => {
+            console.warn('Failed to load arcanaVisuals', err);
+          });
+      } else {
+        triggerVisual(effectsModule);
+      }
+
+      // Trigger cutscene if card has one
+      if (card.visual?.cutscene) {
+        setValidationChecklist(prev => ({ ...prev, cutscene: true }));
+        try {
+          triggerCardCutscene(card.id, params.targetSquare || params.square);
+        } catch (e) {
+          addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
+        }
+      }
     }
   };
 
@@ -331,8 +566,8 @@ export function CardBalancingToolV2({ onBack }) {
       setActiveEffects(testGameState.activeEffects);
     }
 
-    // Play sound if specified
-    if (result.soundEffect) {
+    // Play sound if specified (skip focus_fire here; it should play on capture)
+    if (result.soundEffect && card.id !== 'focus_fire') {
       try {
         soundManager.play(result.soundEffect);
         setValidationChecklist(prev => ({ ...prev, sound: true }));
@@ -544,7 +779,8 @@ export function CardBalancingToolV2({ onBack }) {
       } else {
         const colorChar = playerColor === 'white' ? 'w' : 'b';
         const params = { ...customParams, targetSquare: square };
-        applyCardEffect(selectedCard, params, colorChar);
+        // Use server validation for 1:1 game behavior
+        applyCardEffectWithServer(selectedCard, params, colorChar);
       }
       return;
     }
@@ -624,7 +860,36 @@ export function CardBalancingToolV2({ onBack }) {
         }
         
         soundManager.play(capturedPiece ? 'capture' : 'move');
-        setMoveHistory(prev => [...prev, { ...move, fen: chess.fen() }]);
+        // If this capture consumed a Focus Fire effect, play its sound now
+        try {
+          const moverColor = move.color;
+          if (capturedPiece && activeEffects?.focusFire && activeEffects.focusFire[moverColor]) {
+            // Play focus fire arcana sound and mark as used locally for the balancing tool
+            soundManager.play('arcana:focus_fire');
+            setValidationChecklist(prev => ({ ...prev, sound: true }));
+            // Clear local activeEffects for focusFire to reflect consumption
+            setActiveEffects(prev => {
+              const next = { ...(prev || {}) };
+              next.focusFire = { ...(next.focusFire || {}) };
+              next.focusFire[moverColor] = false;
+              return next;
+            });
+          }
+        } catch (e) {
+          addLog(`Sound error: ${e.message}`, 'warning');
+        }
+        const moveWithFen = { ...move, fen: chess.fen() };
+        setMoveHistory(prev => [...prev, moveWithFen]);
+        setLastMove(moveWithFen); // Track lastMove for cards like temporal_echo
+        if (capturedPiece) {
+          // `capturedPiece` from chess.js is the piece type string (e.g. 'p'),
+          // not an object. The captured piece's color is the opponent's color.
+          const capturedColor = opponentColor;
+          setCapturedByColor(prev => ({
+            ...prev,
+            [capturedColor]: [...(prev[capturedColor] || []), { type: capturedPiece, square }]
+          }));
+        }
         if (!move.arcana) setChess(new Chess(chess.fen()));
         setFen(chess.fen());
         addLog(`Move: ${move.san}${move.arcana ? ' (Arcana)' : ''}`, 'success');
@@ -777,7 +1042,9 @@ export function CardBalancingToolV2({ onBack }) {
     <div style={styles.container}>
       <div style={styles.header}>
         <button style={styles.backButton} onClick={onBack}>← Back</button>
-        <h2 style={styles.title}>Card Balancing & Testing Tool V2</h2>
+        <div>
+          <h2 style={styles.title}>Card Balancing & Testing Tool V2</h2>
+        </div>
         <button
           style={{ ...styles.button, background: multiplayerMode ? '#4c6fff' : '#333' }}
           onClick={() => setMultiplayerMode(!multiplayerMode)}
@@ -981,34 +1248,38 @@ export function CardBalancingToolV2({ onBack }) {
           </div>
 
           <div style={styles.testControls}>
-            <button
-              style={{ ...styles.button, background: selectedCard ? '#4c6fff' : '#555' }}
-              onClick={testCard}
-              disabled={!selectedCard || targetingMode}
-            >
-              {targetingMode ? 'Targeting...' : 'Test Card'}
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                style={{ ...styles.button, background: selectedCard ? '#4c6fff' : '#555' }}
+                onClick={testCard}
+                disabled={!selectedCard || targetingMode}
+              >
+                {targetingMode ? 'Targeting...' : 'Test Card'}
+              </button>
+              <span style={{ 
+                fontSize: 10, 
+                color: '#00ff88', 
+                fontWeight: 'bold', 
+                background: 'rgba(0,255,136,0.1)', 
+                padding: '2px 6px', 
+                borderRadius: 4,
+                border: '1px solid rgba(0,255,136,0.3)'
+              }}>
+                SERVER VALIDATED
+              </span>
+            </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <label style={{ color: '#ddd', fontSize: 12 }}>Player:</label>
               <select value={playerColor} onChange={(e) => setPlayerColor(e.target.value)} style={styles.selectSmall}>
                 <option value="white">White</option>
                 <option value="black">Black</option>
               </select>
-              <label style={{ color: '#ddd', fontSize: 12, marginLeft: 8 }}>
-                <input type="checkbox" checked={includeLastMove} onChange={(e) => setIncludeLastMove(e.target.checked)} /> Include last move
-              </label>
-              <input
-                placeholder="Instance ID (optional)"
-                value={instanceId}
-                onChange={(e) => setInstanceId(e.target.value)}
-                style={{ ...styles.input, width: 180 }}
-              />
               <button
                 style={{ ...styles.button, background: serverTestActive ? '#ff8800' : '#2a7a2a' }}
                 onClick={testWithServer}
                 disabled={!selectedCard || serverTestActive}
               >
-                {serverTestActive ? 'Testing...' : 'Test with Server'}
+                {serverTestActive ? 'Testing...' : 'Re-test Server'}
               </button>
             </div>
             <button style={styles.button} onClick={resetTest}>Reset</button>
@@ -1023,20 +1294,23 @@ export function CardBalancingToolV2({ onBack }) {
               </span>
             )}
             {serverTestResult && serverTestResult.success && serverTestResult.data && (
-              <div style={{ marginTop: 8, color: '#ddd', fontSize: 12 }}>
-                <div><strong>Applied:</strong></div>
-                <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 120, overflow: 'auto', background: '#111', padding: 8, borderRadius: 6 }}>
-                  {JSON.stringify(serverTestResult.data.applied || serverTestResult.data.appliedArcana || serverTestResult.data.applied, null, 2)}
-                </pre>
-                {serverTestResult.data.afterState && (
-                  <>
-                    <div style={{ marginTop: 6 }}><strong>Active Effects:</strong></div>
-                    <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', background: '#111', padding: 8, borderRadius: 6 }}>
-                      {JSON.stringify(serverTestResult.data.afterState.activeEffects || serverTestResult.data.activeEffects, null, 2)}
-                    </pre>
-                  </>
-                )}
-              </div>
+              <details style={{ marginTop: 8, color: '#ddd', fontSize: 11, cursor: 'pointer' }}>
+                <summary style={{ fontWeight: 'bold', color: '#4ade80', userSelect: 'none' }}>View Server Response</summary>
+                <div style={{ marginTop: 6 }}>
+                  <div style={{ fontSize: 10, opacity: 0.7 }}>Applied:</div>
+                  <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 80, overflow: 'auto', background: '#0a0a0a', padding: 6, borderRadius: 4, fontSize: 10, lineHeight: 1.3 }}>
+                    {JSON.stringify(serverTestResult.data.applied || [], null, 2)}
+                  </pre>
+                  {serverTestResult.data.afterState && (
+                    <>
+                      <div style={{ marginTop: 4, fontSize: 10, opacity: 0.7 }}>Active Effects:</div>
+                      <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 100, overflow: 'auto', background: '#0a0a0a', padding: 6, borderRadius: 4, fontSize: 10, lineHeight: 1.3 }}>
+                        {JSON.stringify(serverTestResult.data.afterState.activeEffects || {}, null, 2)}
+                      </pre>
+                    </>
+                  )}
+                </div>
+              </details>
             )}
             
             {/* Active Shield Status */}
@@ -1075,6 +1349,9 @@ export function CardBalancingToolV2({ onBack }) {
               {/* Validation Checklist */}
               <div style={styles.checklistSection}>
                 <h4 style={styles.sectionTitle}>Card Status</h4>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>
+                  All tests use server validation for 1:1 game behavior ✓
+                </div>
                 <div style={styles.checklistItem}>
                   <span style={validationChecklist.logic ? styles.checkTrue : styles.checkFalse}>
                     {validationChecklist.logic ? '✓' : '✗'}
@@ -1089,9 +1366,9 @@ export function CardBalancingToolV2({ onBack }) {
                 </div>
                 <div style={styles.checklistItem}>
                   <span style={validationChecklist.sound ? styles.checkTrue : styles.checkFalse}>
-                    {validationChecklist.sound ? '✓' : '✗'}
+                    {validationChecklist.sound ? '✓' : (selectedCard?.soundKey ? '✗' : '—')}
                   </span>
-                  <span>Sound Working</span>
+                  <span>Sound {selectedCard?.soundKey ? 'Working' : 'None'}</span>
                 </div>
                 {selectedCard?.visual?.cutscene && (
                   <div style={styles.checklistItem}>
@@ -1105,7 +1382,7 @@ export function CardBalancingToolV2({ onBack }) {
                   <span style={validationChecklist.server ? styles.checkTrue : styles.checkFalse}>
                     {validationChecklist.server ? '✓' : '✗'}
                   </span>
-                  <span>Server Validated</span>
+                  <span>Server Validated (1:1)</span>
                 </div>
                 <div style={styles.checklistItem}>
                   <span style={selectedCard?.endsTurn ? styles.checkTrue : styles.checkFalse}>
@@ -1185,7 +1462,8 @@ export function CardBalancingToolV2({ onBack }) {
           onSelect={(pieceType) => {
             const colorChar = playerColor === 'white' ? 'w' : 'b';
             const params = { targetSquare: metamorphosisDialog.square, newType: pieceType };
-            applyCardEffect(selectedCard, params, colorChar);
+            // Use server validation for 1:1 game behavior
+            applyCardEffectWithServer(selectedCard, params, colorChar);
             setMetamorphosisDialog(null);
           }}
           onCancel={() => setMetamorphosisDialog(null)}

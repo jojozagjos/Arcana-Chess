@@ -1,1 +1,0 @@
-Update: move update log to top-left; bump update log to v1.2.1; fix quick-match navigation to open joined lobby UI; restore tutorial Shield Pawn visuals; lazy-load ParticleOverlay in GameScene.

@@ -8,7 +8,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select a pawn to grant temporary protection: it cannot be captured for one enemy turn.',
     visual: { particles: false, animation: false, cutscene: false },
     visualLifecycle: { mode: 'untilTurnEnd', autoClearOnServerTurnEnd: true },
-    soundKey: 'arcana:shield_pawn',
+    soundKey: 'arcana:shield',
   },
     /* 'pawn_wall' removed: functionality replaced by 'pawn_guard' which now
       shields only the first friendly piece immediately behind a pawn for 1 turn */
@@ -165,7 +165,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'If your next move is a capture, draw 1 additional common Arcana card after the capture resolves.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundKey: 'arcana:focus_fire',
+    soundKey: 'arcana:arcane_cycle',
   },
 
   // OFFENSIVE ARCANA - UNCOMMON+
