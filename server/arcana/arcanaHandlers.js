@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { pickWeightedArcana, pickWeightedArcanaForSacrifice, getAdjacentSquares } from './arcanaUtils.js';
+import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonArcana, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
 
 /**
  * Validates arcana targeting before applying effects
@@ -558,6 +558,13 @@ function applyDoubleStrike({ gameState, moverColor, moveResult }) {
     };
     return { params: { firstKillSquare: moveResult.to, color: moverColor } };
   }
+  // When used via useArcana (before a move), set a pending flag.
+  // The move handler will activate doubleStrikeActive after the next capture.
+  if (!moveResult && moverColor) {
+    gameState.activeEffects.doubleStrike = gameState.activeEffects.doubleStrike || { w: null, b: null };
+    gameState.activeEffects.doubleStrike[moverColor] = { pending: true };
+    return { params: { color: moverColor, pending: true } };
+  }
   return null;
 }
 
@@ -616,6 +623,13 @@ function applyBerserkerRage({ gameState, moverColor, moveResult }) {
       firstKillSquare: moveResult.to
     };
     return { params: { firstKillSquare: moveResult.to, color: moverColor } };
+  }
+  // When used via useArcana (before a move), set a pending flag.
+  // The move handler will activate berserkerRageActive after the next capture.
+  if (!moveResult && moverColor) {
+    gameState.activeEffects.berserkerRage = gameState.activeEffects.berserkerRage || { w: null, b: null };
+    gameState.activeEffects.berserkerRage[moverColor] = { pending: true };
+    return { params: { color: moverColor, pending: true } };
   }
   return null;
 }
@@ -728,7 +742,7 @@ function applyMirrorImage({ chess, gameState, moverColor, params }) {
   return { params: { originalSquare: targetSquare, duplicateSquare: freeSquare, type: piece.type } };
 }
 
-function applySacrifice({ chess, gameState, socketId, moverColor, params }) {
+function applySacrifice({ chess, gameState, socketId, moverColor, params, io }) {
   const targetSquare = params?.targetSquare || params?.pieceSquare;
   if (targetSquare) {
     const piece = chess.get(targetSquare);
@@ -736,8 +750,8 @@ function applySacrifice({ chess, gameState, socketId, moverColor, params }) {
     if (piece && piece.color === moverColor && piece.type !== 'k') {
       chess.remove(targetSquare);
       // Choose cards biased by the sacrificed piece type (stronger pieces -> better cards)
-      const card1 = pickWeightedArcanaForSacrifice(piece.type);
-      const card2 = pickWeightedArcanaForSacrifice(piece.type);
+      const card1 = makeArcanaInstance(pickWeightedArcanaForSacrifice(piece.type));
+      const card2 = makeArcanaInstance(pickWeightedArcanaForSacrifice(piece.type));
         gameState.arcanaByPlayer[socketId].push(card1, card2);
         // Notify the owning player immediately about the gained cards so the client
         // can show draw animations (mirror Focus Fire behavior).
@@ -821,8 +835,8 @@ function applyArcaneCycle({ gameState, socketId, params }) {
     }
   }
   
-  // Draw a new common arcana
-  const newCard = pickWeightedArcana();
+  // Draw a new common arcana (card description specifies "common")
+  const newCard = makeArcanaInstance(pickCommonArcana());
   gameState.arcanaByPlayer[socketId].push(newCard);
   return { params: { drewCard: newCard.id, discardIndex } };
 }
@@ -1134,6 +1148,11 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
   
   const piece = chess.get(targetSquare);
+  
+  // Actually flip the piece's color on the board so the controller can move it
+  chess.remove(targetSquare);
+  chess.put({ type: piece.type, color: moverColor }, targetSquare);
+  
   gameState.activeEffects.mindControlled.push({
     square: targetSquare,
     controller: moverColor,
@@ -1197,13 +1216,15 @@ function canPieceTypeAttack(pieceType, fromSquare, toSquare) {
  */
 function revivePawns(gameState, moverColor, maxCount) {
   const chess = gameState.chess;
-  const backRank = moverColor === 'w' ? '1' : '8';
+  // Pawns should be placed on their starting rank (2 for white, 7 for black),
+  // NOT on the back rank (1/8) where they'd be immovable.
+  const pawnStartRank = moverColor === 'w' ? '2' : '7';
   const revived = [];
   
-  // Find empty squares on back rank
+  // Find empty squares on the pawn starting rank
   const emptySquares = [];
   for (let file = 0; file < 8; file++) {
-    const square = 'abcdefgh'[file] + backRank;
+    const square = 'abcdefgh'[file] + pawnStartRank;
     if (!chess.get(square)) {
       emptySquares.push(square);
     }
@@ -1226,12 +1247,29 @@ function astralRebirthEffect(gameState, moverColor) {
   const chess = gameState.chess;
   const backRank = moverColor === 'w' ? '1' : '8';
   
+  // Look for a captured piece to resurrect (prefer higher-value pieces)
+  const captured = gameState.capturedByColor?.[moverColor] || [];
+  const pieceValue = { q: 5, r: 4, b: 3, n: 2, p: 1 };
+  // Sort by value descending to resurrect the best piece
+  const sortedCaptured = [...captured].sort((a, b) => (pieceValue[b.type] || 0) - (pieceValue[a.type] || 0));
+  
   // Find an empty square on back rank
   for (let file = 0; file < 8; file++) {
     const square = 'abcdefgh'[file] + backRank;
     if (!chess.get(square)) {
-      // For simplicity, resurrect a knight (could be improved to track captured pieces)
-      chess.put({ type: 'n', color: moverColor }, square);
+      // Determine piece type: use actual captured piece if available, else default to knight
+      let pieceType = 'n';
+      if (sortedCaptured.length > 0) {
+        const resurrected = sortedCaptured[0];
+        pieceType = resurrected.type;
+        // Remove from captured list since it's been revived
+        const idx = captured.findIndex(p => p.type === pieceType);
+        if (idx !== -1) captured.splice(idx, 1);
+      }
+      // Don't place pawns on back rank - they'd be immovable. Use knight instead.
+      if (pieceType === 'p') pieceType = 'n';
+      
+      chess.put({ type: pieceType, color: moverColor }, square);
       return square;
     }
   }
@@ -1245,14 +1283,37 @@ function astralRebirthEffect(gameState, moverColor) {
 function undoMoves(gameState, count) {
   const chess = gameState.chess;
   const undone = [];
+  const history = gameState.moveHistory || [];
   
-  for (let i = 0; i < count; i++) {
-    const move = chess.undo();
-    if (move) {
-      undone.push(move);
-    } else {
-      break; // No more moves to undo
+  if (history.length === 0) {
+    // Fallback to chess.undo() if no FEN history available
+    for (let i = 0; i < count; i++) {
+      const move = chess.undo();
+      if (move) {
+        undone.push(move);
+      } else {
+        break;
+      }
     }
+    return undone;
+  }
+  
+  // Use FEN history snapshots (more reliable after arcana moves that use
+  // chess.remove/put/load, which clear chess.js internal history).
+  // Each entry in moveHistory is a pre-move FEN. To undo N moves, we go
+  // back N entries.
+  const targetIdx = Math.max(0, history.length - count);
+  const targetFen = history[targetIdx];
+  
+  if (targetFen) {
+    // Record what we're undoing
+    for (let i = history.length - 1; i >= targetIdx; i--) {
+      undone.push({ fen: history[i] });
+    }
+    
+    chess.load(targetFen);
+    // Trim moveHistory to the restored point
+    gameState.moveHistory = history.slice(0, targetIdx);
   }
   
   return undone;

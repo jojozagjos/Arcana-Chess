@@ -182,6 +182,11 @@ export function App() {
         soundManager.setMasterVolume(next.audio.master ?? 1.0);
         soundManager.setMusicVolume(next.audio.music ?? 1.0);
         soundManager.setSfxVolume(next.audio.sfx ?? 1.0);
+        
+        // Also persist to arcana:audio key so soundManager picks it up on reload
+        try {
+          localStorage.setItem('arcana:audio', JSON.stringify(next.audio));
+        } catch (e) { /* ignore storage errors */ }
       }
 
       return next;

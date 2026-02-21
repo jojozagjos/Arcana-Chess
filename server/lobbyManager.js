@@ -70,6 +70,11 @@ export class LobbyManager {
       throw new Error('Incorrect lobby code for private lobby');
     }
 
+    // Enforce 2-player limit
+    if (lobby.players.length >= 2 && !lobby.players.includes(socket.id)) {
+      throw new Error('Lobby is full');
+    }
+
     if (!lobby.players.includes(socket.id)) {
       lobby.players.push(socket.id);
     }

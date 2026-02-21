@@ -126,10 +126,10 @@ function validatePhantomStep(chess, from, to, piece) {
   const isKnightMove = (fileDiff === 2 && rankDiff === 1) || (fileDiff === 1 && rankDiff === 2);
   if (!isKnightMove) return null;
 
-  // Pawns are allowed to use Phantom Step, but must not land on their own promotion rank
+  // Pawns are allowed to use Phantom Step, but must not land on their promotion rank
   if (piece.type === 'p') {
-    const ownPromotionRank = piece.color === 'w' ? 1 : 8;
-    if (toRank === ownPromotionRank) return null;
+    const promotionRank = piece.color === 'w' ? 8 : 1;
+    if (toRank === promotionRank) return null;
   }
 
   const destPiece = chess.get(to);
@@ -149,9 +149,9 @@ function validatePawnRush(chess, from, to, color) {
   const direction = color === 'w' ? 1 : -1;
   if (toRank !== fromRank + (2 * direction)) return null;
 
-  // Prevent pawns from reaching their own promotion rank via Pawn Rush
-  const ownPromotionRank = color === 'w' ? 1 : 8;
-  if (toRank === ownPromotionRank) return null;
+  // Prevent pawns from reaching their promotion rank via Pawn Rush (no promotion handling)
+  const promotionRank = color === 'w' ? 8 : 1;
+  if (toRank === promotionRank) return null;
 
   const middleRank = fromRank + direction;
   const middleSquare = String.fromCharCode(fromFile) + middleRank;
@@ -222,7 +222,7 @@ function validateTemporalEcho(chess, from, to, piece, pattern) {
   // If a pawn is repeating a move, prevent it from landing on its own promotion rank
   if (piece.type === 'p') {
     const toRank = parseInt(to[1]);
-    const ownPromotionRank = piece.color === 'w' ? 1 : 8;
+    const ownPromotionRank = piece.color === 'w' ? 8 : 1;
     if (toRank === ownPromotionRank) return null;
   }
 
@@ -263,7 +263,7 @@ function validateEnPassantMaster(chess, from, to, color) {
   if (toRank !== fromRank + direction) return null;
 
   // Prevent en-passant variant from landing on own promotion rank
-  const ownPromotionRank = color === 'w' ? 1 : 8;
+  const ownPromotionRank = color === 'w' ? 8 : 1;
   if (toRank === ownPromotionRank) return null;
 
   // The pawn to capture must be on the same rank as the source (adjacent horizontally)

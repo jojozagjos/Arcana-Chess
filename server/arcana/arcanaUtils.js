@@ -44,6 +44,17 @@ export function pickWeightedArcana() {
 }
 
 /**
+ * Pick a random common-rarity arcana card.
+ * Used by Focus Fire and Arcane Cycle which explicitly grant "common" cards.
+ */
+export function pickCommonArcana() {
+  const commonCards = ARCANA_DEFINITIONS.filter(a => a.rarity === 'common');
+  if (commonCards.length === 0) return pickWeightedArcana(); // fallback
+  const idx = Math.floor(Math.random() * commonCards.length);
+  return commonCards[idx];
+}
+
+/**
  * Pick a weighted arcana biased by the strength of the sacrificed piece.
  * pieceType: one of 'p','n','b','r','q' (king not allowed)
  * Stronger pieces get a higher multiplier for rare/epic/legendary weights.

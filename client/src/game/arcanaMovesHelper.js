@@ -169,6 +169,10 @@ function generatePawnRushMoves(chess, square, color) {
   const twoSquaresRank = rank + (direction * 2);
   const oneSquareRank = rank + direction;
   
+  // Block moves that would reach the promotion rank (no handling for promotion via Pawn Rush)
+  const promotionRank = color === 'w' ? 8 : 1;
+  if (twoSquaresRank === promotionRank) return moves;
+  
   if (twoSquaresRank >= 1 && twoSquaresRank <= 8) {
     const oneSquareAhead = String.fromCharCode(97 + file) + oneSquareRank;
     const twoSquaresAhead = String.fromCharCode(97 + file) + twoSquaresRank;

@@ -182,6 +182,8 @@ class SoundManager {
       try { this.musicCrossfadeCancel(); } catch (e) {}
       this.musicCrossfadeCancel = null;
     }
+    // Register cancellation so playMusic can abort this fade-out
+    this.musicCrossfadeCancel = () => { cancelled = true; };
     const startTime = performance.now();
     const step = () => {
       if (cancelled) return;
@@ -191,8 +193,11 @@ class SoundManager {
       if (t < 1) requestAnimationFrame(step);
       else {
         try { audio.pause(); } catch (e) {}
-        this.currentMusicAudio = null;
-        this.currentMusicKey = null;
+        // Only null out if this fade hasn't been superseded by a new playMusic call
+        if (this.currentMusicAudio === audio) {
+          this.currentMusicAudio = null;
+          this.currentMusicKey = null;
+        }
       }
     };
     requestAnimationFrame(step);

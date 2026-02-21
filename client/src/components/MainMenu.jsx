@@ -568,7 +568,7 @@ function JoinLobbyScreen({ onBack, initialLobby = null }) {
                 onChange={(e) => setJoinCode(e.target.value)}
                 placeholder="ABC123"
                 autoFocus
-                onKeyPress={(e) => e.key === 'Enter' && handleJoinPrivateWithCode()}
+                onKeyDown={(e) => e.key === 'Enter' && handleJoinPrivateWithCode()}
               />
             </label>
             <button style={styles.primaryButton} onClick={handleJoinPrivateWithCode}>

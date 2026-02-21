@@ -142,30 +142,6 @@ function getAllPiecesFromChess(chess) {
   return pieces;
 }
 
-function applyTestCardEffect(chess, card, params, colorChar) {
-  // Simplified card effect application for testing
-  switch (card.id) {
-    case 'execution':
-      if (params.targetSquare) {
-        const target = chess.get(params.targetSquare);
-        if (target && target.color !== colorChar && target.type !== 'k') {
-          chess.remove(params.targetSquare);
-        }
-      }
-      break;
-    case 'promotion_ritual':
-      if (params.targetSquare) {
-        const pawn = chess.get(params.targetSquare);
-        if (pawn && pawn.type === 'p' && pawn.color === colorChar) {
-          chess.remove(params.targetSquare);
-          chess.put({ type: 'q', color: colorChar }, params.targetSquare);
-        }
-      }
-      break;
-    // Add more card effects as needed
-  }
-}
-
 const lobbyManager = new LobbyManager();
 const gameManager = new GameManager(io, lobbyManager);
 // Backwards-compatible wrapper: some callers expect `gameManager.applyArcana`
@@ -210,6 +186,8 @@ io.on('connection', (socket) => {
     try {
       const result = lobbyManager.leaveLobby(socket.id);
       if (result) {
+        // Remove socket from the Socket.IO room so it stops receiving lobby broadcasts
+        if (result.lobbyId) socket.leave(result.lobbyId);
         if (result.closed) {
           io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player left' });
         } else if (result.lobby) {

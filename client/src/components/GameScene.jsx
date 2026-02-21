@@ -111,10 +111,17 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   }, [gameState?.arcanaByPlayer, mySocketId]);
 
   const usedArcanaIds = useMemo(() => {
+    // Prefer instanceId-based tracking so duplicate cards (same definition id) are
+    // filtered individually rather than all-at-once.
+    if (gameState?.usedInstanceIdsByPlayer && mySocketId) {
+      const arr = gameState.usedInstanceIdsByPlayer[mySocketId] || [];
+      return new Set(arr);
+    }
+    // Fallback to legacy definition-id tracking
     if (!gameState?.usedArcanaIdsByPlayer || !mySocketId) return new Set();
     const arr = gameState.usedArcanaIdsByPlayer[mySocketId] || [];
     return new Set(arr);
-  }, [gameState?.usedArcanaIdsByPlayer, mySocketId]);
+  }, [gameState?.usedInstanceIdsByPlayer, gameState?.usedArcanaIdsByPlayer, mySocketId]);
 
   const isAscended = gameState?.ascended || !!ascendedInfo;
 
@@ -591,8 +598,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setTargetingMode(null);
         } else {
           // Activate the arcana immediately with the selected target
+          if (pendingActionRef.current) return; // Prevent double-click duplicate
+          pendingActionRef.current = true;
           usedArcanaThisTurnRef.current = true;
           socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: updatedParams }] }, (res) => {
+            pendingActionRef.current = false;
             if (!res || !res.ok) {
               setPendingMoveError(res?.error || 'Failed to use arcana');
             } else {
@@ -650,6 +660,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       
       const move = { from: selectedSquare, to: square };
 
+      // Prevent duplicate submissions from rapid clicks
+      if (pendingActionRef.current) return;
+      pendingActionRef.current = true;
+
       // Play sound immediately on local move to ensure browser allows playback
       const moveKey = `${selectedSquare}-${square}`;
       const targetPiecePre = chess.get(square);
@@ -675,6 +689,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             setPromotionDialog(null);
             setSelectedSquare(null);
             setLegalTargets([]);
+            pendingActionRef.current = false;
           } else {
             // Server callback may also attempt to play sounds for moves coming from network.
             // Skip duplicate playback if we've already played for this move (via playedMoveKeysRef)
@@ -690,6 +705,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             setPendingMoveError('');
             setSelectedSquare(null);
             setLegalTargets([]);
+            pendingActionRef.current = false;
           }
         },
       );
@@ -713,6 +729,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const { from, to } = promotionDialog;
     const move = { from, to, promotion: promotionPiece };
 
+    // Prevent duplicate submissions from rapid clicks
+    if (pendingActionRef.current) return;
+    pendingActionRef.current = true;
+
     const moveKey = `${from}-${to}`;
     // Play sound immediately on local move
     const targetPiecePre = chess.get(to);
@@ -735,6 +755,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setPromotionDialog(null);
           setSelectedSquare(null);
           setLegalTargets([]);
+          pendingActionRef.current = false;
         } else {
           if (playedMoveKeysRef.current.has(moveKey)) {
             playedMoveKeysRef.current.delete(moveKey);
@@ -747,6 +768,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           setPendingMoveError('');
           setSelectedSquare(null);
           setLegalTargets([]);
+          pendingActionRef.current = false;
         }
       },
     );
@@ -788,7 +810,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   // Maintain piecesState so pieces keep stable ids and can animate between squares
   const [piecesState, setPiecesState] = useState(() => {
-    const initial = parseFenPieces(gameState?.fen);
+    // Use displayFen (Fog of War redacted) if available, else fall back to full fen
+    const renderFen = gameState?.displayFen || gameState?.fen;
+    const initial = parseFenPieces(renderFen);
     // Assign initial UIDs with unique counter to prevent duplicates
     return initial.map((p) => {
       uidCounterRef.current += 1;
@@ -799,7 +823,9 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   // Reconcile piecesState when FEN changes: match by nearest same type/color to preserve uid
   useEffect(() => {
-    const newPieces = parseFenPieces(gameState?.fen);
+    // Use displayFen (Fog of War redacted) if available for rendering
+    const renderFen = gameState?.displayFen || gameState?.fen;
+    const newPieces = parseFenPieces(renderFen);
     if (!piecesState || piecesState.length === 0) {
       // First assignment: give UIDs with unique counter
       const withUids = newPieces.map((p) => {
@@ -1798,7 +1824,14 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   if (!isAscended) return null;
 
   // Filter out used arcana and group by card ID
-  const availableArcana = myArcana.filter(a => !usedArcanaIds.has(a.id));
+  // When usedArcanaIds contains instanceIds (preferred), filter by instanceId so
+  // duplicate cards with the same definition id are hidden individually.
+  const availableArcana = myArcana.filter(a => {
+    if (a.instanceId && usedArcanaIds.has(a.instanceId)) return false;
+    // Fallback: legacy definition-id filtering (only when instanceIds aren't available)
+    if (!a.instanceId && usedArcanaIds.has(a.id)) return false;
+    return true;
+  });
   const [hoveredId, setHoveredId] = React.useState(null);
   
   const toColorCode = (color) => color === 'white' ? 'w' : 'b';

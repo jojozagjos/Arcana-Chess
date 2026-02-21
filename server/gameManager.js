@@ -2,7 +2,7 @@ import { Chess } from 'chess.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
 import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
-import { pickWeightedArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
+import { pickWeightedArcana, pickCommonArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
 
 // Logging utility
 const logger = {
@@ -21,7 +21,7 @@ const REVEAL_ACK_TIMEOUT_MS = 5000;
 const ACTION_TTL_MS = 10000;
 
 // Game configuration constants
-const INITIAL_DRAW_PLY = -99;
+const INITIAL_DRAW_PLY = -1;
 const MOVE_HISTORY_LIMIT = 10;
 const DRAW_COOLDOWN_PLIES = 1;
 
@@ -102,6 +102,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
     lastDrawTurn: lastDrawTurn,  // Track turn number when each player last drew
+    plyCount: 0,  // Stable ply counter (chess.history().length resets on chess.load())
     // Extended state for Arcana effects
     activeEffects: {
       ironFortress: { w: false, b: false },
@@ -385,6 +386,12 @@ export class GameManager {
         ])
       ),
       usedArcanaIdsByPlayer: usedArcanaPlain,
+      usedInstanceIdsByPlayer: Object.fromEntries(
+        Object.entries(gameState.usedArcanaInstanceIdsByPlayer || {}).map(([pid, arr]) => [
+          pid,
+          Array.isArray(arr) ? [...arr] : [],
+        ])
+      ),
       playerColors: gameState.playerColors,
       lastMove: gameState.lastMove,
       pawnShields: gameState.pawnShields,
@@ -402,10 +409,40 @@ export class GameManager {
       const fog = gameState.activeEffects?.fogOfWar || { w: false, b: false };
 
       // If any color has fog active, and the viewer is NOT that color, mask lastMove
+      // and also redact the fogged player's piece positions from the FEN
       for (const c of ['w', 'b']) {
         if (fog[c] && viewerChar !== c) {
-          // Minimum acceptable concealment: remove lastMove so viewer doesn't see from->to
+          // Remove lastMove so viewer doesn't see from->to
           base.lastMove = null;
+
+          // Redact the fogged player's pieces from the board representation.
+          // We provide a separate displayFen with fogged pieces removed so the
+          // client can render fog while keeping the real FEN for game logic.
+          const fenParts = base.fen.split(' ');
+          const ranks = fenParts[0].split('/');
+          const redactedRanks = ranks.map(rank => {
+            let result = '';
+            let emptyCount = 0;
+            for (const ch of rank) {
+              if (/\d/.test(ch)) {
+                emptyCount += parseInt(ch);
+              } else {
+                // Uppercase = white, lowercase = black
+                const pieceColor = ch === ch.toUpperCase() ? 'w' : 'b';
+                if (pieceColor === c) {
+                  // Replace fogged piece with empty square
+                  emptyCount++;
+                } else {
+                  if (emptyCount > 0) { result += emptyCount; emptyCount = 0; }
+                  result += ch;
+                }
+              }
+            }
+            if (emptyCount > 0) result += emptyCount;
+            return result;
+          });
+          base.displayFen = [redactedRanks.join('/'), ...fenParts.slice(1)].join(' ');
+          base.fogActive = c; // Tell the client which color is fogged
           break;
         }
       }
@@ -500,10 +537,12 @@ export class GameManager {
         if (gameState.chess.inCheck()) throw new Error('You cannot draw while in check');
       }
       
-      // Check draw cooldown rule: require at least 3 plies between draws.
-      // After drawing, player must: 1) opponent moves, 2) player moves, 3) opponent moves, then can draw again.
+      // Check draw cooldown rule: require at least DRAW_COOLDOWN_PLIES plies between draws.
+      // With DRAW_COOLDOWN_PLIES = 1 the player must wait one full turn (opponent move) before drawing again.
       // Using raw ply counts avoids ambiguity when FEN is swapped without adding to history.
-      const currentPly = gameState.chess.history().length; // number of half-moves played so far
+      // Use stable plyCount instead of chess.history().length (which resets on chess.load)
+      if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+      const currentPly = gameState.plyCount;
       // Defensive: ensure lastDrawTurn map exists and has a default
       if (!gameState.lastDrawTurn) gameState.lastDrawTurn = {};
       if (typeof gameState.lastDrawTurn[socket.id] === 'undefined') gameState.lastDrawTurn[socket.id] = INITIAL_DRAW_PLY;
@@ -540,6 +579,9 @@ export class GameManager {
       // Clear en-passant square when swapping without a real move to avoid invalid FEN
       if (fenParts.length > 3) fenParts[3] = '-';
       chess.load(fenParts.join(' '));
+      
+      // Increment ply counter (drawing a card counts as a turn action)
+      gameState.plyCount++;
       
       // Emit to both players (redacted to opponent)
       for (const pid of gameState.playerIds) {
@@ -675,17 +717,17 @@ export class GameManager {
       const opponentId = pending.opponentId;
       const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
 
-      // pending.visibleIndices maps visible-selection indices -> original opponent array indices
-      const visibleIndices = pending.visibleIndices;
-      if (!Array.isArray(visibleIndices) || visibleIndices.length === 0) {
+      // pending stores opponentId and cardCount; visibleIndices was never
+      // populated by applyPeekCard. Use a direct index into opponent's cards.
+      const opponentCardCount = opponentCards.length;
+      if (opponentCardCount === 0) {
         delete gameState.pendingPeek[socket.id];
         throw new Error('No visible opponent cards to reveal');
       }
 
       const idx = parseInt(cardIndex);
-      if (isNaN(idx) || idx < 0 || idx >= visibleIndices.length) throw new Error('Invalid card index');
-      const originalIndex = visibleIndices[idx];
-      const revealedCard = opponentCards[originalIndex];
+      if (isNaN(idx) || idx < 0 || idx >= opponentCardCount) throw new Error('Invalid card index');
+      const revealedCard = opponentCards[idx];
       // Reveal only to requesting player; cardIndex is the visible index chosen by client
       this.io.to(socket.id).emit('peekCardRevealed', { card: revealedCard, cardIndex: idx });
       // Clear pending peek
@@ -707,7 +749,12 @@ export class GameManager {
     const chess = gameState.chess;
     const moverColor = chess.turn();
 
-    // Removed legacy lastDrawnBy tracking - using lastDrawTurn instead
+    // Turn ownership check: verify the socket belongs to the player whose turn it is.
+    // This prevents a malicious client from submitting moves on the opponent's turn.
+    const playerColor = gameState.playerColors?.[socket.id];
+    if (playerColor && playerColor !== moverColor) {
+      throw new Error('Not your turn');
+    }
 
     // Work with verbose moves so we can inspect captures and types
     const legalMoves = chess.moves({ verbose: true });
@@ -804,9 +851,16 @@ export class GameManager {
       }
     }
 
-    // Double Strike: Validate second capture is NOT adjacent to first kill
-    if (gameState.activeEffects.doubleStrikeActive?.color === moverColor && candidate.captured) {
-      validateNonAdjacentCapture(gameState.activeEffects.doubleStrikeActive, candidate.to, 'Double Strike');
+    // Double Strike: Validate second capture uses the SAME piece and is NOT adjacent to first kill
+    if (gameState.activeEffects.doubleStrikeActive?.color === moverColor) {
+      const dsFirstKill = gameState.activeEffects.doubleStrikeActive.firstKillSquare;
+      // Card says "Capture two enemy pieces in one turn with the same piece"
+      if (candidate.from !== dsFirstKill) {
+        throw new Error('Double Strike requires using the same piece for both captures!');
+      }
+      if (candidate.captured) {
+        validateNonAdjacentCapture(gameState.activeEffects.doubleStrikeActive, candidate.to, 'Double Strike');
+      }
     }
 
     // Berserker Rage: Validate second capture is NOT adjacent to first kill
@@ -844,6 +898,10 @@ export class GameManager {
     if (!gameState.moveHistory) gameState.moveHistory = [];
     gameState.moveHistory.push(chess.fen());
     if (gameState.moveHistory.length > MOVE_HISTORY_LIMIT) gameState.moveHistory.shift();
+
+    // Snapshot FEN before executing. If an error occurs after chess.move() but
+    // before broadcasting, we roll back so the board stays in sync with clients.
+    const preMovefen = chess.fen();
 
     // Execute the move
     let result;
@@ -904,6 +962,16 @@ export class GameManager {
         throw new Error(`Invalid move: ${JSON.stringify({ from: candidate.from, to: candidate.to, piece: candidate.piece, captured: candidate.captured, color: candidate.color })}`);
       }
     }
+
+    // Wrap post-move processing in a try/catch so we can roll back the chess
+    // state if any effect handler throws. Without rollback, the server board
+    // would advance while the client still shows the pre-move board, causing
+    // permanent desync.
+    try {
+
+    // Increment stable ply counter (used for draw cooldown)
+    if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+    gameState.plyCount++;
 
     // Check if a king was captured (should end game immediately)
     const kingCaptured = result.captured === 'k';
@@ -1082,7 +1150,7 @@ export class GameManager {
             if (!pid.startsWith('AI-')) {
               this.io.to(pid).emit('piecePoisoned', {
                 squares: poisoned,
-                turnsLeft: 3
+                turnsLeft: 6  // Matches server tracking (6 plies = ~3 turns)
               });
             }
           }
@@ -1093,10 +1161,9 @@ export class GameManager {
       // BEFORE the move is executed (see validation section above), not after capture.
       // This prevents invalid adjacent captures from being made in the first place.
 
-      // Focus Fire: draw an extra card on capture
+      // Focus Fire: draw an extra common card on capture
       if (gameState.activeEffects.focusFire && gameState.activeEffects.focusFire[moverColor]) {
-        const { pickWeightedArcana } = await import('./arcana/arcanaUtils.js');
-        const bonusCard = pickWeightedArcana();
+        const bonusCard = pickCommonArcana();
         const bonusInstance = makeArcanaInstance(bonusCard);
         gameState.arcanaByPlayer[socket.id].push(bonusInstance);
         gameState.activeEffects.focusFire[moverColor] = false; // Clear after use
@@ -1142,6 +1209,38 @@ export class GameManager {
         // Clear chain lightning after use
         gameState.activeEffects.chainLightning[moverColor] = false;
       }
+
+      // Activate pending Double Strike: if the card was used via useArcana (pending),
+      // this capture triggers the extra-move grant for the NEXT capture.
+      const pendingDS = gameState.activeEffects.doubleStrike?.[moverColor];
+      if (pendingDS?.pending) {
+        const validDSPieces = ['p', 'n', 'b', 'r'];
+        if (validDSPieces.includes(result.piece)) {
+          gameState.activeEffects.doubleStrikeActive = {
+            color: moverColor,
+            firstKillSquare: result.to
+          };
+          gameState.activeEffects.doubleStrike[moverColor] = {
+            active: true,
+            firstKillSquare: result.to,
+            usedSecondKill: false
+          };
+        }
+      }
+
+      // Activate pending Berserker Rage: same pattern as Double Strike
+      const pendingBR = gameState.activeEffects.berserkerRage?.[moverColor];
+      if (pendingBR?.pending) {
+        gameState.activeEffects.berserkerRageActive = {
+          color: moverColor,
+          firstKillSquare: result.to
+        };
+        gameState.activeEffects.berserkerRage[moverColor] = {
+          active: true,
+          firstKillSquare: result.to,
+          usedSecondKill: false
+        };
+      }
     }
 
     // Ascension trigger: first capture - award 1 weighted-random card to each player
@@ -1163,7 +1262,67 @@ export class GameManager {
       }
     }
 
-    // Decrement turn-based effects
+    // Check for extra moves BEFORE decrementing effects.
+    // decrementEffects clears per-turn flags (e.g. queensGambit counter) which
+    // must still be readable for the extra-move check to work.
+
+    // Check if Queen's Gambit allows an extra move (must have moved the queen)
+    const hasQueensGambit = gameState.activeEffects.queensGambit[moverColor] > 0 && 
+                 !gameState.activeEffects.queensGambitUsed[moverColor] &&
+                 result.piece === 'q'; // Queen must be the piece that moved
+
+    // Check if Double Strike is active (second attack ready)
+    // Do not grant extra-move if this move performed a promotion
+    const hasDoubleStrike = gameState.activeEffects.doubleStrikeActive?.color === moverColor && !result.promotion;
+
+    // Check if Berserker Rage is active (after first capture, get another move)
+    // Also prevent berserker extra-move when the mover promoted on this move
+    const hasBerserkerRage = gameState.activeEffects.berserkerRageActive?.color === moverColor && !result.promotion;
+
+    // Only grant extra move if the game is not over (checkmate/stalemate)
+    const gameIsOver = chess.isCheckmate() || chess.isStalemate() || chess.isDraw();
+
+    // If player has extra move available, don't decrement effects or switch turns
+    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage) && !gameIsOver) {
+      // Mark that they used their extra move opportunity
+      if (hasQueensGambit) {
+        gameState.activeEffects.queensGambitUsed[moverColor] = true;
+      }
+      if (hasDoubleStrike) {
+        // Clear double strike after second attack
+        gameState.activeEffects.doubleStrikeActive = null;
+      }
+      if (hasBerserkerRage) {
+        // Clear berserker rage after second move
+        gameState.activeEffects.berserkerRageActive = null;
+      }
+      
+      // chess.move() already swapped the active color in the FEN. We need to
+      // swap it BACK so the same player can make their extra move. Without this,
+      // the FEN would show it's the opponent's turn and the server would reject
+      // the extra move because chess.turn() would return the wrong color.
+      const extraFen = chess.fen();
+      const extraFenParts = extraFen.split(' ');
+      extraFenParts[1] = moverColor === 'w' ? 'w' : 'b'; // Restore to mover's turn
+      extraFenParts[3] = '-'; // Clear en passant to keep FEN valid
+      chess.load(extraFenParts.join(' '));
+      
+      // Don't change turn - same player can move again
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          const personalised = this.serialiseGameStateForViewer(gameState, pid);
+          this.io.to(pid).emit('gameUpdated', personalised);
+          // Notify about extra move
+          this.io.to(pid).emit('extraMoveAvailable', { 
+            color: moverColor, 
+            type: hasQueensGambit ? 'queensGambit' : (hasDoubleStrike ? 'doubleStrike' : 'berserkerRage')
+          });
+        }
+      }
+      return { gameState: this.serialiseGameState(gameState), appliedArcana: [], extraMove: true };
+    }
+
+    // No extra move — now decrement turn-based effects and check for game end
     this.decrementEffects(gameState);
 
     // Reset arcana used this turn tracking when a move is made
@@ -1178,12 +1337,13 @@ export class GameManager {
         // Divine Intervention triggers: block checkmate and spawn a pawn
         gameState.activeEffects.divineIntervention[checkmatedColor] = false;
         
-        // Find an empty square on the back rank to spawn a pawn
-        const backRank = checkmatedColor === 'w' ? 1 : 8;
+        // Find an empty square on the second rank (pawn starting rank) to spawn a pawn.
+        // Pawns on back rank (1/8) are immovable; use rank 2 for white, rank 7 for black.
+        const pawnSpawnRank = checkmatedColor === 'w' ? 2 : 7;
         const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
         let spawnSquare = null;
         for (const file of files) {
-          const square = `${file}${backRank}`;
+          const square = `${file}${pawnSpawnRank}`;
           if (!chess.get(square)) {
             spawnSquare = square;
             break;
@@ -1221,49 +1381,6 @@ export class GameManager {
       outcome = { type: 'draw' };
     }
 
-    // Check if Queen's Gambit allows an extra move (must have moved the queen)
-    const hasQueensGambit = gameState.activeEffects.queensGambit[moverColor] > 0 && 
-                 !gameState.activeEffects.queensGambitUsed[moverColor] &&
-                 result.piece === 'q'; // Queen must be the piece that moved
-
-    // Check if Double Strike is active (second attack ready)
-    // Do not grant extra-move if this move performed a promotion
-    const hasDoubleStrike = gameState.activeEffects.doubleStrikeActive?.color === moverColor && !result.promotion;
-
-    // Check if Berserker Rage is active (after first capture, get another move)
-    // Also prevent berserker extra-move when the mover promoted on this move
-    const hasBerserkerRage = gameState.activeEffects.berserkerRageActive?.color === moverColor && !result.promotion;
-
-    // If player has extra move available, don't switch turns yet
-    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage) && !outcome) {
-      // Mark that they used their extra move opportunity
-      if (hasQueensGambit) {
-        gameState.activeEffects.queensGambitUsed[moverColor] = true;
-      }
-      if (hasDoubleStrike) {
-        // Clear double strike after second attack
-        gameState.activeEffects.doubleStrikeActive = null;
-      }
-      if (hasBerserkerRage) {
-        // Clear berserker rage after second move
-        gameState.activeEffects.berserkerRageActive = null;
-      }
-      
-      // Don't change turn - same player can move again
-      for (const pid of gameState.playerIds) {
-        if (!pid.startsWith('AI-')) {
-          const personalised = this.serialiseGameStateForViewer(gameState, pid);
-          this.io.to(pid).emit('gameUpdated', personalised);
-          // Notify about extra move
-          this.io.to(pid).emit('extraMoveAvailable', { 
-            color: moverColor, 
-            type: hasQueensGambit ? 'queensGambit' : (hasDoubleStrike ? 'doubleStrike' : 'berserkerRage')
-          });
-        }
-      }
-      return { gameState: this.serialiseGameState(gameState), appliedArcana: [], extraMove: true };
-    }
-
     // Broadcast personalised updated state to both players (mask lastMove under fog per viewer)
     for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {
@@ -1294,6 +1411,12 @@ export class GameManager {
     }
 
     return { gameState: this.serialiseGameState(gameState), appliedArcana: [] };
+    } catch (postMoveErr) {
+      // Roll back chess state to prevent server/client desync
+      logger.error('Post-move processing error, rolling back:', postMoveErr);
+      try { chess.load(preMovefen); } catch (_) { /* best-effort */ }
+      throw postMoveErr;
+    }
     } finally {
       gameState._busy = false;
     }
@@ -1397,11 +1520,13 @@ export class GameManager {
 
       // AI Draw Card Logic (before using cards)
       // Check AI draw cooldown same as human players
-      const currentPly = chess.history().length;
+      // Use stable plyCount instead of chess.history().length (which resets on chess.load)
+      if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+      const currentPly = gameState.plyCount;
       if (!gameState.lastDrawTurn) gameState.lastDrawTurn = {};
-      if (typeof gameState.lastDrawTurn[aiSocketId] === 'undefined') gameState.lastDrawTurn[aiSocketId] = -99;
+      if (typeof gameState.lastDrawTurn[aiSocketId] === 'undefined') gameState.lastDrawTurn[aiSocketId] = INITIAL_DRAW_PLY;
       const aiLastDrawPly = gameState.lastDrawTurn[aiSocketId];
-      const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= 3;
+      const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= DRAW_COOLDOWN_PLIES;
       
       if (!aiUsedCardThisTurn && aiCanDraw && Math.random() < settings.arcanaDrawChance) {
         const newCard = pickWeightedArcana();
@@ -1422,7 +1547,9 @@ export class GameManager {
         const fen = chess.fen();
         const fenParts = fen.split(' ');
         fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+        fenParts[3] = '-'; // Clear en passant to keep FEN valid
         chess.load(fenParts.join(' '));
+        gameState.plyCount++; // Increment ply so cooldowns track correctly
         return; // AI drew a card, end turn
       }
 
@@ -1563,6 +1690,10 @@ export class GameManager {
     
     const result = chess.move(selectedMove);
 
+    // Increment stable ply counter for AI move
+    if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+    gameState.plyCount++;
+
     // Update shield position if the AI's shielded piece moved
     const aiShield = gameState.pawnShields[moverColor];
     if (aiShield && result.from === aiShield.square) {
@@ -1647,9 +1778,9 @@ export class GameManager {
     ];
     
     const turnEndingCards = [
-      'execution', 'castle_breaker', 'astral_rebirth', 'necromancy',
-      'time_travel', 'chaos_theory', 'sacrifice', 'mind_control',
-      'royal_swap', 'promotion_ritual', 'metamorphosis'
+      'execution', 'astral_rebirth', 'necromancy',
+      'time_travel', 'chaos_theory', 'mind_control',
+      'royal_swap', 'promotion_ritual', 'cursed_square'
     ];
     
     let params = {};
@@ -1726,6 +1857,78 @@ export class GameManager {
         case 'cursed_square':
           // Pick a central square
           params.targetSquare = ['d4', 'd5', 'e4', 'e5'][Math.floor(Math.random() * 4)];
+          break;
+
+        case 'knight_of_storms':
+          // Must target one of AI's knights
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.type === 'n' && piece.color === moverColor) {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+          break;
+
+        case 'royal_swap':
+          // Must target one of AI's pawns (to swap with king)
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.type === 'p' && piece.color === moverColor) {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+          break;
+
+        case 'bishops_blessing':
+          // Must target one of AI's bishops
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.type === 'b' && piece.color === moverColor) {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+          break;
+
+        case 'metamorphosis':
+          // Find a minor piece to transform (not king/queen)
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.color === moverColor && piece.type !== 'k' && piece.type !== 'q') {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                // Transform into a knight or bishop randomly
+                params.newType = Math.random() < 0.5 ? 'n' : 'b';
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
+          break;
+
+        case 'sacrifice':
+          // Sacrifice a low-value piece (pawn preferred)
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.type === 'p' && piece.color === moverColor) {
+                params.targetSquare = 'abcdefgh'[f] + (8 - r);
+                break;
+              }
+            }
+            if (params.targetSquare) break;
+          }
           break;
           
         default:
@@ -1848,16 +2051,26 @@ export class GameManager {
     }
     
     // Clear one-turn effects
-    // Fog of War: keep fog active throughout the opponent's entire turn and only
-    // clear when it becomes the fog owner's turn again. This ensures: Player A
-    // uses Fog -> Player B experiences fog during their full turn; fog clears
-    // when Player A regains the move. (See design requirements.)
-    effects.ironFortress = { w: false, b: false };
-    effects.bishopsBlessing = { w: null, b: null };
-
-    // If fog is active for a color `c`, clear it only when it's currently `c`'s turn.
-    // That means fog persists during the opponent's turn and clears when owner regains turn.
+    // Pattern: effects that need to survive through the opponent's turn should
+    // only be cleared when the owner regains their turn (currentTurn === ownerColor).
     const currentTurn = gameState.chess.turn();
+
+    // Iron Fortress: keep active through opponent's turn, clear when owner regains turn
+    for (const c of ['w', 'b']) {
+      if (effects.ironFortress[c] && currentTurn === c) {
+        effects.ironFortress[c] = false;
+      }
+    }
+
+    // Bishop's Blessing: same pattern - persists through opponent's turn
+    for (const c of ['w', 'b']) {
+      if (effects.bishopsBlessing[c] && currentTurn === c) {
+        effects.bishopsBlessing[c] = null;
+      }
+    }
+
+    // Fog of War: keep fog active throughout the opponent's entire turn and only
+    // clear when it becomes the fog owner's turn again.
     for (const c of ['w', 'b']) {
       if (effects.fogOfWar[c] && currentTurn === c) {
         effects.fogOfWar[c] = false;
@@ -1914,10 +2127,10 @@ export class GameManager {
     if (effects.queensGambit.w === 0) effects.queensGambitUsed.w = false;
     if (effects.queensGambit.b === 0) effects.queensGambitUsed.b = false;
     
-    // Expire shields after the turn ends (opponent had their chance to attack)
-    const nextPlayerColor = gameState.chess.turn() === 'w' ? 'b' : 'w';
-    // Clear the shield for the player whose turn just ended
-    gameState.pawnShields[nextPlayerColor] = null;
+    // Expire shields: a shield set by color C should persist through the opponent's
+    // turn (so C's piece is protected) and clear once it's C's turn again.
+    // currentTurn is already computed above.
+    gameState.pawnShields[currentTurn] = null;
   }
 
   forfeitGame(socket, payload) {
