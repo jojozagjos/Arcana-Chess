@@ -752,7 +752,8 @@ export class GameManager {
     // Turn ownership check: verify the socket belongs to the player whose turn it is.
     // This prevents a malicious client from submitting moves on the opponent's turn.
     const playerColor = gameState.playerColors?.[socket.id];
-    if (playerColor && playerColor !== moverColor) {
+    const moverColorFull = moverColor === WHITE_CHAR ? WHITE : BLACK;
+    if (playerColor && playerColor !== moverColorFull) {
       throw new Error('Not your turn');
     }
 
