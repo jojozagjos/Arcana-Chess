@@ -40,8 +40,8 @@ test('Temporal Echo enforces exact delta', () => {
 
   // Helpers: canDrawAgain and isTurnFrozenFlag
   test('canDrawAgain enforces ply gap', () => {
-    const ok = canDrawAgain(10, 6);
-    const no = canDrawAgain(10, 8);
+    const ok = canDrawAgain(10, 6);  // Gap of 4 >= 3, should allow
+    const no = canDrawAgain(10, 8);  // Gap of 2 < 3, should block
     assert(ok === true);
     assert(no === false);
   });

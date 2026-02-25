@@ -23,7 +23,7 @@ const ACTION_TTL_MS = 10000;
 // Game configuration constants
 const INITIAL_DRAW_PLY = -1;
 const MOVE_HISTORY_LIMIT = 10;
-const DRAW_COOLDOWN_PLIES = 1;
+const DRAW_COOLDOWN_PLIES = 3;
 
 // Chess board constants
 const BOARD_SIZE = 8;
@@ -538,8 +538,8 @@ export class GameManager {
       }
       
       // Check draw cooldown rule: require at least DRAW_COOLDOWN_PLIES plies between draws.
-      // With DRAW_COOLDOWN_PLIES = 1 the player must wait one full turn (opponent move) before drawing again.
-      // Using raw ply counts avoids ambiguity when FEN is swapped without adding to history.
+      // With DRAW_COOLDOWN_PLIES = 3: player cannot draw on immediate next turn but can on following turn.
+      // This ensures: draw -> skip your next turn -> can draw again on the turn after that
       // Use stable plyCount instead of chess.history().length (which resets on chess.load)
       if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
       const currentPly = gameState.plyCount;
@@ -553,7 +553,7 @@ export class GameManager {
       // This ensures: opponent move -> your move -> opponent move -> you can draw
       if (lastDrawPly >= 0 && currentPly - lastDrawPly < DRAW_COOLDOWN_PLIES) {
         logger.debug('Draw blocked:', { socket: socket.id, currentPly, lastDrawPly });
-        throw new Error('Must wait 1 full turn between draws');
+        throw new Error('Cannot draw on your immediate next turn - wait one more turn');
       }
 
       const newCard = pickWeightedArcana();

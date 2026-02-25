@@ -114,8 +114,8 @@ async function run() {
 
   await wait(200);
 
-  // Now it's white's turn - white tries to draw (only 1 ply since last draw, should be blocked)
-  console.log('\n-- Step 4: White tries to draw again (should be BLOCKED - only 1 ply has passed)');
+  // Now it's white's turn - white tries to draw on immediate next turn (should be blocked)
+  console.log('\n-- Step 4: White tries to draw again (should be BLOCKED - immediate next turn)');
   const res4 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
   console.log('white draw (immediate) response:', res4.ok ? 'ALLOWED (error!)' : 'BLOCKED (correct)');
   if (res4.ok) {
@@ -138,8 +138,8 @@ async function run() {
 
   await wait(200);
 
-  // Now it's white's turn - 3 plies have passed since white last drew (black move, white move, black move)
-  console.log('\n-- Step 7: White attempts to draw again (should now be ALLOWED - 3 plies have passed)');
+  // Now it's white's turn - enough plies have passed (following turn after skipping immediate next turn)
+  console.log('\n-- Step 7: White attempts to draw again (should now be ALLOWED - following turn)');
   const res7 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
   console.log('white draw (after sequence) response:', res7.ok ? 'ALLOWED (correct)' : `BLOCKED: ${res7.error}`);
   if (!res7.ok) {

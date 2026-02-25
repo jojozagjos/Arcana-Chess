@@ -22,7 +22,7 @@ const PIECE_STRENGTH_MULTIPLIERS = {
 const BOARD_SIZE = 8;
 
 // Draw cooldown constants
-const DEFAULT_DRAW_COOLDOWN = 4;
+const DEFAULT_DRAW_COOLDOWN = 3;
 const INITIAL_DRAW_PLY = -1;
 
 /**
