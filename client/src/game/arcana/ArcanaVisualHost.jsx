@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { squareToPosition } from './sharedHelpers.jsx';
 import { getArcanaEffectDuration } from './arcanaTimings.js';
+import { effectResourcePool } from '../effectResourcePool.js';
 
 // Safe disposal utility to prevent WebGL context errors
 function safeDispose(obj) {
@@ -40,18 +41,29 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
   const [instances, setInstances] = useState([]);
   const idRef = useRef(1);
 
-  // When a new activeVisualArcana appears, add an instance and schedule its fade
+  // When a new activeVisualArcana appears, check resource limits then add instance with fade-out
   useEffect(() => {
     if (!activeVisualArcana) return;
     const { arcanaId, params } = activeVisualArcana;
     const EffectComp = getEffectComponent(arcanaId);
     if (!EffectComp) return;
 
+    // Check if we can create a new effect (resource limits)
+    const particleEstimate = params?.count || 60;
+    if (!effectResourcePool.canCreateEffect(particleEstimate)) {
+      console.warn(`[GameScene] Cannot create effect ${arcanaId} - resource limits reached`);
+      return;
+    }
+
     const id = idRef.current++;
     const duration = getArcanaEffectDuration(arcanaId) || 3000;
     const fadeMs = 600; // fade-out duration
 
-    const inst = { id, arcanaId, params, EffectComp, fading: false };
+    // Register effect with resource pool
+    const cappedParticleCount = effectResourcePool.registerEffect(id, particleEstimate);
+    const adjustedParams = params ? { ...params, count: cappedParticleCount } : { count: cappedParticleCount };
+
+    const inst = { id, arcanaId, params: adjustedParams, EffectComp, fading: false };
     setInstances(prev => [...prev, inst]);
 
     // Start fade after main duration, then remove after fadeMs
@@ -59,6 +71,8 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       setInstances(prev => prev.map(p => p.id === id ? { ...p, fading: true } : p));
       const removeT = setTimeout(() => {
         setInstances(prev => prev.filter(p => p.id !== id));
+        // Unregister from resource pool
+        effectResourcePool.unregisterEffect(id);
         clearTimeout(removeT);
       }, fadeMs);
       clearTimeout(startFade);
@@ -66,8 +80,14 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
 
     return () => {
       clearTimeout(startFade);
+      effectResourcePool.unregisterEffect(id);
     };
   }, [activeVisualArcana]);
+
+  // Deferred disposal on each frame to avoid frame stalls
+  useFrame(() => {
+    effectResourcePool.performDeferredDisposal();
+  });
 
   return (
     <group>
@@ -216,7 +236,7 @@ function EffectWrapper({ Effect, params, fading }) {
   }, [fading]);
 
   useEffect(() => {
-    // cleanup on unmount: restore materials and dispose geometries/materials safely
+    // cleanup on unmount: restore materials and defer disposal to avoid frame stalls
     return () => {
       if (ref.current) {
         ref.current.traverse((obj) => {
@@ -234,10 +254,14 @@ function EffectWrapper({ Effect, params, fading }) {
                   if ('opacity' in m.uniforms && 'opacity' in orig.uniforms) try { m.uniforms.opacity.value = orig.uniforms.opacity.value; } catch (e) {}
                 }
               }
+              // Queue material for deferred disposal
+              effectResourcePool.queueDisposal(m, null);
             }
           }
-          // Safe dispose of geometry and material
-          safeDispose(obj);
+          // Queue geometry for deferred disposal
+          if (obj.geometry) {
+            effectResourcePool.queueDisposal(null, obj.geometry);
+          }
         });
       }
       materialOriginals.current.clear();

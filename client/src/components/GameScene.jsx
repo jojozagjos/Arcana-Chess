@@ -4,6 +4,7 @@ import { OrbitControls, Environment } from '@react-three/drei';
 import { Chess } from 'chess.js';
 import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
+import { effectResourcePool } from '../game/effectResourcePool.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
@@ -48,6 +49,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
   // WebGL context loss state - prevents flashing during recovery
   const [isContextLost, setIsContextLost] = useState(false);
+  const contextLossCountRef = useRef(0); // Track consecutive context losses
   
   // Camera cutscene system for card effects
   const { cutsceneTarget, triggerCutscene, clearCutscene } = useCameraCutscene();
@@ -55,6 +57,29 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const overlayRef = useRef(null);
   // Store GL instance reference for context management
   const glRef = useRef(null);
+
+  // Monitor context loss and aggressively cap effects to prevent cascading failures
+  useEffect(() => {
+    if (isContextLost) {
+      contextLossCountRef.current++;
+      // Progressively reduce effect limits on repeated context loss
+      const newMaxEffects = Math.max(1, 4 - Math.floor(contextLossCountRef.current / 2));
+      const newMaxParticles = Math.max(60, 120 - contextLossCountRef.current * 20);
+      effectResourcePool.maxConcurrentEffects = newMaxEffects;
+      effectResourcePool.maxParticlesPerEffect = newMaxParticles;
+      effectResourcePool.totalParticleLimit = Math.max(150, 400 - contextLossCountRef.current * 50);
+      console.warn(
+        `[GameScene] Context loss #${contextLossCountRef.current}. Capped effects to ${newMaxEffects}, particles to ${newMaxParticles}`
+      );
+    } else if (contextLossCountRef.current > 0) {
+      // Gradually restore limits as context stabilizes
+      contextLossCountRef.current = 0;
+      effectResourcePool.maxConcurrentEffects = 4;
+      effectResourcePool.maxParticlesPerEffect = 120;
+      effectResourcePool.totalParticleLimit = 400;
+      console.log('[GameScene] Context restored. Effect limits restored to normal.');
+    }
+  }, [isContextLost]);
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -1003,6 +1028,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           gl.domElement.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
             setIsContextLost(true);
+            // Clear active visual effects to free resources
+            setActiveVisualArcana(null);
             console.warn('WebGL context lost in GameScene. Recovering...');
           });
           
