@@ -220,22 +220,29 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     if (currentTurnCode) prevTurnRef.current = currentTurnCode;
   }, [gameState?.turn, chess?.fen()]);
 
-  // Track the turn when player's card is revealed
+  // Track the turn when player's card is revealed (use unique key to track each draw separately)
   const playerCardTurnRef = useRef(null);
+  const playerCardInstanceRef = useRef(null); // Track which card is being displayed
 
   // Auto-dismiss player's revealed card when their turn ends
   useEffect(() => {
     // When a card is revealed for the player, track the current turn
     if (cardReveal && cardReveal.playerId === mySocketId && cardReveal.type === 'draw' && cardReveal.stayUntilClick) {
       const currentTurn = chess?.turn();
-      if (currentTurn && !playerCardTurnRef.current) {
+      // Create a unique key for this card reveal (to detect new draws vs same draw)
+      const currentCardKey = cardReveal.arcana?.instanceId || `${cardReveal.arcana?.id}-${Date.now()}`;
+      
+      // If this is a NEW card being revealed, reset the turn tracking
+      if (playerCardInstanceRef.current !== currentCardKey) {
+        playerCardInstanceRef.current = currentCardKey;
         playerCardTurnRef.current = currentTurn;
       }
     } else if (!cardReveal) {
-      // Card was dismissed, reset turn tracking
+      // Card was dismissed, reset tracking
       playerCardTurnRef.current = null;
+      playerCardInstanceRef.current = null;
     }
-  }, [cardReveal, chess?.turn(), mySocketId]);
+  }, [cardReveal, mySocketId]);
 
   // Dismiss card when player's turn ends
   useEffect(() => {
@@ -245,6 +252,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       if (playerCardTurnRef.current && currentTurn && currentTurn !== playerCardTurnRef.current) {
         setCardReveal(null);
         playerCardTurnRef.current = null;
+        playerCardInstanceRef.current = null;
         setIsCardAnimationPlaying(false);
       }
     }

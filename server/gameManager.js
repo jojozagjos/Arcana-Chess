@@ -1485,24 +1485,25 @@ export class GameManager {
     if (gameState.status !== 'ongoing') return;
 
     // AI Difficulty settings - affects move selection and arcana usage
+    // NOTE: Drawing is FAIR and RANDOM across all difficulties (not affect by difficulty)
     const difficultySettings = {
       'Scholar': { 
-        thinkTime: 800, 
-        randomness: 0.7,  // High randomness = easier
-        arcanaUseChance: 0.15,  // Low chance to use arcana
-        arcanaDrawChance: 0.1,  // Low chance to draw
+        thinkTime: 600, 
+        randomness: 0.85,  // Very high randomness = easier, makes random moves
+        arcanaUseChance: 0.1,  // Rarely uses arcana strategically
+        arcanaDrawChance: 0.2,  // Fair draw chance - same for all difficulties
       },
       'Knight': { 
-        thinkTime: 1200, 
-        randomness: 0.4,  // Medium randomness
-        arcanaUseChance: 0.35,  // Medium chance to use arcana
-        arcanaDrawChance: 0.25,  // Medium chance to draw
+        thinkTime: 1000, 
+        randomness: 0.5,  // Medium randomness = balanced play
+        arcanaUseChance: 0.4,  // Uses arcana moderately
+        arcanaDrawChance: 0.2,  // Fair draw chance - same for all difficulties
       },
       'Monarch': { 
         thinkTime: 1500, 
-        randomness: 0.15,  // Low randomness = harder
-        arcanaUseChance: 0.6,  // High chance to use arcana
-        arcanaDrawChance: 0.4,  // High chance to draw
+        randomness: 0.1,  // Low randomness = harder, strategic moves
+        arcanaUseChance: 0.7,  // Frequently uses powerful arcana
+        arcanaDrawChance: 0.2,  // Fair draw chance - same for all difficulties
       },
     };
 
@@ -1538,7 +1539,10 @@ export class GameManager {
       const aiLastDrawPly = gameState.lastDrawTurn[aiSocketId];
       const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= DRAW_COOLDOWN_PLIES;
       
-      if (!aiUsedCardThisTurn && aiCanDraw && Math.random() < settings.arcanaDrawChance) {
+      // AI should NOT draw while in check
+      const aiInCheck = chess.in_check();
+      
+      if (!aiUsedCardThisTurn && aiCanDraw && !aiInCheck && Math.random() < settings.arcanaDrawChance) {
         const newCard = pickWeightedArcana();
         const newInst = makeArcanaInstance(newCard);
         gameState.arcanaByPlayer[aiSocketId].push(newInst);
@@ -1553,6 +1557,9 @@ export class GameManager {
             });
         }
         
+        // Add delay to allow draw animation to play
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        
         // After drawing, pass turn by swapping color
         const fen = chess.fen();
         const fenParts = fen.split(' ');
@@ -1565,21 +1572,67 @@ export class GameManager {
 
       // AI Use Card Logic
       if (!aiUsedCardThisTurn && availableCards.length > 0 && Math.random() < settings.arcanaUseChance) {
-        // Prioritize cards by strategic value
-        const cardPriority = {
+        // Prioritize cards by strategic value - adjust based on difficulty
+        const baseCardPriority = {
           'execution': 10,           // Very high priority - removes enemy piece
           'time_freeze': 9,          // Skip opponent turn
           'promotion_ritual': 8,     // Instant queen
           'castle_breaker': 7,       // Disable castling
+          'mind_control': 6.5,       // Control enemy piece
           'poison_touch': 6,         // Good for next capture
           'double_strike': 6,        // Double capture
           'sharpshooter': 5,         // Bishop power
-          'shield_pawn': 4,          // Protection
-          'iron_fortress': 4,        // Pawn protection
-          'pawn_rush': 3,            // Movement enhancement
+          'iron_fortress': 4.5,      // Good defense
+          'shield_pawn': 4.5,        // Pawn protection
+          'pawn_guard': 4,           // Alternative pawn protection
+          'pawn_rush': 3.5,          // Movement enhancement
           'focus_fire': 3,           // Extra card on capture
-          'vision': 2,               // Info gathering
+          'vision': 2.5,             // Info gathering
+          'map_fragments': 2,        // Info gathering
+          'peek_card': 2,            // Info BUT useful for research
+          'metamorphosis': 3,        // Transform piece
+          'phantom_step': 3.5,       // Movement enhancement
+          'spectral_march': 3,       // Enhanced movement
+          'fog_of_war': 3.5,         // Defensive fog
+          'divine_intervention': 4,  // King protection
+          'astral_rebirth': 5,       // Piece restoration
+          'chaos_theory': 6,         // Random powerful
+          'time_travel': 7,          // Move undo
+          'temporal_echo': 5,        // Extra move
+          'queens_gambit': 4,        // Pawn power
+          'knight_of_storms': 4.5,   // Knight enhancement
+          'bishops_blessing': 4,     // Bishop enhancement
+          'berserker_rage': 5,       // Piece rage
+          'chain_lightning': 5.5,    // Multi-damage
+          'necromancy': 6,           // Piece revival
+          'cursed_square': 3.5,      // Enemy weakness
+          'sanctuary': 3.5,          // Movement assist
+          'quiet_thought': 2.5,      // Draw helper
+          'en_passant_master': 3,    // En passant power
+          'sacrifice': 2.5,          // Risky move
+          'arcane_cycle': 3,         // Arcana cycling
+          'royal_swap': 4,           // King position swap
         };
+
+        // Difficulty-based card priority adjustment
+        let cardPriority = { ...baseCardPriority };
+        
+        // Harder AI values offensive cards more
+        if (settings.randomness < 0.3) {
+          cardPriority['execution'] = 10;
+          cardPriority['time_freeze'] = 9;
+          cardPriority['mind_control'] = 7;
+          cardPriority['poison_touch'] = 6.5;
+        }
+        
+        // Check if AI is under threat - defend more if needed
+        const aiKingInDanger = chess.in_check();
+        if (aiKingInDanger) {
+          cardPriority['iron_fortress'] = 5;
+          cardPriority['divine_intervention'] = 6;
+          cardPriority['shield_pawn'] = 5;
+          cardPriority['pawn_guard'] = 5;
+        }
 
         // Sort available cards by priority (higher = more likely to use)
         const sortedCards = [...availableCards].sort((a, b) => {
@@ -1588,7 +1641,7 @@ export class GameManager {
 
         // Pick a card to use based on difficulty (harder AI picks better cards)
         const cardIndex = Math.random() < settings.randomness 
-          ? Math.floor(Math.random() * sortedCards.length)  // Random pick for easier AI
+          ? Math.floor(Math.random() * Math.min(3, sortedCards.length))  // Random from top 3 for easier AI
           : 0;  // Best card for harder AI
         
         const cardToUse = sortedCards[cardIndex];
@@ -1807,7 +1860,57 @@ export class GameManager {
       switch (card.id) {
         case 'shield_pawn':
         case 'pawn_guard':
-          // Find an AI pawn to protect
+          // Find an AI pawn to protect - prefer pawns in danger or advanced positions
+          let targetPawn = null;
+          let bestScore = -1;
+          const opponentAttackers = [];
+          
+          // Get all opponent moves to identify attacked squares
+          const tempChess = new Chess(chess.fen());
+          const opponentTurn = moverColor === 'w' ? 'b' : 'w';
+          const originalTurn = tempChess.fen().split(' ')[1];
+          const tempFen = chess.fen();
+          const tempFenParts = tempFen.split(' ');
+          tempFenParts[1] = opponentTurn;
+          try {
+            tempChess.load(tempFenParts.join(' '));
+            const opponentMoves = tempChess.moves({ verbose: true });
+            opponentMoves.forEach(m => {
+              if (m.captured) opponentAttackers.push(m.to);
+            });
+          } catch (e) {
+            // If FEN is invalid, just continue
+          }
+          
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (piece && piece.type === 'p' && piece.color === moverColor) {
+                const square = 'abcdefgh'[f] + (8 - r);
+                let score = 0;
+                
+                // Prioritize pawns already attacked
+                if (opponentAttackers.includes(square)) score += 10;
+                
+                // Prioritize advanced pawns (rank 6 or 7 for white, rank 2 or 3 for black)
+                const rank = parseInt((8 - r).toString());
+                if (moverColor === 'w' && rank >= 6) score += 5;
+                if (moverColor === 'b' && rank <= 3) score += 5;
+                
+                if (score > bestScore) {
+                  bestScore = score;
+                  targetPawn = square;
+                }
+              }
+            }
+          }
+          
+          if (targetPawn) params.targetSquare = targetPawn;
+          break;
+          
+        case 'iron_fortress':
+          // Can be used defensively - protect AI king or find a pawn
+          // Pick a pawn in a central defensive position
           for (let r = 0; r < 8; r++) {
             for (let f = 0; f < 8; f++) {
               const piece = board[r][f];
