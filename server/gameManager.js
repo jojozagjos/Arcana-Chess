@@ -656,7 +656,9 @@ export class GameManager {
       const arcanaKingCheck = checkForKingRemoval(chess);
       if (arcanaKingCheck.kingRemoved) {
         gameState.status = 'finished';
-        const outcome = { type: 'king-destroyed', winner: arcanaKingCheck.winner };
+        const winnerColor = arcanaKingCheck.winner;
+        const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+        const outcome = { type: 'king-destroyed', winnerSocketId };
         for (const pid of gameState.playerIds) {
           if (!pid.startsWith('AI-')) {
             const personalised = this.serialiseGameStateForViewer(gameState, pid);
@@ -978,7 +980,10 @@ export class GameManager {
     const kingCaptured = result.captured === 'k';
     if (kingCaptured) {
       gameState.status = 'finished';
-      const outcome = { type: 'king-captured', winner: result.color === 'w' ? 'white' : 'black' };
+      // Find the socket ID of the player who captured the king (the winner)
+      const winnerColor = result.color;
+      const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+      const outcome = { type: 'king-captured', winnerSocketId };
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
           const personalised = this.serialiseGameStateForViewer(gameState, pid);
@@ -1370,12 +1375,16 @@ export class GameManager {
         } else {
           // No empty square available - Divine Intervention fails
           gameState.status = 'finished';
-          outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+          const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
+          const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+          outcome = { type: 'checkmate', winnerSocketId };
         }
       } else {
         // No Divine Intervention - checkmate occurs
         gameState.status = 'finished';
-        outcome = { type: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+        const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
+        const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+        outcome = { type: 'checkmate', winnerSocketId };
       }
     } else if (chess.isStalemate() || chess.isDraw()) {
       gameState.status = 'finished';
@@ -1601,7 +1610,11 @@ export class GameManager {
             this.io.to(humanId).emit('gameUpdated', personalised);
           }
           
-          // If card ends turn, return
+          // Add 1-second delay after using arcana before making the next move
+          // This gives the card animation time to play and makes the AI feel more natural
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          
+          // If card ends turn, return after the delay
           if (usageResult.endsTurn) {
             const fen = chess.fen();
             const fenParts = fen.split(' ');
@@ -2193,8 +2206,13 @@ export class GameManager {
       }
     }
 
-    // If both players voted, start a new game
-    if (votes === totalPlayers && totalPlayers === 2) {
+    // If all human players voted, start a new game
+    // For multiplayer: need 2 votes from 2 players
+    // For AI games: need 1 vote from 1 human player (AI auto-votes)
+    const isAIGame = gameState.playerIds.some(id => id.startsWith('AI-'));
+    const shouldStartRematch = isAIGame ? votes === 1 : (votes === totalPlayers && totalPlayers === 2);
+    
+    if (shouldStartRematch) {
       return this.startRematchGame(gameState, lobbyManager);
     }
 

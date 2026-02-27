@@ -2770,7 +2770,7 @@ const styles = {
     background: 'rgba(5,6,10,0.4)',
   },
   cardRevealOverlay: {
-    position: 'absolute',
+    position: 'fixed',
     inset: 0,
     background: 'rgba(0, 0, 0, 0.85)',
     display: 'flex',
@@ -2778,6 +2778,7 @@ const styles = {
     justifyContent: 'center',
     animation: 'fadeIn 0.3s ease',
     zIndex: 1000,
+    overflow: 'hidden',
   },
   cardRevealContainer: {
     background: 'linear-gradient(135deg, rgba(27,35,56,0.95), rgba(11,16,32,0.95))',
