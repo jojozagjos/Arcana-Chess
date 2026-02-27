@@ -11,11 +11,12 @@ import { squareToPosition } from './sharedHelpers.jsx';
  * @param {Object} props.cutsceneTarget - { square: 'e4', duration: 2000, zoom: 1.5 } or null to clear
  * @param {Function} props.onCutsceneEnd - Callback when cutscene completes
  * @param {string} props.myColor - 'white' or 'black' for default camera position
- * @param {Object} props.controls - OrbitControls ref (optional, will use from context if available)
+ * @param {Object} props.controlsRef - OrbitControls ref (required for camera control)
  */
-export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, controls: controlsProp }) {
+export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, controlsRef }) {
   const { camera } = useThree();
-  const controls = controlsProp;
+  // Get controls from ref to ensure we always get the current instance
+  const controls = controlsRef?.current;
   const savedCameraState = useRef(null);
   const animationProgress = useRef(0);
   const isAnimating = useRef(false);
@@ -98,11 +99,13 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       
       // Interpolate camera position
       camera.position.lerpVectors(startPosition.current, targetPosition.current, t);
+      camera.updateMatrixWorld(true);
       
       // Interpolate look-at target
       if (controls && controls.target) {
         const newTarget = new THREE.Vector3().lerpVectors(startLookAt.current, targetLookAt.current, t);
         controls.target.copy(newTarget);
+        controls.update();
       }
       
       if (animationProgress.current >= 1) {
@@ -140,10 +143,12 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       
       // Interpolate back to original position
       camera.position.lerpVectors(startPosition.current, targetPosition.current, t);
+      camera.updateMatrixWorld(true);
       
       if (controls && controls.target) {
         const newTarget = new THREE.Vector3().lerpVectors(startLookAt.current, targetLookAt.current, t);
         controls.target.copy(newTarget);
+        controls.update();
       }
       
       if (animationProgress.current >= 1) {

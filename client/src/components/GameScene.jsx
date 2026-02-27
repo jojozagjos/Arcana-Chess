@@ -316,6 +316,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     
     // Check if this arcana has cutscene enabled and a target square
     const cutsceneCards = ['execution', 'divine_intervention', 'astral_rebirth', 'time_travel', 'mind_control'];
+    let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
+    
     if (cutsceneCards.includes(lastArcanaEvent.arcanaId) && lastArcanaEvent.params?.targetSquare) {
       const config = getCutsceneConfig(lastArcanaEvent.arcanaId);
       
@@ -324,6 +326,12 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         zoom: config?.config?.camera?.targetZoom || 1.5,
         holdDuration: config?.config?.camera?.holdDuration || 2000,
       });
+      
+      // Calculate total cutscene duration
+      // Animation speed is 1.8, so moving/returning each take ~556ms
+      // Total: ~1112ms (moving + returning) + holdDuration
+      const holdDuration = config?.config?.camera?.holdDuration || 2000;
+      visualClearTimeout = Math.ceil(1112 + holdDuration + 200); // +200ms buffer for safety
       
       // Trigger overlay effects (if configured)
       if (config?.config?.overlay && overlayRef.current) {
@@ -362,7 +370,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       setActiveVisualArcana(null);
       // Ensure any lingering animation lock is released when the visual clears
       setIsCardAnimationPlaying(false);
-    }, 1500);
+    }, visualClearTimeout);
     // Track timeout for global cleanup
     timeoutsRef.current.push(t);
     return () => {
@@ -1262,7 +1270,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           cutsceneTarget={cutsceneTarget}
           onCutsceneEnd={clearCutscene}
           myColor={myColor}
-          controls={controlsRef.current}
+          controlsRef={controlsRef}
         />
         
         <OrbitControls ref={controlsRef} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
@@ -1938,7 +1946,7 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
 
           {/* Line of Sight: when highlighted by line_of_sight and hovered, show risk overlay */}
           {highlightedArcana === 'line_of_sight' && highlighted && isHoveringThis && (
-            <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
               <ringGeometry args={[0.28, 0.45, 32]} />
               <meshStandardMaterial emissive={highlightColor || '#88c0d0'} emissiveIntensity={2} transparent opacity={0.9} color={highlightColor || '#88c0d0'} />
             </mesh>

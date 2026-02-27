@@ -149,7 +149,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
       </group>
       
       {/* Base glow ring */}
-      <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.4, 0.55, 32]} />
         <meshStandardMaterial
           emissive="#4fc3f7"
@@ -255,7 +255,7 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
       )}
       
       {/* Base pool */}
-      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[0.4, 32]} />
         <meshStandardMaterial
           emissive={baseColor}
@@ -394,7 +394,7 @@ export function SquireSupportEffect({ square }) {
       ))}
       
       {/* Base ring */}
-      <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.35, 0.45, 32]} />
         <meshStandardMaterial
           emissive="#ffd54f"
@@ -1196,7 +1196,7 @@ export function TimeFreezeEffect({ onComplete }) {
       })}
       
       {/* Frozen wave */}
-      <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[progress * 6, progress * 6, 1]}>
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[progress * 6, progress * 6, 1]}>
         <circleGeometry args={[1, 32]} />
         <meshStandardMaterial
           emissive="#4fc3f7"
@@ -1286,7 +1286,7 @@ export function TimeTravelEffect({ onComplete }) {
       })}
       
       {/* Temporal displacement wave */}
-      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[progress * 8, progress * 8, 1]}>
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[progress * 8, progress * 8, 1]}>
         <ringGeometry args={[progress * 3, progress * 3.2, 32]} />
         <meshStandardMaterial
           emissive="#2196f3"
@@ -1554,7 +1554,7 @@ export function SanctuaryEffect({ square, onComplete }) {
       </mesh>
       
       {/* Base ring */}
-      <mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.4, 0.5, 32]} />
         <meshStandardMaterial
           emissive="#ffd700"
@@ -1670,7 +1670,7 @@ export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
   return (
     <group position={[x, 0, z]} ref={groupRef}>
       {/* Dark ring on ground - non-emissive */}
-      <mesh position={[0, 0.001, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.2, 0.45, 32]} />
         <meshStandardMaterial
           color="#4a0000"
