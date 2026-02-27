@@ -390,13 +390,14 @@ function AIGameForm() {
   const [gameMode, setGameMode] = useState('Ascendant');
   const [difficulty, setDifficulty] = useState('Scholar');
   const [playerColor, setPlayerColor] = useState('white');
+  const [timeControl, setTimeControl] = useState(30); // 30 minutes default
   const [status, setStatus] = useState('');
 
   const handleStartAI = () => {
     setStatus('Starting AI match...');
     socket.emit(
       'startAIGame',
-      { gameMode, difficulty, playerColor },
+      { gameMode, difficulty, playerColor, timeControl: timeControl === 'unlimited' ? null : parseInt(timeControl) },
       (res) => {
         if (!res || !res.ok) {
           setStatus(`Error: ${res?.error || 'Failed to start AI game'}`);
@@ -443,6 +444,21 @@ function AIGameForm() {
         >
           <option value="white">White (move first)</option>
           <option value="black">Black (AI moves first)</option>
+        </select>
+      </label>
+
+      <label style={styles.label}>
+        Time control
+        <select
+          style={styles.input}
+          value={timeControl}
+          onChange={(e) => setTimeControl(e.target.value)}
+        >
+          <option value="unlimited">Unlimited</option>
+          <option value="5">Bullet (5 min)</option>
+          <option value="10">Blitz (10 min)</option>
+          <option value="30">Rapid (30 min)</option>
+          <option value="60">Classical (60 min)</option>
         </select>
       </label>
 

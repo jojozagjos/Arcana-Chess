@@ -49,6 +49,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
   // Fog of war effect tracking - persist particles while fog is active
   const [activeFogEffects, setActiveFogEffects] = useState({}); // { 'w' or 'b': true/false }
+  // Time control - client-side countdown display
+  const [clientSideTimes, setClientSideTimes] = useState({}); // { socketId: remainingSeconds }
   // WebGL context loss state - prevents flashing during recovery
   const [isContextLost, setIsContextLost] = useState(false);
   const contextLossCountRef = useRef(0); // Track consecutive context losses
@@ -198,6 +200,29 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       setHighlightedSquares([]);
     }
   }, [hasVision, chess, myColor, opponentColorChar]);
+
+  // Time control countdown - update client-side display in real-time
+  useEffect(() => {
+    if (!gameState?.timePerPlayer || gameState?.status !== 'ongoing') {
+      return;
+    }
+
+    // Initialize client times from server
+    setClientSideTimes(gameState.timePerPlayer);
+
+    // Update countdown every 100ms
+    const timerInterval = setInterval(() => {
+      setClientSideTimes(prevTimes => {
+        const updated = { ...prevTimes };
+        for (const playerId in updated) {
+          updated[playerId] = Math.max(0, updated[playerId] - 0.1);
+        }
+        return updated;
+      });
+    }, 100);
+
+    return () => clearInterval(timerInterval);
+  }, [gameState?.timePerPlayer, gameState?.status]);
 
   useEffect(() => {
     if (ascendedInfo) {
@@ -1247,6 +1272,34 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         <div>Turn: {gameState?.turn === 'w' ? 'White' : 'Black'}</div>
         <div>Status: {gameState?.status || 'unknown'}</div>
         <div>Color: {myColor}</div>
+        
+        {/* Time control display */}
+        {gameState?.timePerPlayer && (
+          <div style={{ marginTop: 12, padding: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+            <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>Time Control</div>
+            {gameState.playerIds.map(playerId => {
+              const timeRemaining = clientSideTimes[playerId] ?? gameState.timePerPlayer[playerId] ?? 0;
+              const minutes = Math.floor(Math.max(0, timeRemaining) / 60);
+              const seconds = Math.floor(Math.max(0, timeRemaining) % 60);
+              const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+              const isMyTime = playerId === mySocketId;
+              const isLowTime = timeRemaining < 60;
+              const color = isLowTime ? '#ff6b6b' : '#a3be8c';
+              const playerLabel = isMyTime ? 'You' : 'Opponent';
+              
+              return (
+                <div key={playerId} style={{ 
+                  color: color,
+                  fontWeight: isMyTime ? 'bold' : 'normal',
+                  fontSize: isMyTime ? 16 : 14,
+                }}>
+                  {playerLabel}: {timeStr}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        
         <button style={styles.button} onClick={() => setShowMenu(true)}>Menu</button>
       </div>
 

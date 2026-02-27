@@ -67,7 +67,7 @@ function validateNonAdjacentCapture(activeEffect, secondTargetSquare, cardName) 
  * @param {string} [config.playerColor] - Human player's color when playing against AI
  * @returns {Object} Initial game state object
  */
-function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor }) {
+function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor, timeControl = 30 }) {
   const chess = new Chess();
   // No arcana at start - awarded on ascension
   const arcanaByPlayer = {};
@@ -84,6 +84,12 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
   const lastDrawTurn = {};
   for (const pid of playerIds) lastDrawTurn[pid] = INITIAL_DRAW_PLY;
 
+  // Initialize time control (in seconds)
+  const timePerPlayer = {};
+  for (const pid of playerIds) {
+    timePerPlayer[pid] = timeControl * 60; // Convert minutes to seconds
+  }
+
   return {
     id: Math.random().toString(36).slice(2),
     mode,
@@ -98,6 +104,11 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     ascensionTrigger: mode === 'Classic' ? 'never' : 'firstCapture',
     arcanaByPlayer,
     usedArcanaIdsByPlayer: {},
+    // Time control tracking
+    timeControl: timeControl, // minutes per player
+    timePerPlayer: timePerPlayer, // remaining time in seconds
+    lastMoveTime: Date.now(), // when current turn started
+    timeLossLoser: null, // socketId of player who lost on time
     lastMove: null,
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
@@ -274,6 +285,7 @@ export class GameManager {
     const gameState = createInitialGameState({
       mode: lobby.gameMode,
       playerIds: [...lobby.players],
+      timeControl: lobby.timeControl || 30, // pass timeControl from lobby
     });
 
     this.games.set(gameState.id, gameState);
@@ -306,6 +318,7 @@ export class GameManager {
       gameMode = 'Ascendant',
       difficulty = 'Scholar',
       playerColor = 'white',
+      timeControl = 30, // minutes, or null for unlimited
     } = payload || {};
 
     const aiSocketId = `AI-${Math.random().toString(36).slice(2)}`;
@@ -318,6 +331,7 @@ export class GameManager {
       playerIds,
       aiDifficulty: difficulty,
       playerColor,
+      timeControl: timeControl || 30, // fallback to 30 if not provided
     });
 
     this.games.set(gameState.id, gameState);
@@ -1330,6 +1344,42 @@ export class GameManager {
 
     // No extra move — now decrement turn-based effects and check for game end
     this.decrementEffects(gameState);
+
+    // === TIME CONTROL: Decrement time for player who just moved ===
+    if (gameState.timePerPlayer && gameState.lastMoveTime) {
+      const elapsedMs = Date.now() - gameState.lastMoveTime;
+      const elapsedSeconds = elapsedMs / 1000;
+      
+      // Subtract elapsed time from the player who just moved
+      gameState.timePerPlayer[socket.id] = Math.max(0, gameState.timePerPlayer[socket.id] - elapsedSeconds);
+      
+      // Check if player ran out of time
+      if (gameState.timePerPlayer[socket.id] <= 0) {
+        gameState.status = 'finished';
+        gameState.timeLossLoser = socket.id;
+        
+        // Find opponent
+        const opponentId = gameState.playerIds.find(id => id !== socket.id);
+        const outcome = { 
+          type: 'time-expired', 
+          winnerSocketId: opponentId,
+          loserSocketId: socket.id
+        };
+        
+        // Notify both players
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            const personalised = this.serialiseGameStateForViewer(gameState, pid);
+            this.io.to(pid).emit('gameUpdated', personalised);
+            this.emitGameEndedToPlayer(pid, outcome, gameState);
+          }
+        }
+        return { gameState: this.serialiseGameState(gameState), appliedArcana: [] };
+      }
+      
+      // Update lastMoveTime for next turn
+      gameState.lastMoveTime = Date.now();
+    }
 
     // Reset arcana used this turn tracking when a move is made
     gameState.arcanaUsedThisTurn = {};
