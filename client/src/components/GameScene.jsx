@@ -47,6 +47,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
   // Hover threat sources: set of squares (e.g. new Set(['e5','d4'])) that attack a simulated destination
   const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
+  // Fog of war effect tracking - persist particles while fog is active
+  const [activeFogEffects, setActiveFogEffects] = useState({}); // { 'w' or 'b': true/false }
   // WebGL context loss state - prevents flashing during recovery
   const [isContextLost, setIsContextLost] = useState(false);
   const contextLossCountRef = useRef(0); // Track consecutive context losses
@@ -218,6 +220,36 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     if (currentTurnCode) prevTurnRef.current = currentTurnCode;
   }, [gameState?.turn, chess?.fen()]);
 
+  // Track the turn when player's card is revealed
+  const playerCardTurnRef = useRef(null);
+
+  // Auto-dismiss player's revealed card when their turn ends
+  useEffect(() => {
+    // When a card is revealed for the player, track the current turn
+    if (cardReveal && cardReveal.playerId === mySocketId && cardReveal.type === 'draw' && cardReveal.stayUntilClick) {
+      const currentTurn = chess?.turn();
+      if (currentTurn && !playerCardTurnRef.current) {
+        playerCardTurnRef.current = currentTurn;
+      }
+    } else if (!cardReveal) {
+      // Card was dismissed, reset turn tracking
+      playerCardTurnRef.current = null;
+    }
+  }, [cardReveal, chess?.turn(), mySocketId]);
+
+  // Dismiss card when player's turn ends
+  useEffect(() => {
+    if (cardReveal && cardReveal.playerId === mySocketId && cardReveal.type === 'draw' && cardReveal.stayUntilClick) {
+      const currentTurn = chess?.turn();
+      // If turn has changed and we're no longer in the turn when card was revealed, auto-dismiss
+      if (playerCardTurnRef.current && currentTurn && currentTurn !== playerCardTurnRef.current) {
+        setCardReveal(null);
+        playerCardTurnRef.current = null;
+        setIsCardAnimationPlaying(false);
+      }
+    }
+  }, [chess?.fen(), cardReveal, mySocketId]);
+
   // Reset draw cooldown when turn changes (client-side only, not affected by opponent draws)
   useEffect(() => {
     const currentTurn = chess?.turn();
@@ -330,6 +362,27 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }, 1500);
     timeoutsRef.current.push(t);
   }, [isCardAnimationPlaying]);
+
+  // Track fog of war effects and display particles while active
+  useEffect(() => {
+    if (!gameState?.activeEffects?.fogOfWar) {
+      setActiveFogEffects({});
+      return;
+    }
+
+    const fogStatus = gameState.activeEffects.fogOfWar;
+    const newFogEffects = {};
+
+    // Check if white or black has fog active
+    if (fogStatus.w) {
+      newFogEffects.w = true;
+    }
+    if (fogStatus.b) {
+      newFogEffects.b = true;
+    }
+
+    setActiveFogEffects(newFogEffects);
+  }, [gameState?.activeEffects?.fogOfWar]);
 
   // Load arcana visual effects module on demand when visuals or persistent effects are present
   useEffect(() => {
@@ -1627,6 +1680,19 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
             setIsCardAnimationPlaying(false);
           }}
         />
+      )}
+
+      {/* Fog of War effect particles - persist while fog is active */}
+      {(activeFogEffects.w || activeFogEffects.b) && (
+        <Suspense fallback={null}>
+          <ParticleOverlay
+            type="ring"
+            rarity="rare"
+            active={true}
+            style={{ opacity: 0.6 }}
+            density={0.8}
+          />
+        </Suspense>
       )}
 
       {gameEndOutcome && (
