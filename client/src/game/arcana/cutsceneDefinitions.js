@@ -12,53 +12,63 @@
 
 export const executionCutscene = {
   id: 'execution',
-  duration: 1800,
+  duration: 2500,
   config: {
     camera: {
       targetZoom: 1.8,
-      duration: 800,
-      holdDuration: 1000,
+      duration: 600,
+      holdDuration: 1900,
       easing: 'easeInOutCubic',
     },
     overlay: {
-      // Screen flash on execution
+      // Red flash when blade falls
       effect: 'flash',
-      color: '#ff6b6b',
-      duration: 300,
-      intensity: 0.8,
-      fadeIn: 100,
+      color: '#ff3333',
+      duration: 400,
+      intensity: 0.9,
+      fadeIn: 150,
       hold: 100,
-      fadeOut: 100,
+      fadeOut: 150,
     },
     vfx: {
-      // Guillotine visual + piece destruction
-      guillotineDuration: 600,
-      destructionParticles: 24,
-      destructionIntensity: 1.0,
+      // Blade slice + blood explosion
+      bladeDuration: 600,
+      bloodExplosionDelay: 2000, // After holding for blood impact
+      bloodParticles: 48,
+      destructionIntensity: 1.2,
     },
     sound: {
-      guillotine: 'arcana:execution_guillotine',
-      destroy: 'arcana:execution_destroy',
+      blade: 'arcana:execution_blade',
+      impact: 'arcana:execution_blood',
       complete: 'arcana:execution_complete',
     },
     phases: [
-      // Phase 1: Camera moves to target (0-800ms)
       {
         name: 'camera_focus',
-        duration: 800,
-        actions: ['camera_move', 'sound_guillotine'],
+        duration: 600,
+        actions: ['camera_move', 'sound_blade'],
       },
-      // Phase 2: Hold on target (800-1800ms)
       {
-        name: 'execution',
-        duration: 1000,
-        actions: ['vfx_guillotine', 'vfx_destruction', 'overlay_flash', 'sound_destroy'],
-        delay: 400, // Guillotine falls after camera settles
+        name: 'slice',
+        duration: 600,
+        actions: ['vfx_blade_slice', 'overlay_flash'],
+        delay: 200,
       },
-      // Phase 3: Return (implicit)
+      {
+        name: 'hold',
+        duration: 1300,
+        actions: ['sound_impact'],
+        delay: 600, // Blood erupts after slice settles
+      },
+      {
+        name: 'explosion',
+        duration: 400,
+        actions: ['vfx_blood_explosion'],
+        delay: 0,
+      },
       {
         name: 'camera_return',
-        duration: 800,
+        duration: 600,
         actions: ['sound_complete'],
       },
     ],
@@ -120,86 +130,80 @@ export const timeFrozenCutscene = {
 
 export const timeTravelCutscene = {
   id: 'time_travel',
-  duration: 2500,
+  duration: 3200,
   config: {
     camera: {
-      targetZoom: 1.5,
-      duration: 600,
-      holdDuration: 1300,
+      targetZoom: 0.8, // Pull way back and up for full board view
+      duration: 800,
+      holdDuration: 2000,
       easing: 'easeInOutCubic',
+      cameraHeight: 25, // Elevated view of board from above
     },
     overlay: [
-      // Fade to monochrome (color drains)
-      {
-        effect: 'color-fade',
-        color: '#2c3e50',
-        duration: 600,
-        intensity: 0.9,
-        fadeIn: 200,
-        hold: 200,
-        fadeOut: 200,
-        phase: 'rewind',
-      },
-      // Hold monochrome while rewinding
+      // Fade to monochrome as time stops
       {
         effect: 'monochrome',
-        duration: 1000,
+        duration: 2000,
         intensity: 1.0,
-        fadeIn: 0,
-        hold: 1000,
-        fadeOut: 0,
-        phase: 'rewound',
+        fadeIn: 600,
+        hold: 800,
+        fadeOut: 600,
+        phase: 'rewind',
       },
-      // Fade back to color
+      // Color rush back in
       {
-        effect: 'color-fade',
+        effect: 'color-burst',
         color: '#2ecc71',
         duration: 600,
-        intensity: 0.7,
+        intensity: 0.8,
         fadeIn: 0,
         hold: 0,
         fadeOut: 600,
-        phase: 'return',
+        phase: 'restore',
       },
     ],
     vfx: {
-      // Reverse animation trails
-      rewindParticles: 48,
-      rewindTrail: true,
+      // Afterimages as pieces rewind
+      afterimageTrails: true,
+      afterimageCount: 8,
+      trailColor: '#3498db',
+      trailOpacity: 0.6,
+      rewindParticles: 64,
       glowColor: '#3498db',
-      glowIntensity: 0.8,
+      glowIntensity: 0.7,
     },
     sound: {
+      timewarp: 'arcana:time_travel_warp',
       rewind: 'arcana:time_travel_rewind',
-      ambient: 'arcana:time_travel_ambient',
       complete: 'arcana:time_travel_complete',
     },
     phases: [
       {
-        name: 'camera_focus',
-        duration: 600,
-        actions: ['camera_move', 'sound_rewind'],
+        name: 'camera_ascend',
+        duration: 800,
+        actions: ['camera_move', 'sound_timewarp'],
       },
       {
-        name: 'rewind',
-        duration: 600,
+        name: 'rewind_pieces',
+        duration: 1600,
         actions: [
-          'vfx_rewind_trails',
-          'overlay_monochrome_fade',
-          'sound_ambient_loop',
-          'move_reverse_animation', // Special: animate pieces in reverse
+          'vfx_afterimage_trails',
+          'vfx_rewind_animation',
+          'overlay_monochrome',
+          'sound_rewind',
         ],
-        delay: 200,
+        delay: 400, // Pieces start rewinding as camera settles
       },
       {
-        name: 'rewound',
-        duration: 700,
-        actions: ['sound_ambient_continue'],
+        name: 'color_restore',
+        duration: 800,
+        actions: ['overlay_color_restore'],
+        delay: 0,
       },
       {
         name: 'camera_return',
         duration: 800,
-        actions: ['overlay_color_restore', 'sound_complete'],
+        actions: ['sound_complete'],
       },
     ],
   },
@@ -207,56 +211,60 @@ export const timeTravelCutscene = {
 
 export const divineInterventionCutscene = {
   id: 'divine_intervention',
-  duration: 2200,
+  duration: 2500,
   config: {
     camera: {
       targetZoom: 2.0,
-      duration: 800,
-      holdDuration: 1400,
+      duration: 700,
+      holdDuration: 1800,
       easing: 'easeOutCubic',
     },
     overlay: {
-      // Golden light burst
+      // Golden heavenly light burst
       effect: 'flash',
       color: '#ffd700',
-      duration: 800,
-      intensity: 0.9,
-      fadeIn: 200,
+      duration: 1000,
+      intensity: 0.8,
+      fadeIn: 300,
       hold: 400,
-      fadeOut: 200,
+      fadeOut: 300,
     },
     vfx: {
-      // Angelic glow + pawn spawn
-      pawnSpawnParticles: 32,
-      glowColor: '#ffeb3b',
-      glowIntensity: 1.0,
-      haloEffect: true,
+      // Pawn falling from heaven with radiant light
+      pawnDescent: true,
+      descentDuration: 1200,
+      glowColor: '#ffd700',
+      glowIntensity: 1.1,
+      heavenParticles: 48,
+      lightBeamIntensity: 0.9,
     },
     sound: {
       divine: 'arcana:divine_intervention_divine',
-      spawn: 'arcana:divine_intervention_spawn',
+      descent: 'arcana:divine_intervention_descent',
+      impact: 'arcana:divine_intervention_impact',
       complete: 'arcana:divine_intervention_complete',
     },
     phases: [
       {
         name: 'camera_focus',
-        duration: 800,
+        duration: 700,
         actions: ['camera_move', 'sound_divine'],
       },
       {
-        name: 'spawn',
-        duration: 600,
-        actions: ['vfx_spawn_particles', 'overlay_divine_flash', 'sound_spawn'],
-        delay: 400,
+        name: 'descent',
+        duration: 1200,
+        actions: ['vfx_pawn_descent', 'vfx_heaven_particles', 'vfx_light_beam', 'overlay_heaven_flash', 'sound_descent'],
+        delay: 300,
       },
       {
-        name: 'hold',
-        duration: 800,
-        actions: [],
+        name: 'impact',
+        duration: 600,
+        actions: ['sound_impact'],
+        delay: 0,
       },
       {
         name: 'camera_return',
-        duration: 800,
+        duration: 700,
         actions: ['sound_complete'],
       },
     ],
@@ -265,57 +273,46 @@ export const divineInterventionCutscene = {
 
 export const mindControlCutscene = {
   id: 'mind_control',
-  duration: 1500,
+  duration: 1200,
   config: {
     camera: {
-      targetZoom: 1.4,
-      duration: 600,
-      holdDuration: 900,
-      easing: 'easeInOutCubic',
+      // No camera movement for mind control - player controls piece on their side
+      doNotMove: true,
     },
     overlay: {
-      // Purple mind control flash
-      effect: 'flash',
+      // Purple vignette for opponent during control
+      effect: 'vignette',
       color: '#9c27b0',
-      duration: 1000,
-      intensity: 0.7,
-      fadeIn: 200,
+      duration: 1200,
+      intensity: 0.6,
+      fadeIn: 300,
       hold: 600,
-      fadeOut: 200,
+      fadeOut: 300,
     },
     vfx: {
-      // Mind control aura around piece
-      auraDuration: 1500,
+      // Purple aura around controlled piece
       auraColor: '#9c27b0',
-      auraIntensity: 0.8,
-      controlParticles: 16,
+      auraIntensity: 0.9,
+      auraDuration: 1200,
+      controlParticles: 24,
+      pulseEffect: true,
     },
     sound: {
       control: 'arcana:mind_control_take',
-      ambient: 'arcana:mind_control_ambient',
-      complete: 'arcana:mind_control_release',
+      release: 'arcana:mind_control_release',
     },
     phases: [
       {
-        name: 'camera_focus',
+        name: 'control_activate',
         duration: 600,
-        actions: ['camera_move', 'sound_control'],
+        actions: ['vfx_purple_aura', 'overlay_vignette', 'sound_control'],
+        delay: 0,
       },
       {
-        name: 'control',
+        name: 'control_active',
         duration: 600,
-        actions: ['vfx_mind_aura', 'overlay_mind_flash', 'sound_ambient'],
-        delay: 200,
-      },
-      {
-        name: 'hold',
-        duration: 300,
         actions: [],
-      },
-      {
-        name: 'camera_return',
-        duration: 600,
-        actions: ['sound_complete'],
+        delay: 0,
       },
     ],
   },
@@ -323,34 +320,35 @@ export const mindControlCutscene = {
 
 export const astralRebirthCutscene = {
   id: 'astral_rebirth',
-  duration: 2000,
+  duration: 2200,
   config: {
     camera: {
       targetZoom: 1.6,
       duration: 600,
-      holdDuration: 1400,
+      holdDuration: 1600,
       easing: 'easeInOutCubic',
     },
     overlay: {
-      // Subtle cyan glow
-      effect: 'color-fade',
-      color: '#00bcd4',
-      duration: 1800,
-      intensity: 0.6,
-      fadeIn: 400,
-      hold: 1000,
-      fadeOut: 400,
+      // Faint yellow flash for astral energy
+      effect: 'flash',
+      color: '#ffeb3b',
+      duration: 1200,
+      intensity: 0.5,
+      fadeIn: 300,
+      hold: 600,
+      fadeOut: 300,
     },
     vfx: {
-      // Piece materializes with glow
+      // Rich astral particles + golden glow
+      astralParticles: 64,
+      glowColor: '#ffeb3b',
+      glowIntensity: 1.2,
       materializeDuration: 1000,
-      glowColor: '#00bcd4',
-      glowIntensity: 0.9,
-      rebornParticles: 32,
+      spiralEffect: true,
     },
     sound: {
       materialize: 'arcana:astral_rebirth_materialize',
-      glow: 'arcana:astral_rebirth_glow',
+      glow: 'arcana:astral_rebirth_energy',
       complete: 'arcana:astral_rebirth_complete',
     },
     phases: [
@@ -362,12 +360,79 @@ export const astralRebirthCutscene = {
       {
         name: 'materialize',
         duration: 1000,
-        actions: ['vfx_materialize', 'vfx_glow_particles', 'overlay_astral_glow', 'sound_glow'],
+        actions: ['vfx_astral_particles', 'vfx_spiral_glow', 'overlay_yellow_flash', 'sound_glow'],
         delay: 200,
       },
       {
         name: 'hold',
-        duration: 400,
+        duration: 600,
+        actions: [],
+      },
+      {
+        name: 'camera_return',
+        duration: 600,
+        actions: ['sound_complete'],
+      },
+    ],
+  },
+};
+
+export const promotionRitualCutscene = {
+  id: 'promotion_ritual',
+  duration: 2200,
+  config: {
+    camera: {
+      targetZoom: 1.5,
+      duration: 600,
+      holdDuration: 1600,
+      easing: 'easeInOutCubic',
+    },
+    overlay: {
+      // "Za Warudo" effect - monochrome time stop
+      effect: 'monochrome',
+      duration: 2200,
+      intensity: 0.9,
+      fadeIn: 400,
+      hold: 1400,
+      fadeOut: 400,
+    },
+    vfx: {
+      // Divine light beam striking pawn
+      lightBeam: true,
+      beamDuration: 800,
+      beamColor: '#ffeb3b',
+      beamIntensity: 1.3,
+      promotionFlash: true,
+      promotionParticles: 40,
+      glowColor: '#ffeb3b',
+      glowIntensity: 1.2,
+    },
+    sound: {
+      lightImpact: 'arcana:promotion_ritual_light',
+      transform: 'arcana:promotion_ritual_transform',
+      complete: 'arcana:promotion_ritual_complete',
+    },
+    phases: [
+      {
+        name: 'camera_focus',
+        duration: 600,
+        actions: ['camera_move'],
+      },
+      {
+        name: 'light_strike',
+        duration: 800,
+        actions: ['vfx_light_beam', 'overlay_monochrome', 'sound_light_impact'],
+        delay: 200,
+      },
+      {
+        name: 'promotion',
+        duration: 600,
+        actions: ['vfx_promotion_flash', 'vfx_promotion_glow', 'sound_transform'],
+        delay: 0,
+      },
+      {
+        name: 'hold',
+        duration: 800,
         actions: [],
       },
       {
@@ -390,6 +455,7 @@ export function getCutsceneConfig(cardId) {
     divine_intervention: divineInterventionCutscene,
     mind_control: mindControlCutscene,
     astral_rebirth: astralRebirthCutscene,
+    promotion_ritual: promotionRitualCutscene,
   };
   return configs[cardId];
 }

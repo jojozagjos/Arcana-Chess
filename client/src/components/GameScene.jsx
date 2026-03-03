@@ -315,7 +315,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     setActiveVisualArcana(lastArcanaEvent);
     
     // Check if this arcana has cutscene enabled and a target square
-    const cutsceneCards = ['execution', 'divine_intervention', 'astral_rebirth', 'time_travel', 'mind_control'];
+    const cutsceneCards = ['execution', 'divine_intervention', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
     let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
     
     if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
@@ -1305,7 +1305,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           controlsRef={controlsRef}
         />
         
-        <OrbitControls ref={controlsRef} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
+        <OrbitControls ref={controlsRef} enabled={!cutsceneTarget} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
       </Canvas>
 
       <div style={styles.hud}>

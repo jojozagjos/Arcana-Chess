@@ -44,6 +44,15 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     return { ok: true };
   }
 
+  // Astral Rebirth: requires captured pieces to revive
+  if (arcanaId === 'astral_rebirth') {
+    const captured = gameState?.capturedByColor?.[moverColor] || [];
+    if (captured.length === 0) {
+      return { ok: false, reason: 'No captured pieces available to revive' };
+    }
+    return { ok: true };
+  }
+
   // Target-required cards
   if (!targetSquare) {
     return { ok: false, reason: 'Missing targetSquare' };
@@ -549,8 +558,16 @@ function applyTimeFreeze({ gameState, moverColor }) {
 }
 
 function applyDivineIntervention({ gameState, moverColor }) {
+  // Divine Intervention: Activate protective effect that triggers when entering check
+  // The effect will spawn a pawn from heaven to block check attacks
   if (moverColor) {
-    gameState.activeEffects.divineIntervention[moverColor] = true;
+    if (!gameState.activeEffects.divineIntervention) {
+      gameState.activeEffects.divineIntervention = {};
+    }
+    gameState.activeEffects.divineIntervention[moverColor] = {
+      active: true,
+      used: false, // Triggers once when check is detected
+    };
     return { params: { color: moverColor } };
   }
   return null;
@@ -805,14 +822,33 @@ function applyNecromancy({ gameState, moverColor }) {
   return null;
 }
 
-function applyPromotionRitual({ chess, moverColor, params }) {
+function applyPromotionRitual({ chess, gameState, moverColor, params }) {
   const targetSquare = params?.targetSquare || params?.pawnSquare;
   if (targetSquare) {
     const pawn = chess.get(targetSquare);
     if (pawn && pawn.type === 'p' && pawn.color === moverColor) {
       chess.remove(targetSquare);
       chess.put({ type: 'q', color: moverColor }, targetSquare);
-      return { params: { square: targetSquare } };
+      
+      // Grant 2 consecutive moves with monochrome "Za Warudo" time stop effect
+      if (!gameState.activeEffects) gameState.activeEffects = {};
+      if (!gameState.activeEffects.promotionRitual) {
+        gameState.activeEffects.promotionRitual = {};
+      }
+      gameState.activeEffects.promotionRitual[moverColor] = {
+        active: true,
+        movesRemaining: 2,
+        monochrome: true, // Board displays in monochrome during this effect
+      };
+      
+      return { 
+        params: { 
+          square: targetSquare,
+          color: moverColor,
+          extraMoves: 2,
+          monochrome: true,
+        } 
+      };
     }
   }
   return null;
@@ -1253,7 +1289,7 @@ function applyEnPassantMaster({ gameState, moverColor }) {
 }
 
 function applyMindControl({ chess, gameState, moverColor, params }) {
-  // Mark the target enemy piece as mind-controlled for this turn
+  // Mind Control: Seize control of an enemy piece so only the controller can move it next
   const targetSquare = params?.targetSquare;
   if (!targetSquare) return null;
 
@@ -1270,20 +1306,21 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   if (!gameState.activeEffects) gameState.activeEffects = {};
   if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
   
-  const piece = chess.get(targetSquare);
-  
-  // Actually flip the piece's color on the board so the controller can move it
-  chess.remove(targetSquare);
-  chess.put({ type: piece.type, color: moverColor }, targetSquare);
-  
+  // Track the mind-controlled piece with original color (don't change piece color on board)
+  // Only the controller can move this piece next
   gameState.activeEffects.mindControlled.push({
     square: targetSquare,
     controller: moverColor,
-    originalColor: piece.color, // Store original color for proper reversion
-    type: piece.type, // Store piece type for validation during reversion
+    originalColor: targetPiece.color,
+    type: targetPiece.type,
+    // The piece does NOT change color on board - it stays the opponent's color
+    // But only the controller can move it
   });
+  
+  // DO NOT flip the piece color - this was the bug
+  // Leave piece as-is on the board
 
-  return { params: { targetSquare, color: moverColor } };
+  return { params: { targetSquare, color: moverColor, originalColor: targetPiece.color } };
 }
 
 // ============ HELPER FUNCTIONS ============

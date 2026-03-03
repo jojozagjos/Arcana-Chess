@@ -810,6 +810,102 @@ export function PhantomStepEffect({ square, onComplete }) {
 }
 
 // ============================================================================
+// SHARPSHOOTER EFFECT - Bishop targeting with laser sights
+// ============================================================================
+
+export function SharpshooterEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 400);
+
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.5;
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
+      return Math.min(next, 1);
+    });
+  });
+  
+  if (completed) return null;
+
+  // Four diagonal laser beams
+  const diagonals = [
+    { angle: Math.PI / 4, name: 'NE' },      // Northeast
+    { angle: 3 * Math.PI / 4, name: 'NW' },  // Northwest
+    { angle: 5 * Math.PI / 4, name: 'SW' },  // Southwest
+    { angle: 7 * Math.PI / 4, name: 'SE' },  // Southeast
+  ];
+
+  return (
+    <group position={[x, 0, z]}>
+      {/* Central crosshair targeting reticle */}
+      <mesh position={[0, 0.5, 0]} rotation={[0, progress * Math.PI * 2, 0]}>
+        <ringGeometry args={[0.3, 0.4, 32]} />
+        <meshStandardMaterial
+          emissive="#ff0000"
+          emissiveIntensity={3 * (1 + Math.sin(progress * Math.PI * 8) * 0.3)}
+          color="#ff5252"
+          transparent
+          depthWrite={false}
+          opacity={0.8 * (1 - finishT)}
+        />
+      </mesh>
+      
+      {/* Diagonal laser sight beams */}
+      {diagonals.map((diag, i) => (
+        <group key={diag.name} rotation={[0, diag.angle, 0]}>
+          {/* Laser beam extending outward */}
+          <mesh 
+            position={[0, 0.3, -3 * easeOutCubic(progress)]}
+            rotation={[Math.PI / 2, 0, 0]}
+          >
+            <cylinderGeometry args={[0.03, 0.03, 6 * easeOutCubic(progress), 8]} />
+            <meshStandardMaterial
+              emissive="#ff1744"
+              emissiveIntensity={4 * (1 - progress * 0.3)}
+              color="#ff5252"
+              transparent
+              depthWrite={false}
+              opacity={0.7 * (1 - progress * 0.4) * (1 - finishT)}
+            />
+          </mesh>
+          
+          {/* Laser endpoint glow */}
+          <mesh position={[0, 0.3, -6 * easeOutCubic(progress)]}>
+            <sphereGeometry args={[0.1, 16, 16]} />
+            <meshStandardMaterial
+              emissive="#ff0000"
+              emissiveIntensity={5}
+              color="#ff5252"
+              transparent
+              depthWrite={false}
+              opacity={0.9 * (1 - finishT)}
+            />
+          </mesh>
+        </group>
+      ))}
+      
+      {/* Pulsing warning circle on ground */}
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.4, 0.6 * (1 + Math.sin(progress * Math.PI * 6) * 0.2), 32]} />
+        <meshStandardMaterial
+          emissive="#d32f2f"
+          emissiveIntensity={2}
+          color="#ff5252"
+          transparent
+          depthWrite={false}
+          opacity={0.5 * (1 - progress * 0.5) * (1 - finishT)}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// ============================================================================
 // SPECTRAL MARCH EFFECT - Ghostly rook path
 // ============================================================================
 
@@ -957,10 +1053,12 @@ export function IronFortressEffect({ onComplete }) {
 }
 
 // Divine Intervention Effect
-export function DivineInterventionEffect({ onComplete }) {
+export function DivineInterventionEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
-  const groupRef = useRef();
-  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 400);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 600);
   
   useFrame((state, delta) => {
     setProgress(prev => {
@@ -970,79 +1068,100 @@ export function DivineInterventionEffect({ onComplete }) {
       }
       return Math.min(next, 1);
     });
-    
-    if (groupRef.current) {
-      groupRef.current.rotation.y = state.clock.elapsedTime * (1 - finishT * 0.3);
-    }
   });
   
   if (completed) return null;
 
+  // Pawn descends from heaven (0-0.7), impact (0.7-1.0)
+  const descentPhase = Math.min(progress / 0.7, 1);
+  const impactPhase = Math.max((progress - 0.7) / 0.3, 0);
+
   return (
-    <group ref={groupRef}>
-      {/* Heavenly light beam */}
-      <mesh position={[0, 3, 0]}>
-        <cylinderGeometry args={[0.1, 2, 6, 32, 1, true]} />
+    <group position={[x, 0, z]}>
+      {/* Pawn silhouette falling from heaven */}
+      {descentPhase < 1 && (
+        <mesh position={[0, 5 - descentPhase * 4.5, 0]}>
+          <cylinderGeometry args={[0.15, 0.2, 0.5, 16]} />
+          <meshStandardMaterial
+            emissive="#ffd700"
+            emissiveIntensity={4}
+            color="#fff9c4"
+            transparent
+            opacity={1 - finishT}
+          />
+        </mesh>
+      )}
+      
+      {/* Heavenly light beam following pawn */}
+      <mesh position={[0, 5 - descentPhase * 2.5, 0]}>
+        <cylinderGeometry args={[0.2, 0.5, 5 * descentPhase, 32, 1, true]} />
         <meshStandardMaterial
-          emissive="#fff9c4"
-          emissiveIntensity={3 * easeOutCubic(progress)}
-          color="#ffecb3"
+          emissive="#ffd700"
+          emissiveIntensity={3 * (1 - finishT)}
+          color="#fff9c4"
           transparent
           depthWrite={false}
-          opacity={0.4 * (1 - progress * 0.5)}
-          
+          opacity={0.5 * (1 - progress * 0.3) * (1 - finishT)}
         />
       </mesh>
       
-      {/* Holy rings */}
-      {[0, 1, 2].map((i) => (
-        <mesh
-          key={i}
-          position={[0, 0.5 + i * 0.4, 0]}
-          rotation={[-Math.PI / 2, 0, progress * Math.PI * 2]}
-          scale={[1 - i * 0.2, 1 - i * 0.2, 1]}
-        >
-          <ringGeometry args={[0.4, 0.5, 32]} />
-          <meshStandardMaterial
-            emissive="#ffd54f"
-            emissiveIntensity={2}
-            color="#ffecb3"
-            transparent
-            depthWrite={false}
-            opacity={0.6 * (1 - progress * 0.5)}
-            
-          />
-        </mesh>
-      ))}
-      
-      {/* Angel feathers */}
-      {[...Array(12)].map((_, i) => {
-        const angle = (i / 12) * Math.PI * 2;
-        const delay = i * 0.05;
-        const p = Math.max(0, Math.min(1, (progress - delay) / 0.8));
+      {/* Angel particles falling with pawn */}
+      {[...Array(32)].map((_, i) => {
+        const angle = (i / 32) * Math.PI * 2;
+        const radius = 0.4 + Math.sin(progress * Math.PI * 2 + i) * 0.2;
+        const fallSpeed = 1 + (i % 4) * 0.2;
         
         return (
           <mesh
             key={i}
             position={[
-              Math.cos(angle) * (0.5 + p * 2),
-              2 - p * 1.5,
-              Math.sin(angle) * (0.5 + p * 2)
+              Math.cos(angle) * radius,
+              5 - descentPhase * 4.5 * fallSpeed + Math.sin(progress * Math.PI * 3 + i) * 0.3,
+              Math.sin(angle) * radius
             ]}
-            rotation={[0, -angle, Math.PI / 4]}
           >
-            <planeGeometry args={[0.1, 0.3]} />
+            <sphereGeometry args={[0.04, 8, 8]} />
             <meshStandardMaterial
-              emissive="#ffffff"
+              emissive="#ffeb3b"
               emissiveIntensity={3}
-              color="#ffffff"
+              color="#fff9c4"
               transparent
-              opacity={(1 - p) * 0.8}
-              
+              depthWrite={false}
+              opacity={(1 - progress * 0.4) * 0.9 * (1 - finishT)}
             />
           </mesh>
         );
       })}
+      
+      {/* Impact flash on landing */}
+      {impactPhase > 0 && (
+        <>
+          <mesh position={[0, 0.3, 0]}>
+            <sphereGeometry args={[impactPhase * 1.2, 32, 32]} />
+            <meshStandardMaterial
+              emissive="#ffffff"
+              emissiveIntensity={5 * (1 - impactPhase)}
+              color="#fff9c4"
+              transparent
+              depthWrite={false}
+              opacity={(1 - impactPhase) * 0.8}
+            />
+          </mesh>
+          
+          {/* Impact ring */}
+          <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[impactPhase * 0.5, impactPhase * 1.3, 32]} />
+            <meshStandardMaterial
+              emissive="#ffd700"
+              emissiveIntensity={4 * (1 - impactPhase)}
+              color="#fff9c4"
+              transparent
+              depthWrite={false}
+              opacity={(1 - impactPhase) * 0.7}
+            />
+          </mesh>
+        </>
+      )}
     </group>
   );
 }
@@ -1053,11 +1172,11 @@ export function ExecutionEffect({ square, onComplete }) {
   
   const [x, , z] = squareToPosition(square);
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 450);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 600);
 
   useFrame((state, delta) => {
     setProgress(prev => {
-      const next = prev + delta * 2;
+      const next = prev + delta * 0.8; // Slower for blade animation
       if (next >= 1) {
         if (!finishing) triggerFinish();
       }
@@ -1067,58 +1186,89 @@ export function ExecutionEffect({ square, onComplete }) {
   
   if (completed) return null;
 
+  // Calculate animation phases
+  const bladePhase = Math.min(progress * 2, 1); // First half: blade falls
+  const explosionPhase = Math.max((progress - 0.7) * 3.33, 0); // Last 30%: blood explosion
+
   return (
     <group position={[x, 0, z]}>
-      {/* Red X mark */}
-      <mesh position={[0, 0.5, 0]} rotation={[0, Math.PI / 4, 0]} scale={[1 - finishT * 0.2, 1 - finishT * 0.2, 1]}>
-        <boxGeometry args={[0.1, 0.8 * easeOutCubic(progress) * (1 - finishT * 0.3), 0.02]} />
-        <meshStandardMaterial
-          emissive="#f44336"
-          emissiveIntensity={4 * (1 - finishT)}
-          color="#ff5252"
-          transparent
-          depthWrite={false}
-          opacity={(1 - progress * 0.3) * (1 - finishT)}
-        />
-      </mesh>
-      <mesh position={[0, 0.5, 0]} rotation={[0, -Math.PI / 4, 0]} scale={[1 - finishT * 0.2, 1 - finishT * 0.2, 1]}>
-        <boxGeometry args={[0.1, 0.8 * easeOutCubic(progress) * (1 - finishT * 0.3), 0.02]} />
-        <meshStandardMaterial
-          emissive="#f44336"
-          emissiveIntensity={4 * (1 - finishT)}
-          color="#ff5252"
-          transparent
-          depthWrite={false}
-          opacity={(1 - progress * 0.3) * (1 - finishT)}
-        />
-      </mesh>
+      {/* Falling blade (silver/metallic) */}
+      {bladePhase < 1 && (
+        <mesh 
+          position={[0, 3 - bladePhase * 2.5, 0]} 
+          rotation={[0, 0, Math.PI / 4]}
+        >
+          <boxGeometry args={[0.15, 1.2, 0.05]} />
+          <meshStandardMaterial
+            color="#c0c0c0"
+            emissive="#ffffff"
+            emissiveIntensity={2 * (1 - bladePhase)}
+            metalness={0.9}
+            roughness={0.1}
+            transparent
+            opacity={1 - finishT}
+          />
+        </mesh>
+      )}
       
-      {/* Shatter particles */}
-      {[...Array(16)].map((_, i) => {
-        const angle = (i / 16) * Math.PI * 2;
-        const dist = progress * 1.5;
+      {/* Slice impact flash */}
+      {bladePhase > 0.8 && bladePhase < 1 && (
+        <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, Math.PI / 4]}>
+          <planeGeometry args={[1.5, 0.15]} />
+          <meshStandardMaterial
+            emissive="#ff0000"
+            emissiveIntensity={8 * (1 - Math.abs(bladePhase - 0.9) * 10)}
+            color="#ffffff"
+            transparent
+            depthWrite={false}
+            opacity={0.8 * (1 - Math.abs(bladePhase - 0.9) * 10)}
+          />
+        </mesh>
+      )}
+      
+      {/* Blood explosion particles */}
+      {explosionPhase > 0 && [...Array(32)].map((_, i) => {
+        const angle = (i / 32) * Math.PI * 2;
+        const vertAngle = (Math.random() - 0.5) * Math.PI * 0.5;
+        const dist = explosionPhase * (0.8 + Math.random() * 1.2);
         
         return (
           <mesh
             key={i}
             position={[
               Math.cos(angle) * dist,
-              0.5 + Math.sin(progress * Math.PI) * 0.5,
+              0.5 + Math.sin(vertAngle) * dist * 0.8 - explosionPhase * 0.5, // Gravity
               Math.sin(angle) * dist
             ]}
+            scale={[1 - explosionPhase * 0.3, 1 - explosionPhase * 0.3, 1]}
           >
-            <boxGeometry args={[0.08, 0.08, 0.08]} />
+            <sphereGeometry args={[0.06 + Math.random() * 0.04, 6, 6]} />
             <meshStandardMaterial
-              emissive="#ff1744"
-              emissiveIntensity={3 * (1 - progress)}
-              color="#ff5252"
+              emissive="#8B0000"
+              emissiveIntensity={4 * (1 - explosionPhase)}
+              color="#ff0000"
               transparent
               depthWrite={false}
-              opacity={(1 - progress) * 0.9}
+              opacity={(1 - explosionPhase) * 0.9 * (1 - finishT)}
             />
           </mesh>
         );
       })}
+      
+      {/* Blood splash ground stain */}
+      {explosionPhase > 0.3 && (
+        <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[explosionPhase * 0.8, 32]} />
+          <meshStandardMaterial
+            color="#8B0000"
+            emissive="#8B0000"
+            emissiveIntensity={0.5 * (1 - explosionPhase)}
+            transparent
+            depthWrite={false}
+            opacity={0.7 * (1 - finishT)}
+          />
+        </mesh>
+      )}
     </group>
   );
 }
@@ -1205,8 +1355,275 @@ export function TimeFreezeEffect({ onComplete }) {
 // Time Travel Effect - Rewind animation with temporal trails
 export function TimeTravelEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
-  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 500);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 700);
   
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 0.5;
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
+      return Math.min(next, 1);
+    });
+  });
+  
+  if (completed) return null;
+
+  return (
+    <group>
+      {/* Time rewind spiral vortex above board */}
+      {[...Array(24)].map((_, i) => {
+        const angle = (i / 24) * Math.PI * 2 - progress * Math.PI * 6; // Reverse rotation
+        const layer = Math.floor(i / 8);
+        const radius = 3 + layer * 0.8;
+        const height = 2 + layer * 1.5 - progress * 2;
+        
+        return (
+          <mesh
+            key={i}
+            position={[
+              Math.cos(angle) * radius,
+              height,
+              Math.sin(angle) * radius
+            ]}
+          >
+            <sphereGeometry args={[0.12, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#3498db"
+              emissiveIntensity={2.5 * (1 - progress * 0.4) * (1 - finishT)}
+              color="#64b5f6"
+              transparent
+              depthWrite={false}
+              opacity={(1 - progress * 0.5) * 0.8 * (1 - finishT)}
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Afterimage trails from pieces rewinding */}
+      {[...Array(32)].map((_, i) => {
+        const angle = (i / 32) * Math.PI * 2 + progress * 2;
+        const rewindDist = easeOutCubic(progress) * 4;
+        const afterimageIndex = i % 8; // Multiple afterimage layers
+        const trailProgress = Math.max(0, Math.min(1, progress - afterimageIndex * 0.1));
+        
+        return (
+          <mesh
+            key={`trail-${i}`}
+            position={[
+              Math.cos(angle) * rewindDist * (1 - afterimageIndex * 0.1),
+              0.4 + Math.sin(progress * Math.PI * 2 + i) * 0.2,
+              Math.sin(angle) * rewindDist * (1 - afterimageIndex * 0.1)
+            ]}
+          >
+            <boxGeometry args={[0.1, 0.15, 0.1]} />
+            <meshStandardMaterial
+              emissive="#1e88e5"
+              emissiveIntensity={1.8 * (1 - trailProgress)}
+              color="#42a5f5"
+              transparent
+              depthWrite={false}
+              opacity={(1 - trailProgress * 0.8) * 0.6 * (afterimageIndex / 8)} // Fade each afterimage layer
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Central time vortex disc */}
+      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, -progress * Math.PI * 4]}>
+        <ringGeometry args={[2 * progress, 2.5 * progress, 48]} />
+        <meshStandardMaterial
+          emissive="#2196f3"
+          emissiveIntensity={2 * (1 - progress * 0.5)}
+          color="#64b5f6"
+          transparent
+          depthWrite={false}
+          opacity={(1 - progress * 0.6) * 0.5 * (1 - finishT)}
+        />
+      </mesh>
+      
+      {/* Temporal field wireframe (monochrome effect visual cue) */}
+      <mesh position={[0, 2, 0]} rotation={[0, -progress * Math.PI * 3, 0]}>
+        <icosahedronGeometry args={[3 * progress, 2]} />
+        <meshStandardMaterial
+          emissive="#0d47a1"
+          emissiveIntensity={1.2 * (1 - progress * 0.6)}
+          color="#1565c0"
+          transparent
+          opacity={(1 - progress * 0.8) * 0.3 * (1 - finishT)}
+          wireframe={true}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// Astral Rebirth Effect - Yellow glow with astral particles
+export function AstralRebirthEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 500);
+
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 0.7;
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
+      return Math.min(next, 1);
+    });
+  });
+  
+  if (completed) return null;
+
+  return (
+    <group position={[x, 0, z]}>
+      {/* Golden glow sphere */}
+      <mesh position={[0, 0.5, 0]}>
+        <sphereGeometry args={[0.6 * easeOutElastic(progress), 32, 32]} />
+        <meshStandardMaterial
+          emissive="#ffeb3b"
+          emissiveIntensity={3 * (1 - progress * 0.5) * (1 - finishT)}
+          color="#fff59d"
+          transparent
+          depthWrite={false}
+          opacity={0.4 * (1 - progress * 0.3) * (1 - finishT)}
+        />
+      </mesh>
+      
+      {/* Spiral astral particles */}
+      {[...Array(48)].map((_, i) => {
+        const angle = (i / 48) * Math.PI * 2 + progress * Math.PI * 3;
+        const spiralHeight = (i / 48) * 2;
+        const radius = 0.3 + Math.sin(progress * Math.PI) * 0.5;
+        
+        return (
+          <mesh
+            key={i}
+            position={[
+              Math.cos(angle) * radius,
+              spiralHeight * (1 - progress),
+              Math.sin(angle) * radius
+            ]}
+          >
+            <sphereGeometry args={[0.04, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#ffeb3b"
+              emissiveIntensity={4 * (1 - progress * 0.6)}
+              color="#fff9c4"
+              transparent
+              depthWrite={false}
+              opacity={(1 - progress * 0.5) * 0.9 * (1 - finishT)}
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Yellow flash ring */}
+      <mesh position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.3, 0.8 * easeOutCubic(progress), 32]} />
+        <meshStandardMaterial
+          emissive="#ffeb3b"
+          emissiveIntensity={2 * (1 - progress)}
+          color="#fff59d"
+          transparent
+          depthWrite={false}
+          opacity={0.5 * (1 - progress * 0.7) * (1 - finishT)}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// Mind Control Effect - Purple aura
+export function MindControlEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 400);
+
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 0.8;
+      if (next >= 1) {
+        if (!finishing) triggerFinish();
+      }
+      return Math.min(next, 1);
+    });
+  });
+  
+  if (completed) return null;
+
+  return (
+    <group position={[x, 0, z]}>
+      {/* Purple pulsing aura */}
+      <mesh position={[0, 0.5, 0]}>
+        <cylinderGeometry args={[0.45, 0.45, 1.2, 32, 1, true]} />
+        <meshStandardMaterial
+          emissive="#9c27b0"
+          emissiveIntensity={2.5 * (1 + Math.sin(progress * Math.PI * 6) * 0.3) * (1 - finishT)}
+          color="#ce93d8"
+          transparent
+          depthWrite={false}
+          opacity={0.5 * (1 - progress * 0.2) * (1 - finishT)}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      
+      {/* Mind control particles swirling */}
+      {[...Array(16)].map((_, i) => {
+        const angle = (i / 16) * Math.PI * 2 + progress * Math.PI * 4;
+        const radius = 0.5 + Math.sin(progress * Math.PI * 3) * 0.2;
+        
+        return (
+          <mesh
+            key={i}
+            position={[
+              Math.cos(angle) * radius,
+              0.5 + Math.sin(angle + progress * Math.PI * 2) * 0.3,
+              Math.sin(angle) * radius
+            ]}
+          >
+            <sphereGeometry args={[0.05, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#9c27b0"
+              emissiveIntensity={3}
+              color="#ce93d8"
+              transparent
+              depthWrite={false}
+              opacity={0.8 * (1 - finishT)}
+            />
+          </mesh>
+        );
+      })}
+      
+      {/* Purple ground circle */}
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, progress * Math.PI]}>
+        <ringGeometry args={[0.4, 0.6, 32]} />
+        <meshStandardMaterial
+          emissive="#9c27b0"
+          emissiveIntensity={1.5}
+          color="#ce93d8"
+          transparent
+          depthWrite={false}
+          opacity={0.6 * (1 - finishT)}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// Promotion Ritual Effect - Divine light beam striking pawn
+export function PromotionRitualEffect({ square, onComplete }) {
+  if (!square) return null;
+  
+  const [x, , z] = squareToPosition(square);
+  const [progress, setProgress] = useState(0);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 600);
+
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 0.6;
@@ -1219,86 +1636,76 @@ export function TimeTravelEffect({ onComplete }) {
   
   if (completed) return null;
 
+  const beamPhase = Math.min(progress * 1.5, 1);
+  const flashPhase = Math.max((progress - 0.6) * 2.5, 0);
+
   return (
-    <group>
-      {/* Reverse time spiral */}
-      {[...Array(12)].map((_, i) => {
-        const angle = (i / 12) * Math.PI * 2 - progress * Math.PI * 4;
-        const radius = 2 + i * 0.3;
-        const height = Math.sin((progress + i / 12) * Math.PI) * 2;
+    <group position={[x, 0, z]}>
+      {/* Light beam falling from heaven */}
+      <mesh position={[0, 3.5, 0]}>
+        <cylinderGeometry args={[0.15, 0.3, 7 * beamPhase, 32, 1, true]} />
+        <meshStandardMaterial
+          emissive="#ffeb3b"
+          emissiveIntensity={4 * (1 - finishT)}
+          color="#fff9c4"
+          transparent
+          depthWrite={false}
+          opacity={0.7 * (1 - progress * 0.3) * (1 - finishT)}
+        />
+      </mesh>
+      
+      {/* Impact flash */}
+      {flashPhase > 0 && (
+        <mesh position={[0, 0.5, 0]}>
+          <sphereGeometry args={[flashPhase * 0.8, 32, 32]} />
+          <meshStandardMaterial
+            emissive="#ffffff"
+            emissiveIntensity={6 * (1 - flashPhase)}
+            color="#fff9c4"
+            transparent
+            depthWrite={false}
+            opacity={(1 - flashPhase) * 0.9}
+          />
+        </mesh>
+      )}
+      
+      {/* Radiant particles */}
+      {beamPhase > 0.5 && [...Array(32)].map((_, i) => {
+        const angle = (i / 32) * Math.PI * 2;
+        const dist = flashPhase * 1.2;
         
         return (
           <mesh
             key={i}
             position={[
-              Math.cos(angle) * radius,
-              height,
-              Math.sin(angle) * radius
-            ]}
-          >
-            <sphereGeometry args={[0.15, 8, 8]} />
-            <meshStandardMaterial
-              emissive="#3498db"
-              emissiveIntensity={2 * (1 - progress * 0.5) * (1 - finishT)}
-              color="#64b5f6"
-              transparent
-              depthWrite={false}
-              opacity={(1 - progress * 0.6) * 0.8 * (1 - finishT)}
-            />
-          </mesh>
-        );
-      })}
-      
-      {/* Rewind trails (pieces moving backward) */}
-      {[...Array(16)].map((_, i) => {
-        const angle = (i / 16) * Math.PI * 2 + progress * 0.5;
-        const dist = easeOutCubic(progress) * 3;
-        
-        return (
-          <mesh
-            key={`trail-${i}`}
-            position={[
               Math.cos(angle) * dist,
-              0.3 + Math.sin(progress * Math.PI + i) * 0.2,
+              0.5,
               Math.sin(angle) * dist
             ]}
           >
-            <boxGeometry args={[0.12, 0.12, 0.12]} />
+            <sphereGeometry args={[0.06, 8, 8]} />
             <meshStandardMaterial
-              emissive="#1e88e5"
-              emissiveIntensity={1.5 * (1 - progress)}
-              color="#42a5f5"
+              emissive="#ffeb3b"
+              emissiveIntensity={3 * (1 - flashPhase)}
+              color="#fff59d"
               transparent
               depthWrite={false}
-              opacity={(1 - progress * 0.8) * 0.5}
+              opacity={(1 - flashPhase) * 0.8}
             />
           </mesh>
         );
       })}
       
-      {/* Temporal displacement wave */}
-      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[progress * 8, progress * 8, 1]}>
-        <ringGeometry args={[progress * 3, progress * 3.2, 32]} />
+      {/* Ground glow ring */}
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.3, 0.7 * beamPhase, 32]} />
         <meshStandardMaterial
-          emissive="#2196f3"
-          emissiveIntensity={1.5 * (1 - progress)}
-          color="#64b5f6"
+          emissive="#ffeb3b"
+          emissiveIntensity={2}
+          color="#fff9c4"
           transparent
           depthWrite={false}
-          opacity={(1 - progress * 0.5) * 0.4}
-        />
-      </mesh>
-      
-      {/* Distortion field */}
-      <mesh position={[0, 1, 0]} rotation={[0, progress * Math.PI * 2, 0]}>
-        <dodecahedronGeometry args={[2, 2]} />
-        <meshStandardMaterial
-          emissive="#0d47a1"
-          emissiveIntensity={0.8 * (1 - progress)}
-          color="#1565c0"
-          transparent
-          opacity={(1 - progress * 0.7) * 0.3}
-          wireframe={true}
+          opacity={0.6 * (1 - progress * 0.5) * (1 - finishT)}
         />
       </mesh>
     </group>

@@ -132,6 +132,7 @@ export function CardBalancingToolV2({ onBack }) {
   // Cutscene orchestration hooks/refs
   const { cutsceneTarget, triggerCutscene: _localTriggerCutscene, clearCutscene } = useCameraCutscene();
   const overlayRef = useRef();
+  const controlsRef = useRef();
   
   // Move history for testing
   const [moveHistory, setMoveHistory] = useState([]);
@@ -1434,7 +1435,7 @@ export function CardBalancingToolV2({ onBack }) {
               <directionalLight position={[-5, 8, -5]} intensity={0.4} color="#88c0d0" />
               <pointLight position={[0, 5, 0]} intensity={0.6} color="#d8dee9" />
               <Environment preset="night" />
-              <OrbitControls enablePan={false} minDistance={8} maxDistance={20} />
+              <OrbitControls ref={controlsRef} enabled={!cutsceneTarget} enablePan={false} minDistance={8} maxDistance={20} />
 
               {/* Board squares - matches GameScene styling */}
               <group>
@@ -1524,7 +1525,7 @@ export function CardBalancingToolV2({ onBack }) {
               />
 
               {/* CameraCutscene (uses three.js camera) - keep inside canvas */}
-              <CameraCutscene cutsceneTarget={cutsceneTarget} onCutsceneEnd={() => setCutsceneActive(false)} myColor={playerColor} controls={null} />
+              <CameraCutscene cutsceneTarget={cutsceneTarget} onCutsceneEnd={() => setCutsceneActive(false)} myColor={playerColor} controlsRef={controlsRef} />
 
               {/* Legacy Visual Effects (kept for backward compatibility) */}
               {visualEffects.map(effect => {
