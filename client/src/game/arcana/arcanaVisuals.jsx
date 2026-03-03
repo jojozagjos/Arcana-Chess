@@ -1192,6 +1192,21 @@ export function ExecutionEffect({ square, onComplete }) {
 
   return (
     <group position={[x, 0, z]}>
+      {/* Target piece - visible until blade hits */}
+      {bladePhase < 0.9 && (
+        <mesh position={[0, 0.4, 0]}>
+          <cylinderGeometry args={[0.3, 0.3, 0.5, 16]} />
+          <meshStandardMaterial
+            color="#666666"
+            transparent
+            opacity={(1 - bladePhase * 1.5) * 0.7 * (1 - finishT)}
+            emissive="#444444"
+            emissiveIntensity={0.3}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+
       {/* Falling blade (silver/metallic) */}
       {bladePhase < 1 && (
         <mesh 

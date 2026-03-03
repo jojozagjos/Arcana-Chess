@@ -708,6 +708,19 @@ export function CardBalancingToolV2({ onBack }) {
         setPawnShields(prev => ({ ...prev, [colorChar]: { square: params.targetSquare } }));
         setShieldTurnCounter(prev => ({ ...prev, [colorChar]: 1 }));
       }
+
+      // Delay board state update until visual effect completes so pieces are visible during animation
+      // Cards with destructive visuals (execution, etc) need to keep pieces visible until the effect finishes
+      const visualDuration = getArcanaEffectDuration(card.id);
+      setTimeout(() => {
+        if (result.success) {
+          setChess(testChess);
+          setFen(testChess.fen());
+          setValidationChecklist(prev => ({ ...prev, logic: true }));
+        }
+      }, visualDuration || 2000);
+      
+      return;
     }
 
     // Special handling for specific cards
@@ -762,11 +775,10 @@ export function CardBalancingToolV2({ onBack }) {
       return;
     }
 
-    // Update chess state and log result
+    // Update chess state immediately for cards without visual effects
     if (result.success) {
       setChess(testChess);
       setFen(testChess.fen());
-      // (no side-panel turn-end indicator in balancing tool)
       setValidationChecklist(prev => ({ ...prev, logic: true }));
     }
     
