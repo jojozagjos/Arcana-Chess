@@ -488,6 +488,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
       case 'iron_fortress':
         gameState.activeEffects.ironFortress = gameState.activeEffects.ironFortress || { w: false, b: false };
         gameState.activeEffects.ironFortress[colorChar] = true;
+        const opponentColor = colorChar === 'w' ? 'b' : 'w';
         
         // Find all pawn positions for shield visuals
         const pawnSquares = [];
@@ -505,6 +506,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
           gameState.activeEffects.ironFortressShields = { w: [], b: [] };
         }
         gameState.activeEffects.ironFortressShields[colorChar] = pawnSquares;
+        gameState.activeEffects.ironFortressShields[opponentColor] = [];
         
         result.success = true;
         result.message = 'Iron Fortress: All your pawns are protected for 1 enemy turn';

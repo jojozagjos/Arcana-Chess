@@ -44,7 +44,7 @@ app.get('/api/arcana', (req, res) => {
 // Card testing endpoint for balancing tool
 app.post('/api/test-card', (req, res) => {
   try {
-    const { cardId, fen, params, playerColor, moveResult, instanceId, activeEffects: clientActiveEffects, pawnShields: clientPawnShields, lastMove: clientLastMove } = req.body;
+    const { cardId, fen, params, playerColor, moveResult, instanceId, activeEffects: clientActiveEffects, pawnShields: clientPawnShields, lastMove: clientLastMove, capturedByColor: clientCapturedByColor } = req.body;
     const chess = new Chess(fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
     const colorChar = playerColor === 'white' ? 'w' : 'b';
 
@@ -61,7 +61,7 @@ app.post('/api/test-card', (req, res) => {
       usedArcanaInstanceIdsByPlayer: {},
       lastMove: clientLastMove || moveResult || null,
       pawnShields: clientPawnShields || { w: null, b: null },
-      capturedByColor: { w: [], b: [] },
+      capturedByColor: clientCapturedByColor || { w: [], b: [] },
       activeEffects: clientActiveEffects || {
         ironFortress: { w: false, b: false },
         ironFortressShields: { w: [], b: [] },

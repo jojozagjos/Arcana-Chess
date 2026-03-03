@@ -636,6 +636,23 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     const handleChainLightning = (data) => {
       try { soundManager.play('arcana:chain_lightning'); } catch {}
+      const destroyedSquares = Array.isArray(data?.destroyedPieces)
+        ? data.destroyedPieces.map((p) => p.square).filter(Boolean)
+        : [];
+
+      if (data?.captureSquare && destroyedSquares.length > 0) {
+        setActiveVisualArcana({
+          arcanaId: 'chain_lightning',
+          params: {
+            origin: data.captureSquare,
+            chained: destroyedSquares,
+            square: data.captureSquare,
+          },
+        });
+        const vfxTimeout = setTimeout(() => setActiveVisualArcana(null), 1400);
+        timeoutsRef.current.push(vfxTimeout);
+      }
+
       const count = Array.isArray(data?.destroyedPieces) ? data.destroyedPieces.length : 0;
       setPendingMoveError(`Chain Lightning triggered${count ? `: ${count} piece${count > 1 ? 's' : ''} destroyed` : ''}`);
       const timeout = setTimeout(() => setPendingMoveError(''), 3000);

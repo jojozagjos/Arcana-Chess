@@ -24,6 +24,13 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
   ];
 
   if (noTargetCards.includes(arcanaId)) {
+    // Temporal Echo requires a prior move pattern to copy
+    if (arcanaId === 'temporal_echo') {
+      const hasLastMove = !!(gameState?.lastMove?.from && gameState?.lastMove?.to);
+      if (!hasLastMove) {
+        return { ok: false, reason: 'Temporal Echo requires a previous move to echo' };
+      }
+    }
     return { ok: true };
   }
   
@@ -71,11 +78,8 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     return { ok: true };
   }
 
-  // Sanctuary: must target an empty square
+  // Sanctuary: can target any board square (empty or occupied)
   if (arcanaId === 'sanctuary') {
-    if (piece) {
-      return { ok: false, reason: 'Sanctuary must target an empty square' };
-    }
     return { ok: true };
   }
 
@@ -452,6 +456,7 @@ function applyPawnGuard({ chess, gameState, moverColor, params }) {
 function applyIronFortress({ chess, gameState, moverColor }) {
   if (moverColor) {
     gameState.activeEffects.ironFortress[moverColor] = true;
+    const opponentColor = moverColor === 'w' ? 'b' : 'w';
     
     // Find all pawn positions for this color and store them for shield visuals
     const pawnSquares = [];
@@ -470,6 +475,7 @@ function applyIronFortress({ chess, gameState, moverColor }) {
       gameState.activeEffects.ironFortressShields = { w: [], b: [] };
     }
     gameState.activeEffects.ironFortressShields[moverColor] = pawnSquares;
+    gameState.activeEffects.ironFortressShields[opponentColor] = [];
     
     return { params: { color: moverColor, pawnSquares } };
   }
@@ -791,6 +797,9 @@ function applyAstralRebirth({ gameState, moverColor }) {
 function applyNecromancy({ gameState, moverColor }) {
   if (moverColor) {
     const revived = revivePawns(gameState, moverColor, 2);
+    if (!Array.isArray(revived) || revived.length === 0) {
+      return null;
+    }
     return { params: { revived } };
   }
   return null;

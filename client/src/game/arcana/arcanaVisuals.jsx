@@ -1320,7 +1320,13 @@ export function ChainLightningEffect({ origin, chained, onComplete }) {
     });
   });
   
-  const originPos = origin ? squareToPosition(origin) : [0, 0, 0];
+  const sourceSquare = origin || null;
+  const targetSquares = Array.isArray(chained) ? chained : [];
+  if (!sourceSquare || targetSquares.length === 0) {
+    return null;
+  }
+
+  const originPos = squareToPosition(sourceSquare);
   
   return (
     <group>
@@ -1337,7 +1343,7 @@ export function ChainLightningEffect({ origin, chained, onComplete }) {
       </mesh>
       
       {/* Lightning bolts to chained squares */}
-      {(chained || []).map((sq, i) => {
+      {targetSquares.map((sq, i) => {
         const targetPos = squareToPosition(sq);
         const delay = i * 0.1;
         const p = Math.max(0, Math.min(1, (progress - delay) / 0.6));
@@ -1696,8 +1702,11 @@ export function BerserkerRageEffect({ square, from, to, onComplete }) {
 export function SanctuaryEffect({ square, onComplete }) {
   const [progress, setProgress] = useState(0);
   const groupRef = useRef();
-  
-  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  if (!square || typeof square !== 'string') {
+    return null;
+  }
+
+  const [x, , z] = squareToPosition(square);
   
   const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
 
@@ -1773,7 +1782,11 @@ export function SanctuaryEffect({ square, onComplete }) {
 
 // Persistent sanctuary indicator for squares
 export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
-  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  if (!square || typeof square !== 'string') {
+    return null;
+  }
+
+  const [x, , z] = squareToPosition(square);
   const ringRef = useRef();
   const glowRef = useRef();
   

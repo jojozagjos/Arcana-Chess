@@ -299,6 +299,7 @@ export function CardBalancingToolV2({ onBack }) {
         activeEffects,
         pawnShields,
         lastMove,
+        capturedByColor,
       };
       // Always include lastMove for cards that depend on it (temporal_echo, time_travel, berserker_rage, etc.)
       if (lastMove) payload.moveResult = lastMove;
@@ -591,6 +592,8 @@ export function CardBalancingToolV2({ onBack }) {
       pawnShields, 
       shieldTurnCounter, 
       moveHistory,
+      lastMove,
+      capturedByColor,
       activeEffects: { ...activeEffects } || {}
     };
 
@@ -1054,6 +1057,33 @@ export function CardBalancingToolV2({ onBack }) {
           }
         } catch (e) {
           addLog(`Sound error: ${e.message}`, 'warning');
+        }
+
+        // Chain Lightning: on capture, destroy 1 adjacent enemy piece (not kings/queens)
+        if (capturedPiece && nextEffects?.chainLightning?.[move.color]) {
+          const adjacentSquares = getAdjacentSquares(move.to);
+          const chainedSquares = [];
+
+          for (const sq of adjacentSquares) {
+            const piece = chess.get(sq);
+            if (piece && piece.color === opponentColor && piece.type !== 'k' && piece.type !== 'q') {
+              chess.remove(sq);
+              chainedSquares.push(sq);
+              break;
+            }
+          }
+
+          if (chainedSquares.length > 0) {
+            addLog(`Chain Lightning zapped ${chainedSquares[0]}!`, 'success');
+            setActiveVisualArcana({
+              arcanaId: 'chain_lightning',
+              params: { origin: move.to, chained: chainedSquares, square: move.to }
+            });
+            const duration = getArcanaEffectDuration('chain_lightning') || 1400;
+            setTimeout(() => setActiveVisualArcana(null), duration);
+          }
+
+          nextEffects.chainLightning[move.color] = false;
         }
 
         // Decrement poisoned pieces and kill those at 0 turns (server parity)

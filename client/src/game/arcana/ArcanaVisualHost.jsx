@@ -130,11 +130,11 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       {pawnShields?.w && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
       {pawnShields?.b && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
       
-      {/* Iron Fortress shields - show on all protected pawns */}
-      {Effects.ShieldGlowEffect && active.ironFortressShields?.w?.map((sq, i) => (
+      {/* Iron Fortress shields - show only for currently active fortress color */}
+      {Effects.ShieldGlowEffect && active.ironFortress?.w && active.ironFortressShields?.w?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-w-${i}`} square={sq} />
       ))}
-      {Effects.ShieldGlowEffect && active.ironFortressShields?.b?.map((sq, i) => (
+      {Effects.ShieldGlowEffect && active.ironFortress?.b && active.ironFortressShields?.b?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-b-${i}`} square={sq} />
       ))}
     </group>
@@ -276,9 +276,20 @@ function EffectWrapper({ Effect, params, fading }) {
     };
   }, []);
 
+  const normalizedParams = { ...(params || {}) };
+  if (!normalizedParams.square && normalizedParams.targetSquare) {
+    normalizedParams.square = normalizedParams.targetSquare;
+  }
+  if (!normalizedParams.origin && normalizedParams.square) {
+    normalizedParams.origin = normalizedParams.square;
+  }
+  if (!Array.isArray(normalizedParams.chained) && Array.isArray(normalizedParams.destroyedPieces)) {
+    normalizedParams.chained = normalizedParams.destroyedPieces.map((p) => p?.square).filter(Boolean);
+  }
+
   return (
     <group ref={ref}>
-      <Effect {...(params || {})} fadeOpacity={fadeOpacityState} fading={fading} />
+      <Effect {...normalizedParams} fadeOpacity={fadeOpacityState} fading={fading} />
     </group>
   );
 }
