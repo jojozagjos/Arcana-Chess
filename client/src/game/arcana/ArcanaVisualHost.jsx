@@ -129,6 +129,14 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       {/* Pawn shields (display for both colors if present) */}
       {pawnShields?.w && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
       {pawnShields?.b && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
+      
+      {/* Iron Fortress shields - show on all protected pawns */}
+      {Effects.ShieldGlowEffect && active.ironFortressShields?.w?.map((sq, i) => (
+        <Effects.ShieldGlowEffect key={`fortress-w-${i}`} square={sq} />
+      ))}
+      {Effects.ShieldGlowEffect && active.ironFortressShields?.b?.map((sq, i) => (
+        <Effects.ShieldGlowEffect key={`fortress-b-${i}`} square={sq} />
+      ))}
     </group>
   );
 }

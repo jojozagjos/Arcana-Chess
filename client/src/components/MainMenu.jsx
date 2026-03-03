@@ -42,11 +42,14 @@ export function MainMenu({
             <div className="update-log">
               <button className="dismiss-btn" onClick={() => setShowUpdateLog(false)}>✕</button>
               <strong>Update Log</strong>
-              <div className="log-entry"><strong>v1.2.2</strong> — Dev-tool & parity fixes (Feb 05, 2026)</div>
-              <div className="log-entry">• Dev Tool: server-validated reveal arcana (Line of Sight, Vision, Map Fragments, Quiet Thought) now show exact in-game highlights.</div>
-              <div className="log-entry">• Dev Tool: deferred Focus Fire sound to play on capture (matches server behavior).</div>
-              <div className="log-entry">• Dev Tool: fixed captured-piece recording (avoids runtime error on capture).</div>
-              <div className="log-entry">• Various small UI and visual polish from last release (v1.2.1).</div>
+              <div className="log-entry"><strong>v1.2.4</strong> — Rare Card Verification & Fixes (Mar 02, 2026)</div>
+              <div className="log-entry">• Verified all 11 rare cards work correctly in dev manager and PvP multiplayer.</div>
+              <div className="log-entry">• Fixed Castle Breaker targeting validation bug (was incorrectly requiring target when it shouldn't).</div>
+              <div className="log-entry">• Passed full server regression: 58/58 tests + validation suite.</div>
+              <div className="log-entry">• Confirmed live two-client PvP socket flow with turn/draw gating enforcement.</div>
+              <div className="log-entry" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.1)' }}><strong>v1.2.3</strong> — Balancing Tool Fix (Mar 02, 2026)</div>
+              <div className="log-entry">• Dev Tool: Fixed critical bug preventing arcana-enhanced moves from working correctly.</div>
+              <div className="log-entry">• Cutscenes: Fixed Z-fighting on board visuals, improved camera control handling.</div>
               <div style={{ marginTop: 6, fontSize: '0.8rem', color: '#8f9fb3' }}>Dismiss to hide</div>
             </div>
           )}

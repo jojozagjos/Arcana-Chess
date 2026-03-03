@@ -318,20 +318,30 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const cutsceneCards = ['execution', 'divine_intervention', 'astral_rebirth', 'time_travel', 'mind_control'];
     let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
     
-    if (cutsceneCards.includes(lastArcanaEvent.arcanaId) && lastArcanaEvent.params?.targetSquare) {
+    if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
       const config = getCutsceneConfig(lastArcanaEvent.arcanaId);
       
-      // Trigger camera cutscene to focus on the effect
-      triggerCutscene(lastArcanaEvent.params.targetSquare, {
+      // Extract square from various possible param field names
+      const targetSquare = lastArcanaEvent.params?.targetSquare || 
+                          lastArcanaEvent.params?.square ||
+                          lastArcanaEvent.params?.kingTo ||
+                          lastArcanaEvent.params?.rebornSquare;
+      
+      if (targetSquare && typeof targetSquare === 'string') {
+        // Trigger camera cutscene to focus on the effect
+        triggerCutscene(targetSquare, {
         zoom: config?.config?.camera?.targetZoom || 1.5,
         holdDuration: config?.config?.camera?.holdDuration || 2000,
       });
       
-      // Calculate total cutscene duration
-      // Animation speed is 1.8, so moving/returning each take ~556ms
-      // Total: ~1112ms (moving + returning) + holdDuration
-      const holdDuration = config?.config?.camera?.holdDuration || 2000;
-      visualClearTimeout = Math.ceil(1112 + holdDuration + 200); // +200ms buffer for safety
+        // Calculate total cutscene duration
+        // Animation speed is 1.8, so moving/returning each take ~556ms
+        // Total: ~1112ms (moving + returning) + holdDuration
+        const holdDuration = config?.config?.camera?.holdDuration || 2000;
+        visualClearTimeout = Math.ceil(1112 + holdDuration + 200); // +200ms buffer for safety
+      } else {
+        console.warn('[GameScene] Cutscene card missing valid square param:', lastArcanaEvent);
+      }
       
       // Trigger overlay effects (if configured)
       if (config?.config?.overlay && overlayRef.current) {
@@ -635,6 +645,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const handleExtraMoveAvailable = (data) => {
       try { soundManager.play('cardUse'); } catch {}
       const typ = data?.type || 'extra-move';
+      if (typ === 'berserkerRage' && data?.square) {
+        setActiveVisualArcana({ arcanaId: 'berserker_rage', params: { square: data.square } });
+        const tfx = setTimeout(() => setActiveVisualArcana(null), 1200);
+        timeoutsRef.current.push(tfx);
+      }
       setPendingMoveError(`Extra move available (${typ})`);
       const timeout = setTimeout(() => setPendingMoveError(''), 2000);
       timeoutsRef.current.push(timeout);

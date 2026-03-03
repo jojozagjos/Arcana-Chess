@@ -117,6 +117,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     // Extended state for Arcana effects
     activeEffects: {
       ironFortress: { w: false, b: false },
+      ironFortressShields: { w: [], b: [] },
       bishopsBlessing: { w: null, b: null }, // stores bishop square
       timeFrozen: { w: false, b: false },
       cursedSquares: [],  // [{ square, turns, setter }]
@@ -126,7 +127,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
-      poisonedPieces: [],  // [{ square, turnsLeft: 6, poisonedBy }]
+      poisonedPieces: [],  // [{ square, turnsLeft: 12, poisonedBy }]
       squireSupport: [],   // [{ square, turnsLeft: 1 }]
       focusFire: { w: false, b: false },  // next capture draws extra card
       queensGambit: { w: 0, b: 0 }, // extra moves remaining
@@ -1159,7 +1160,7 @@ export class GameManager {
         at: result.to,
       });
 
-      // Poison Touch: poison a random adjacent enemy piece (3-turn delayed death)
+      // Poison Touch: poison a random adjacent enemy piece (6-turn delayed death)
       if (gameState.activeEffects.poisonTouch[moverColor]) {
         const { applyPoisonAfterCapture } = await import('./arcana/arcanaHandlers.js');
         const poisoned = applyPoisonAfterCapture(chess, result.to, moverColor, gameState);
@@ -1170,7 +1171,7 @@ export class GameManager {
             if (!pid.startsWith('AI-')) {
               this.io.to(pid).emit('piecePoisoned', {
                 squares: poisoned,
-                turnsLeft: 6  // Matches server tracking (6 plies = ~3 turns)
+                turnsLeft: 12  // Matches server tracking (12 plies = ~6 turns)
               });
             }
           }
@@ -1335,7 +1336,8 @@ export class GameManager {
           // Notify about extra move
           this.io.to(pid).emit('extraMoveAvailable', { 
             color: moverColor, 
-            type: hasQueensGambit ? 'queensGambit' : (hasDoubleStrike ? 'doubleStrike' : 'berserkerRage')
+            type: hasQueensGambit ? 'queensGambit' : (hasDoubleStrike ? 'doubleStrike' : 'berserkerRage'),
+            square: result.to,
           });
         }
       }
@@ -2136,6 +2138,7 @@ export class GameManager {
     if (!gameState.activeEffects) {
       gameState.activeEffects = {
         ironFortress: { w: false, b: false },
+        ironFortressShields: { w: [], b: [] },
         bishopsBlessing: { w: null, b: null },
         timeFrozen: { w: false, b: false },
         cursedSquares: [],
@@ -2164,6 +2167,11 @@ export class GameManager {
         doubleStrikeActive: null,
         berserkerRageActive: null,
       };
+    }
+    
+    // Ensure ironFortressShields exists
+    if (!gameState.activeEffects.ironFortressShields) {
+      gameState.activeEffects.ironFortressShields = { w: [], b: [] };
     }
     
     const effects = gameState.activeEffects;
@@ -2226,6 +2234,10 @@ export class GameManager {
     for (const c of ['w', 'b']) {
       if (effects.ironFortress[c] && currentTurn === c) {
         effects.ironFortress[c] = false;
+        // Also clear the shield visuals
+        if (effects.ironFortressShields) {
+          effects.ironFortressShields[c] = [];
+        }
       }
     }
 

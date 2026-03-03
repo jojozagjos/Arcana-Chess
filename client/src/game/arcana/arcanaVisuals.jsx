@@ -181,6 +181,7 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
   
   const urgency = turnsLeft === 1 ? 3 : turnsLeft === 2 ? 2 : 1.2;
   const baseColor = turnsLeft === 1 ? '#76ff03' : turnsLeft === 2 ? '#8bc34a' : '#558b2f';
+  const turnsDisplay = Math.ceil(turnsLeft / 2); // Show as player turns (not plies)
   
   // Generate bubble positions
   const bubbles = useMemo(() => {
@@ -240,10 +241,47 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
         <PoisonBubble key={i} {...bubble} urgency={urgency} color={baseColor} fadeOpacity={fadeOpacity} />
       ))}
       
+      {/* Turn counter - hovering above the piece */}
+      <group position={[0, 0.95, 0]}>
+        <mesh>
+          <cylinderGeometry args={[0.15, 0.15, 0.05, 16]} />
+          <meshStandardMaterial
+            emissive={turnsLeft <= 2 ? "#ff1744" : baseColor}
+            emissiveIntensity={urgency * 2}
+            color={turnsLeft <= 2 ? "#ff1744" : baseColor}
+            transparent
+            opacity={0.8 * fadeOpacity}
+          />
+        </mesh>
+        {/* Number display using small spheres in a pattern */}
+        {[...Array(turnsDisplay)].map((_, i) => {
+          const totalDots = turnsDisplay;
+          const angle = (i / totalDots) * Math.PI * 2 - Math.PI / 2;
+          const radius = 0.08;
+          return (
+            <mesh
+              key={i}
+              position={[
+                Math.cos(angle) * radius,
+                0.03,
+                Math.sin(angle) * radius
+              ]}
+            >
+              <sphereGeometry args={[0.025, 8, 8]} />
+              <meshStandardMaterial
+                emissive="#ffffff"
+                emissiveIntensity={5}
+                color="#ffffff"
+              />
+            </mesh>
+          );
+        })}
+      </group>
+      
       {/* Skull indicator for final turn */}
       {turnsLeft === 1 && (
-        <mesh position={[0, 0.9, 0]}>
-          <octahedronGeometry args={[0.12, 0]} />
+        <mesh position={[0, 1.15, 0]}>
+          <octahedronGeometry args={[0.08, 0]} />
           <meshStandardMaterial
             emissive="#ff1744"
             emissiveIntensity={4}
@@ -836,74 +874,27 @@ export function SpectralMarchEffect({ square, onComplete }) {
 }
 
 // ============================================================================
-// POISON TOUCH EFFECT - Venomous activation (green poison particles only)
+// POISON TOUCH EFFECT - Subtle activation (no center particles)
 // ============================================================================
 
 export function PoisonTouchEffect({ onComplete }) {
   const [progress, setProgress] = useState(0);
-  const groupRef = useRef();
-  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 300);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 800);
   
   useFrame((state, delta) => {
     setProgress(prev => {
-      const next = prev + delta * 1.5;
+      const next = prev + delta * 2;
       if (next >= 1) {
         if (!finishing) triggerFinish();
       }
       return Math.min(next, 1);
     });
-    
-    if (groupRef.current) {
-      groupRef.current.rotation.y = state.clock.elapsedTime * 2;
-    }
   });
   
   if (completed) return null;
 
-  return (
-    <group ref={groupRef}>
-      {/* Poison splash particles - green toxic effect */}
-      {[...Array(24)].map((_, i) => {
-        const angle = (i / 24) * Math.PI * 2;
-        const dist = progress * 2.5;
-        const height = Math.sin(progress * Math.PI) * 1.5;
-        
-        return (
-          <mesh
-            key={i}
-            position={[
-              Math.cos(angle) * dist,
-              0.2 + height * (0.5 + Math.random() * 0.5),
-              Math.sin(angle) * dist
-            ]}
-          >
-            <sphereGeometry args={[0.06 * (1 - progress * 0.5), 8, 8]} />
-            <meshStandardMaterial
-              emissive="#76ff03"
-              emissiveIntensity={3 * (1 - progress)}
-              color="#b2ff59"
-              transparent
-              depthWrite={false}
-              opacity={(1 - progress) * 0.8}
-            />
-          </mesh>
-        );
-      })}
-      
-      {/* Toxic mist expanding outward */}
-      <mesh position={[0, 0.3, 0]} scale={[progress * 3, progress * 0.5, progress * 3]}>
-        <cylinderGeometry args={[1, 1.2, 0.3, 16, 1, true]} />
-        <meshStandardMaterial
-          emissive="#64dd17"
-          emissiveIntensity={2 * (1 - progress)}
-          color="#76ff03"
-          transparent
-          depthWrite={false}
-          opacity={(1 - progress) * 0.3}
-        />
-      </mesh>
-    </group>
-  );
+  // Just a subtle green pulse - no center explosion
+  return null; // Visual feedback happens when pieces are poisoned after capture
 }
 
 // ============================================================================
@@ -1507,6 +1498,66 @@ export function VisionEffect({ onComplete }) {
   }, [onComplete]);
 
   return null;
+}
+
+// Berserker Rage Effect - violent crimson burst at capture location
+export function BerserkerRageEffect({ square, onComplete }) {
+  const [progress, setProgress] = useState(0);
+  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  const groupRef = useRef();
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 350);
+
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 1.8;
+      if (next >= 1 && !finishing) triggerFinish();
+      return Math.min(next, 1);
+    });
+
+    if (groupRef.current) {
+      groupRef.current.rotation.y += delta * 3.5;
+    }
+  });
+
+  if (completed) return null;
+
+  const opacity = (1 - progress) * (1 - finishT);
+  const ringScale = 0.5 + progress * 1.8;
+
+  return (
+    <group position={[x, 0.05, z]} ref={groupRef}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[ringScale, ringScale, 1]}>
+        <ringGeometry args={[0.25, 0.45, 40]} />
+        <meshStandardMaterial
+          emissive="#ff1744"
+          emissiveIntensity={3.2 * opacity}
+          color="#ff5252"
+          transparent
+          depthWrite={false}
+          opacity={0.75 * opacity}
+        />
+      </mesh>
+
+      {[...Array(10)].map((_, i) => {
+        const angle = (i / 10) * Math.PI * 2;
+        const dist = 0.2 + progress * 1.0;
+        const y = 0.15 + progress * 0.45;
+        return (
+          <mesh key={i} position={[Math.cos(angle) * dist, y, Math.sin(angle) * dist]}>
+            <sphereGeometry args={[0.035, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#ff6f00"
+              emissiveIntensity={4 * opacity}
+              color="#ffab40"
+              transparent
+              depthWrite={false}
+              opacity={0.85 * opacity}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
 }
 
 // ============================================================================

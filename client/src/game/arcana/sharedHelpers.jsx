@@ -9,7 +9,11 @@ import { Vector3, Color } from 'three';
  * @returns {[number, number, number]} - [x, y, z] position
  */
 export function squareToPosition(square) {
-  if (!square || square.length < 2) return [0, 0, 0];
+  // Robust validation: ensure square is a string with at least 2 characters
+  if (!square || typeof square !== 'string' || square.length < 2) {
+    console.warn('[squareToPosition] Invalid square:', square);
+    return [0, 0, 0];
+  }
   
   const file = square.charCodeAt(0) - 97; // 'a' = 0, 'h' = 7
   const rank = 8 - parseInt(square[1]);    // '8' = 0, '1' = 7

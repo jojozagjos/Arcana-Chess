@@ -64,6 +64,7 @@ app.post('/api/test-card', (req, res) => {
       capturedByColor: { w: [], b: [] },
       activeEffects: clientActiveEffects || {
         ironFortress: { w: false, b: false },
+        ironFortressShields: { w: [], b: [] },
         bishopsBlessing: { w: null, b: null },
         timeFrozen: { w: false, b: false },
         cursedSquares: [],
@@ -320,6 +321,7 @@ io.on('connection', (socket) => {
         pawnShields: { w: null, b: null },
         activeEffects: {
           ironFortress: { w: false, b: false },
+          ironFortressShields: { w: [], b: [] },
           bishopsBlessing: { w: null, b: null },
           timeFrozen: { w: false, b: false },
           cursedSquares: [],

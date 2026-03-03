@@ -17,12 +17,23 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
   const noTargetCards = [
     'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
     'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
-    'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning', 'necromancy',
+    'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning',
     'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
-    'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress'
+    'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress',
+    'castle_breaker'
   ];
 
   if (noTargetCards.includes(arcanaId)) {
+    return { ok: true };
+  }
+  
+  // Necromancy: requires captured pawns to revive
+  if (arcanaId === 'necromancy') {
+    const captured = gameState?.capturedByColor?.[moverColor] || [];
+    const capturedPawns = captured.filter(p => p.type === 'p');
+    if (capturedPawns.length === 0) {
+      return { ok: false, reason: 'No captured pawns available to revive' };
+    }
     return { ok: true };
   }
 
@@ -83,6 +94,45 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     }
     if (piece.color === moverColor) {
       return { ok: false, reason: 'Cannot mind control your own pieces' };
+    }
+    return { ok: true };
+  }
+  
+  // Metamorphosis: must target own piece (not king/queen)
+  if (arcanaId === 'metamorphosis') {
+    if (!piece || piece.color !== moverColor) {
+      return { ok: false, reason: 'Metamorphosis must target your own piece' };
+    }
+    if (piece.type === 'k' || piece.type === 'q') {
+      return { ok: false, reason: 'Cannot transform king or queen' };
+    }
+    if (!params?.newType) {
+      return { ok: false, reason: 'Must specify newType for transformation' };
+    }
+    if (params.newType === 'k' || params.newType === 'q') {
+      return { ok: false, reason: 'Cannot transform into king or queen' };
+    }
+    return { ok: true };
+  }
+  
+  // Mirror Image: must target own piece (not king)
+  if (arcanaId === 'mirror_image') {
+    if (!piece || piece.color !== moverColor) {
+      return { ok: false, reason: 'Mirror Image must target your own piece' };
+    }
+    if (piece.type === 'k') {
+      return { ok: false, reason: 'Cannot duplicate king' };
+    }
+    return { ok: true };
+  }
+  
+  // Royal Swap: must target own pawn
+  if (arcanaId === 'royal_swap') {
+    if (!piece || piece.color !== moverColor) {
+      return { ok: false, reason: 'Royal Swap must target your own piece' };
+    }
+    if (piece.type !== 'p') {
+      return { ok: false, reason: 'Royal Swap can only swap with a pawn' };
     }
     return { ok: true };
   }
@@ -399,10 +449,29 @@ function applyPawnGuard({ chess, gameState, moverColor, params }) {
   return null;
 }
 
-function applyIronFortress({ gameState, moverColor }) {
+function applyIronFortress({ chess, gameState, moverColor }) {
   if (moverColor) {
     gameState.activeEffects.ironFortress[moverColor] = true;
-    return { params: { color: moverColor } };
+    
+    // Find all pawn positions for this color and store them for shield visuals
+    const pawnSquares = [];
+    const board = chess.board();
+    for (let r = 0; r < 8; r++) {
+      for (let f = 0; f < 8; f++) {
+        const piece = board[r][f];
+        if (piece && piece.type === 'p' && piece.color === moverColor) {
+          pawnSquares.push('abcdefgh'[f] + (8 - r));
+        }
+      }
+    }
+    
+    // Initialize ironFortressShields if needed
+    if (!gameState.activeEffects.ironFortressShields) {
+      gameState.activeEffects.ironFortressShields = { w: [], b: [] };
+    }
+    gameState.activeEffects.ironFortressShields[moverColor] = pawnSquares;
+    
+    return { params: { color: moverColor, pawnSquares } };
   }
   return null;
 }
@@ -591,7 +660,7 @@ export function applyPoisonAfterCapture(chess, captureSquare, moverColor, gameSt
     const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)];
     gameState.activeEffects.poisonedPieces.push({
       square: randomTarget,
-      turnsLeft: 6,
+      turnsLeft: 12,
       poisonedBy: moverColor
     });
     return [randomTarget];
@@ -1061,7 +1130,7 @@ function applyCursedSquare({ gameState, moverColor, params }) {
   if (params?.targetSquare) {
     gameState.activeEffects.cursedSquares.push({
       square: params.targetSquare,
-      turns: 2,  // Lasts for 2 turns
+      turns: 3,  // Lasts for 2 full turns (3 because it decrements immediately)
       setter: moverColor,
     });
     return { params: { square: params.targetSquare } };
@@ -1216,6 +1285,14 @@ function canPieceTypeAttack(pieceType, fromSquare, toSquare) {
  */
 function revivePawns(gameState, moverColor, maxCount) {
   const chess = gameState.chess;
+  // Check captured pawns first - only revive if we have captured pawns
+  const captured = gameState.capturedByColor?.[moverColor] || [];
+  const capturedPawns = captured.filter(p => p.type === 'p');
+  
+  if (capturedPawns.length === 0) {
+    return []; // No captured pawns to revive
+  }
+  
   // Pawns should be placed on their starting rank (2 for white, 7 for black),
   // NOT on the back rank (1/8) where they'd be immovable.
   const pawnStartRank = moverColor === 'w' ? '2' : '7';
@@ -1230,11 +1307,14 @@ function revivePawns(gameState, moverColor, maxCount) {
     }
   }
   
-  // Revive up to maxCount pawns
-  const count = Math.min(maxCount, emptySquares.length);
+  // Revive up to maxCount pawns or available captured pawns (whichever is smaller)
+  const count = Math.min(maxCount, emptySquares.length, capturedPawns.length);
   for (let i = 0; i < count; i++) {
     chess.put({ type: 'p', color: moverColor }, emptySquares[i]);
     revived.push(emptySquares[i]);
+    // Remove from captured list
+    const idx = captured.findIndex(p => p.type === 'p');
+    if (idx !== -1) captured.splice(idx, 1);
   }
   
   return revived;

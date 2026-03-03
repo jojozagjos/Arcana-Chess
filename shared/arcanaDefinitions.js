@@ -174,7 +174,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Poison Touch',
     rarity: 'uncommon',
     category: 'offense',
-    description: 'When you capture a piece, poison a random adjacent enemy piece. Poisoned pieces die after 3 turns if not healed with Antidote.',
+    description: 'When you capture a piece, poison a random adjacent enemy piece. Poisoned pieces die after 6 turns if not healed with Antidote.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:poison_touch',
   },

@@ -19,6 +19,25 @@ import { getRarityColor, getLogColor } from '../game/arcanaHelpers.js';
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import * as THREE from 'three';
 
+// Helper to get adjacent squares (for poison touch)
+function getAdjacentSquares(square) {
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1]);
+  const adjacent = [];
+  
+  for (let df = -1; df <= 1; df++) {
+    for (let dr = -1; dr <= 1; dr++) {
+      if (df === 0 && dr === 0) continue;
+      const newFile = file + df;
+      const newRank = rank + dr;
+      if (newFile >= 0 && newFile < 8 && newRank >= 1 && newRank <= 8) {
+        adjacent.push(`${String.fromCharCode(97 + newFile)}${newRank}`);
+      }
+    }
+  }
+  return adjacent;
+}
+
 // Parse FEN into piece descriptors used by the balancing tool renderer
 function parseFenPieces(fenStr) {
   if (!fenStr) return [];
@@ -67,6 +86,7 @@ export function CardBalancingToolV2({ onBack }) {
   // Initialize activeEffects with complete structure matching server gameState
   const [activeEffects, setActiveEffects] = useState({
     ironFortress: { w: false, b: false },
+    ironFortressShields: { w: [], b: [] },
     bishopsBlessing: { w: null, b: null },
     timeFrozen: { w: false, b: false },
     cursedSquares: [],
@@ -75,6 +95,7 @@ export function CardBalancingToolV2({ onBack }) {
     vision: { w: null, b: null },
     doubleStrike: { w: false, b: false },
     doubleStrikeActive: null,
+    berserkerRageActive: null,
     poisonTouch: { w: false, b: false },
     poisonedPieces: [],
     squireSupport: [],
@@ -210,6 +231,7 @@ export function CardBalancingToolV2({ onBack }) {
     setShieldTurnCounter({ w: 0, b: 0 });
     setActiveEffects({
       ironFortress: { w: false, b: false },
+      ironFortressShields: { w: [], b: [] },
       bishopsBlessing: { w: null, b: null },
       timeFrozen: { w: false, b: false },
       cursedSquares: [],
@@ -218,6 +240,7 @@ export function CardBalancingToolV2({ onBack }) {
       vision: { w: null, b: null },
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null,
+      berserkerRageActive: null,
       poisonTouch: { w: false, b: false },
       poisonedPieces: [],
       squireSupport: [],
@@ -391,7 +414,7 @@ export function CardBalancingToolV2({ onBack }) {
     }
   };
 
-  // Server-validated card application - ensures 1:1 game behavior
+  // Server-validated card application - ensures 1:1 game behavior with fallback to client simulation
   const applyCardEffectWithServer = async (card, params, colorChar) => {
     setServerTestActive(true);
     addLog(`Applying ${card.name} via server...`, 'info');
@@ -408,16 +431,22 @@ export function CardBalancingToolV2({ onBack }) {
       };
       if (lastMove) payload.moveResult = lastMove;
 
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+
       const resp = await fetch('/api/test-card', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       const json = await resp.json();
       setServerTestActive(false);
 
       if (json.ok) {
-        addLog(`✓ ${card.name} applied successfully`, 'success');
+        addLog(`✓ ${card.name} applied successfully (server)`, 'success');
         setValidationChecklist(prev => ({ ...prev, server: true, logic: true }));
         
         // Apply server-validated state updates
@@ -488,7 +517,12 @@ export function CardBalancingToolV2({ onBack }) {
       }
     } catch (err) {
       setServerTestActive(false);
-      addLog(`Server error: ${err.message}`, 'error');
+      // Server unavailable - fall back to client-side simulation
+      addLog(`⚠ Server unavailable, using client simulation for ${card.name}`, 'warning');
+      setValidationChecklist(prev => ({ ...prev, server: false }));
+      
+      // Fall back to client-side simulation
+      applyCardEffect(card, params, colorChar);
     }
   };
 
@@ -793,7 +827,7 @@ export function CardBalancingToolV2({ onBack }) {
         // Get both standard and arcana-enhanced moves
         const colorChar = playerColor === 'white' ? 'w' : 'b';
         const standardMoves = chess.moves({ square, verbose: true });
-        const arcanaMoves = getArcanaEnhancedMoves(chess, square, colorChar, activeEffects || {});
+        const arcanaMoves = getArcanaEnhancedMoves(chess, square, { activeEffects: activeEffects || {} }, playerColor);
         
         // Merge moves, avoiding duplicates
         const allMoveTargets = new Set(standardMoves.map(m => m.to));
@@ -807,6 +841,20 @@ export function CardBalancingToolV2({ onBack }) {
     } else if (legalTargets.includes(square)) {
       // Make a move - try standard first, then arcana
       const colorChar = playerColor === 'white' ? 'w' : 'b';
+
+      // Berserker Rage restriction: second capture cannot be adjacent to first kill
+      const pendingBerserker = activeEffects?.berserkerRageActive;
+      const targetPieceForValidation = chess.get(square);
+      if (pendingBerserker?.color === colorChar && targetPieceForValidation) {
+        const adjacentToFirstKill = getAdjacentSquares(pendingBerserker.firstKillSquare || '');
+        if (adjacentToFirstKill.includes(square)) {
+          addLog('Berserker Rage: second capture cannot be adjacent to the first kill!', 'error');
+          setSelectedSquare(null);
+          setLegalTargets([]);
+          return;
+        }
+      }
+
       let move = null;
       let capturedPiece = null;
       
@@ -815,7 +863,7 @@ export function CardBalancingToolV2({ onBack }) {
         capturedPiece = move?.captured;
       } catch (standardErr) {
         // If standard move fails, try arcana-enhanced move
-        const arcanaMoves = getArcanaEnhancedMoves(chess, selectedSquare, colorChar, activeEffects || {});
+        const arcanaMoves = getArcanaEnhancedMoves(chess, selectedSquare, { activeEffects: activeEffects || {} }, playerColor);
         const arcanaMove = arcanaMoves.find(m => m.to === square);
         
         if (arcanaMove) {
@@ -858,26 +906,151 @@ export function CardBalancingToolV2({ onBack }) {
           if (!move.arcana) chess.undo();
           return;
         }
+
+        // Squire Support: protected piece survives and attacker bounces back
+        const protectedBySquire = capturedPiece
+          ? (activeEffects?.squireSupport || []).find(s => s.square === move.to)
+          : null;
+        if (protectedBySquire) {
+          const attackerPiece = { type: move.piece, color: move.color };
+          const defendedPiece = { type: capturedPiece, color: opponentColor };
+
+          // Mirror server behavior: attacker returns to source, defender restored to target
+          chess.remove(move.to);
+          chess.put(attackerPiece, move.from);
+          chess.put(defendedPiece, move.to);
+
+          move.squireBounce = { from: move.from, to: move.to };
+          move.captured = null;
+          capturedPiece = null;
+          addLog(`Squire Support: capture bounced back at ${move.to}`, 'info');
+        }
         
         soundManager.play(capturedPiece ? 'capture' : 'move');
-        // If this capture consumed a Focus Fire effect, play its sound now
+
+        // Server-parity local effect resolution for post-move side effects
+        const nextEffects = { ...(activeEffects || {}) };
+        nextEffects.poisonedPieces = [...(nextEffects.poisonedPieces || [])].map(p => ({ ...p }));
+        nextEffects.squireSupport = [...(nextEffects.squireSupport || [])].map(s => ({ ...s }));
+        let activatedBerserkerThisMove = false;
+
+        // Poison tracking follows moved poisoned pieces
+        const movedPoison = nextEffects.poisonedPieces.find(p => p.square === move.from);
+        if (movedPoison) movedPoison.square = move.to;
+
+        // Squire Support tracking follows the protected piece if it moved
+        const movedSquireSupport = nextEffects.squireSupport.find(s => s.square === move.from);
+        if (movedSquireSupport) movedSquireSupport.square = move.to;
+
+        // If a poisoned target was captured, remove that poison entry
+        if (capturedPiece) {
+          nextEffects.poisonedPieces = nextEffects.poisonedPieces.filter(p => p.square !== move.to);
+        }
+
+        // Poison Touch: on capture, poison one random adjacent enemy piece
+        if (capturedPiece && nextEffects?.poisonTouch?.[move.color]) {
+          const adjacentSquares = getAdjacentSquares(move.to);
+          const validTargets = adjacentSquares.filter(sq => {
+            const piece = chess.get(sq);
+            return piece && piece.color === opponentColor;
+          });
+
+          if (validTargets.length > 0) {
+            const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)];
+            nextEffects.poisonedPieces.push({
+              square: randomTarget,
+              turnsLeft: 12,
+              poisonedBy: move.color,
+            });
+            addLog(`Poison Touch: ${randomTarget} has been poisoned!`, 'success');
+            try { soundManager.play('arcana:poison_touch'); } catch {}
+          }
+        }
+
+        // Activate pending Berserker Rage on first capture
+        const pendingBR = nextEffects.berserkerRage?.[move.color];
+        if (capturedPiece && pendingBR?.pending) {
+          nextEffects.berserkerRageActive = {
+            color: move.color,
+            firstKillSquare: move.to,
+          };
+          nextEffects.berserkerRage = { ...(nextEffects.berserkerRage || { w: null, b: null }) };
+          nextEffects.berserkerRage[move.color] = {
+            active: true,
+            firstKillSquare: move.to,
+            usedSecondKill: false,
+          };
+          activatedBerserkerThisMove = true;
+          addLog('Berserker Rage activated: extra move available', 'success');
+        }
+
+        // Berserker visual at capture square (activation + follow-up capture)
+        if (capturedPiece && (pendingBR?.pending || nextEffects?.berserkerRageActive?.color === move.color)) {
+          setActiveVisualArcana({ arcanaId: 'berserker_rage', params: { square: move.to } });
+          const duration = getArcanaEffectDuration('berserker_rage') || 1500;
+          setTimeout(() => setActiveVisualArcana(null), duration);
+        }
+
+        // Focus Fire: consume on capture (server parity)
         try {
           const moverColor = move.color;
-          if (capturedPiece && activeEffects?.focusFire && activeEffects.focusFire[moverColor]) {
-            // Play focus fire arcana sound and mark as used locally for the balancing tool
+          if (capturedPiece && nextEffects?.focusFire?.[moverColor]) {
             soundManager.play('arcana:focus_fire');
             setValidationChecklist(prev => ({ ...prev, sound: true }));
-            // Clear local activeEffects for focusFire to reflect consumption
-            setActiveEffects(prev => {
-              const next = { ...(prev || {}) };
-              next.focusFire = { ...(next.focusFire || {}) };
-              next.focusFire[moverColor] = false;
-              return next;
-            });
+            nextEffects.focusFire = { ...(nextEffects.focusFire || {}) };
+            nextEffects.focusFire[moverColor] = false;
           }
         } catch (e) {
           addLog(`Sound error: ${e.message}`, 'warning');
         }
+
+        // Decrement poisoned pieces and kill those at 0 turns (server parity)
+        const survivors = [];
+        for (const poisoned of nextEffects.poisonedPieces) {
+          const updatedPoison = { ...poisoned, turnsLeft: poisoned.turnsLeft - 1 };
+          if (updatedPoison.turnsLeft === 0) {
+            const piece = chess.get(poisoned.square);
+            if (piece && piece.type !== 'k') {
+              chess.remove(poisoned.square);
+              addLog(`${poisoned.square} died from poison!`, 'warning');
+              try { soundManager.play('capture'); } catch {}
+            }
+          } else {
+            survivors.push(updatedPoison);
+            if (updatedPoison.turnsLeft <= 2) {
+              const turnsRemaining = Math.ceil(updatedPoison.turnsLeft / 2);
+              addLog(`${poisoned.square} has ${turnsRemaining} turn${turnsRemaining === 1 ? '' : 's'} left before dying!`, 'warning');
+            }
+          }
+        }
+        nextEffects.poisonedPieces = survivors;
+
+        // Decrement squire support duration
+        nextEffects.squireSupport = nextEffects.squireSupport.filter(s => {
+          s.turnsLeft = (s.turnsLeft || 0) - 1;
+          return s.turnsLeft > 0;
+        });
+
+        // Clear one-turn movement/offense effects after move (server parity end-turn behavior)
+        nextEffects.poisonTouch = { w: false, b: false };
+        nextEffects.spectralMarch = { w: false, b: false };
+        nextEffects.phantomStep = { w: false, b: false };
+        nextEffects.pawnRush = { w: false, b: false };
+        nextEffects.sharpshooter = { w: false, b: false };
+        nextEffects.enPassantMaster = { w: false, b: false };
+        nextEffects.temporalEcho = null;
+        nextEffects.doubleStrike = { w: null, b: null };
+        nextEffects.knightOfStorms = { w: null, b: null };
+        nextEffects.chainLightning = { w: false, b: false };
+
+        // Consume active Berserker Rage after follow-up move (server parity behavior)
+        if (!activatedBerserkerThisMove && nextEffects?.berserkerRageActive?.color === move.color && !move.promotion) {
+          nextEffects.berserkerRageActive = null;
+          nextEffects.berserkerRage = { ...(nextEffects.berserkerRage || { w: null, b: null }) };
+          nextEffects.berserkerRage[move.color] = null;
+        }
+
+        setActiveEffects(nextEffects);
         const moveWithFen = { ...move, fen: chess.fen() };
         setMoveHistory(prev => [...prev, moveWithFen]);
         setLastMove(moveWithFen); // Track lastMove for cards like temporal_echo
@@ -912,6 +1085,10 @@ export function CardBalancingToolV2({ onBack }) {
           }
         }
         
+        // Sync board after all post-move effects (including poison deaths)
+        setChess(new Chess(chess.fen()));
+        setFen(chess.fen());
+        
         setSelectedSquare(null);
         setLegalTargets([]);
       }
@@ -924,7 +1101,7 @@ export function CardBalancingToolV2({ onBack }) {
         // Get both standard and arcana-enhanced moves
         const colorChar = playerColor === 'white' ? 'w' : 'b';
         const standardMoves = chess.moves({ square, verbose: true });
-        const arcanaMoves = getArcanaEnhancedMoves(chess, square, colorChar, activeEffects || {});
+        const arcanaMoves = getArcanaEnhancedMoves(chess, square, { activeEffects: activeEffects || {} }, playerColor);
         
         const allMoveTargets = new Set(standardMoves.map(m => m.to));
         arcanaMoves.forEach(m => allMoveTargets.add(m.to));
@@ -1044,6 +1221,21 @@ export function CardBalancingToolV2({ onBack }) {
         <button style={styles.backButton} onClick={onBack}>← Back</button>
         <div>
           <h2 style={styles.title}>Card Balancing & Testing Tool V2</h2>
+          <div style={{
+            fontSize: 11,
+            color: validationChecklist.server ? '#00ff88' : '#ff8800',
+            marginTop: 4,
+            padding: '4px 8px',
+            background: validationChecklist.server ? 'rgba(0,255,136,0.08)' : 'rgba(255,136,0,0.08)',
+            borderRadius: 4,
+            border: `1px solid ${validationChecklist.server ? 'rgba(0,255,136,0.2)' : 'rgba(255,136,0,0.2)'}`,
+            textAlign: 'center'
+          }}>
+            {validationChecklist.server 
+              ? '✓ Using server validation (100% accurate to in-game behavior)'
+              : '⚠ Using client simulation (server not running - start server with "npm run dev" for accurate testing)'
+            }
+          </div>
         </div>
         <button
           style={{ ...styles.button, background: multiplayerMode ? '#4c6fff' : '#333' }}
@@ -1258,14 +1450,14 @@ export function CardBalancingToolV2({ onBack }) {
               </button>
               <span style={{ 
                 fontSize: 10, 
-                color: '#00ff88', 
+                color: validationChecklist.server ? '#00ff88' : '#ff8800', 
                 fontWeight: 'bold', 
-                background: 'rgba(0,255,136,0.1)', 
+                background: validationChecklist.server ? 'rgba(0,255,136,0.1)' : 'rgba(255,136,0,0.1)', 
                 padding: '2px 6px', 
                 borderRadius: 4,
-                border: '1px solid rgba(0,255,136,0.3)'
+                border: validationChecklist.server ? '1px solid rgba(0,255,136,0.3)' : '1px solid rgba(255,136,0,0.3)'
               }}>
-                SERVER VALIDATED
+                {validationChecklist.server ? '✓ SERVER VALIDATED' : '⚠ CLIENT SIMULATION'}
               </span>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

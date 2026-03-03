@@ -13,6 +13,7 @@ function createMockGameState(fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR 
     chess,
     activeEffects: {
       ironFortress: { w: false, b: false },
+      ironFortressShields: { w: [], b: [] },
       bishopsBlessing: { w: null, b: null },
       timeFrozen: { w: false, b: false },
       cursedSquares: [],
@@ -457,10 +458,10 @@ test('Focus Fire increases capture damage', () => {
 test('Poison Touch marks piece for delayed death', () => {
   const gameState = createMockGameState();
   gameState.activeEffects.poisonedPieces = [];
-  gameState.activeEffects.poisonedPieces.push({ square: 'e4', turnsRemaining: 3, color: 'b' });
+  gameState.activeEffects.poisonedPieces.push({ square: 'e4', turnsLeft: 12, poisonedBy: 'w' });
   
   assert(gameState.activeEffects.poisonedPieces.length === 1, 'Poisoned piece should be tracked');
-  assert(gameState.activeEffects.poisonedPieces[0].turnsRemaining === 3, 'Poison should have 3 turns');
+  assert(gameState.activeEffects.poisonedPieces[0].turnsLeft === 12, 'Poison should have 6 turns (12 plies)');
 });
 
 test('Sharpshooter bishop captures through blockers', () => {
@@ -633,7 +634,7 @@ test('En Passant Master allows adjacent pawn capture', () => {
 test('Antidote removes poison effect', () => {
   const gameState = createMockGameState();
   gameState.activeEffects.poisonedPieces = [
-    { square: 'e4', turnsRemaining: 2, color: 'b' }
+    { square: 'e4', turnsLeft: 4, poisonedBy: 'w' }
   ];
   
   // Remove poison

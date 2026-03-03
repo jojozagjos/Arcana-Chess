@@ -113,6 +113,7 @@ export function getTargetTypeForArcana(arcanaId) {
     time_freeze: null,
     divine_intervention: null,
     iron_fortress: null,
+    ironFortressShields: { w: [], b: [] },
     focus_fire: null,
     double_strike: null,
     berserker_rage: null,
@@ -439,6 +440,24 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
       case 'iron_fortress':
         gameState.activeEffects.ironFortress = gameState.activeEffects.ironFortress || { w: false, b: false };
         gameState.activeEffects.ironFortress[colorChar] = true;
+        
+        // Find all pawn positions for shield visuals
+        const pawnSquares = [];
+        const board = chess.board();
+        for (let r = 0; r < 8; r++) {
+          for (let f = 0; f < 8; f++) {
+            const piece = board[r][f];
+            if (piece && piece.type === 'p' && piece.color === colorChar) {
+              pawnSquares.push('abcdefgh'[f] + (8 - r));
+            }
+          }
+        }
+        
+        if (!gameState.activeEffects.ironFortressShields) {
+          gameState.activeEffects.ironFortressShields = { w: [], b: [] };
+        }
+        gameState.activeEffects.ironFortressShields[colorChar] = pawnSquares;
+        
         result.success = true;
         result.message = 'Iron Fortress: All your pawns are protected for 1 enemy turn';
         result.visualEffect = 'iron_fortress';
