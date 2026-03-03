@@ -1419,11 +1419,11 @@ export function TimeTravelEffect({ onComplete }) {
             <boxGeometry args={[0.1, 0.15, 0.1]} />
             <meshStandardMaterial
               emissive="#1e88e5"
-              emissiveIntensity={1.8 * (1 - trailProgress)}
+              emissiveIntensity={1.8 * (1 - trailProgress) * (1 - finishT)}
               color="#42a5f5"
               transparent
               depthWrite={false}
-              opacity={(1 - trailProgress * 0.8) * 0.6 * (afterimageIndex / 8)} // Fade each afterimage layer
+              opacity={(1 - trailProgress * 0.8) * 0.6 * (afterimageIndex / 8) * (1 - finishT)} // Fade each afterimage layer + smooth finish fade
             />
           </mesh>
         );
@@ -1434,7 +1434,7 @@ export function TimeTravelEffect({ onComplete }) {
         <ringGeometry args={[2 * progress, 2.5 * progress, 48]} />
         <meshStandardMaterial
           emissive="#2196f3"
-          emissiveIntensity={2 * (1 - progress * 0.5)}
+          emissiveIntensity={2 * (1 - progress * 0.5) * (1 - finishT)}
           color="#64b5f6"
           transparent
           depthWrite={false}
@@ -1447,7 +1447,7 @@ export function TimeTravelEffect({ onComplete }) {
         <icosahedronGeometry args={[3 * progress, 2]} />
         <meshStandardMaterial
           emissive="#0d47a1"
-          emissiveIntensity={1.2 * (1 - progress * 0.6)}
+          emissiveIntensity={1.2 * (1 - progress * 0.6) * (1 - finishT)}
           color="#1565c0"
           transparent
           opacity={(1 - progress * 0.8) * 0.3 * (1 - finishT)}

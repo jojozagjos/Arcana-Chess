@@ -125,6 +125,11 @@ app.post('/api/test-card', (req, res) => {
 
     const card = ARCANA_DEFINITIONS.find(c => c.id === cardId) || null;
 
+    // Only mark as success if the card was actually applied
+    if (applied.length === 0) {
+      return res.json({ ok: false, error: `${cardId} could not be applied - validation failed or prerequisites not met` });
+    }
+
     res.json({ ok: true, card, applied, beforeState, afterState, params });
   } catch (err) {
     res.json({ ok: false, error: err.message });

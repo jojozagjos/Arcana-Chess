@@ -8,7 +8,7 @@ import { effectResourcePool } from '../game/effectResourcePool.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
-import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares } from '../game/arcana/arcanaSimulation.js';
+import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares, canUseCard } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
@@ -315,7 +315,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     setActiveVisualArcana(lastArcanaEvent);
     
     // Check if this arcana has cutscene enabled and a target square
-    const cutsceneCards = ['execution', 'divine_intervention', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
+    // Note: divine_intervention is excluded because it only triggers when check actually happens, not when activated
+    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
     let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
     
     if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
@@ -1399,7 +1400,24 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
               setTargetingMode({ arcanaId, targetType, params: {}, targetSelected: false, validSquares });
               setSelectedArcanaId(null); // Don't select until target is chosen
             } else {
-              // No targeting needed, activate immediately (guard against double-click)
+              // No targeting needed, but validate the card can be used
+              const gameStateForUsability = {
+                activeEffects: gameState?.activeEffects || {},
+                capturedByColor: gameState?.capturedByColor || {}
+              };
+              
+              if (!canUseCard(arcanaId, gameStateForUsability, myColorCode)) {
+                let errorMsg = `Cannot use this card`;
+                if (arcanaId === 'necromancy') {
+                  errorMsg = 'No captured pawns to revive';
+                } else if (arcanaId === 'astral_rebirth') {
+                  errorMsg = 'No captured pieces to revive';
+                }
+                setPendingMoveError(errorMsg);
+                return;
+              }
+              
+              // Activate immediately (guard against double-click)
               if (pendingActionRef.current) return;
               pendingActionRef.current = true;
               usedArcanaThisTurnRef.current = true;

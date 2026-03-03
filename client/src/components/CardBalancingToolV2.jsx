@@ -8,7 +8,7 @@ import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
-import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget, getValidTargetSquares, getTargetTypeForArcana } from '../game/arcana/arcanaSimulation.js';
+import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget, getValidTargetSquares, getTargetTypeForArcana, canUseCard } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
@@ -410,8 +410,25 @@ export function CardBalancingToolV2({ onBack }) {
       
       addLog(`Select a ${targetDescription} for ${selectedCard.name} (${validSquares.length} valid targets highlighted)`, 'info');
     } else {
-      // Apply immediately for cards that don't need targets - use server validation
+      // For cards that don't need targets, check if they can be used
       const colorChar = playerColor === 'white' ? 'w' : 'b';
+      const gameStateForUsability = {
+        activeEffects: activeEffects || {},
+        pawnShields,
+        capturedByColor
+      };
+      
+      if (!canUseCard(selectedCard.id, gameStateForUsability, colorChar)) {
+        let errorMsg = `Cannot use ${selectedCard.name}`;
+        if (selectedCard.id === 'necromancy') {
+          errorMsg = 'No captured pawns to revive';
+        } else if (selectedCard.id === 'astral_rebirth') {
+          errorMsg = 'No captured pieces to revive';
+        }
+        addLog(errorMsg, 'error');
+        return;
+      }
+      
       await applyCardEffectWithServer(selectedCard, {}, colorChar);
     }
   };

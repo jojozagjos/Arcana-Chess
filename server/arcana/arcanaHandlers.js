@@ -18,7 +18,7 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
     'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
     'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning',
-    'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
+    'necromancy', 'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
     'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress',
     'castle_breaker'
   ];
@@ -31,25 +31,24 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
         return { ok: false, reason: 'Temporal Echo requires a previous move to echo' };
       }
     }
-    return { ok: true };
-  }
-  
-  // Necromancy: requires captured pawns to revive
-  if (arcanaId === 'necromancy') {
-    const captured = gameState?.capturedByColor?.[moverColor] || [];
-    const capturedPawns = captured.filter(p => p.type === 'p');
-    if (capturedPawns.length === 0) {
-      return { ok: false, reason: 'No captured pawns available to revive' };
+    
+    // Necromancy: requires captured pawns to revive
+    if (arcanaId === 'necromancy') {
+      const captured = gameState?.capturedByColor?.[moverColor] || [];
+      const capturedPawns = captured.filter(p => p.type === 'p');
+      if (capturedPawns.length === 0) {
+        return { ok: false, reason: 'No captured pawns available to revive' };
+      }
     }
-    return { ok: true };
-  }
-
-  // Astral Rebirth: requires captured pieces to revive
-  if (arcanaId === 'astral_rebirth') {
-    const captured = gameState?.capturedByColor?.[moverColor] || [];
-    if (captured.length === 0) {
-      return { ok: false, reason: 'No captured pieces available to revive' };
+    
+    // Astral Rebirth: requires captured pieces to revive
+    if (arcanaId === 'astral_rebirth') {
+      const captured = gameState?.capturedByColor?.[moverColor] || [];
+      if (captured.length === 0) {
+        return { ok: false, reason: 'No captured pieces available to revive' };
+      }
     }
+    
     return { ok: true };
   }
 
@@ -215,9 +214,13 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       io,
     });
 
-    if (result) {
-      params = result.params || params;
+    // Only mark as used and notify players if the effect was successfully applied
+    if (!result) {
+      console.warn(`Arcana ${def.id} failed to apply (returned null)`);
+      continue; // Skip this arcana if it failed to apply
     }
+
+    params = result.params || params;
 
     // Mark as used. Prefer canonical instanceId when available, otherwise mark by index.
     if (def.instanceId !== undefined && def.instanceId !== null) {
@@ -228,6 +231,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     appliedDefs.push({ def, params });
 
     // Notify players; send full params only to the owner to avoid leaking private info
+    // Exception: For cutscene cards, include square info so all players can see camera focus correctly
     if (io) {
       const ownerPayload = {
         gameId: gameState.id,
@@ -237,11 +241,24 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
         soundKey: def.soundKey,
         visual: def.visual,
       };
+      
+      // For cutscene cards, include the square info even in redacted payload
+      const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
+      let redactedParams = null;
+      if (cutsceneCards.includes(def.id) && params) {
+        // Extract just the square info for cutscene camera focus
+        redactedParams = {
+          square: params.square || params.targetSquare || null,
+          kingTo: params.kingTo || null,
+          rebornSquare: params.rebornSquare || null,
+        };
+      }
+      
       const redactedPayload = {
         gameId: gameState.id,
         arcanaId: def.id,
         owner: socketId,
-        params: null,
+        params: redactedParams,
         soundKey: def.soundKey,
         visual: def.visual,
       };
@@ -805,7 +822,7 @@ function applyAstralRebirth({ gameState, moverColor }) {
   if (moverColor) {
     const rebornSquare = astralRebirthEffect(gameState, moverColor);
     if (rebornSquare) {
-      return { params: { square: rebornSquare, color: moverColor } };
+      return { params: { square: rebornSquare, rebornSquare, color: moverColor } };
     }
   }
   return null;
@@ -1230,7 +1247,8 @@ function applyCursedSquare({ gameState, moverColor, params }) {
 
 function applyTimeTravel({ gameState }) {
   const undone = undoMoves(gameState, 2);
-  return { params: { undone } };
+  // Use center of board as camera focus point for full board view
+  return { params: { square: 'e4', undone } };
 }
 
 function applyChaosTheory({ chess }) {
@@ -1320,7 +1338,7 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   // DO NOT flip the piece color - this was the bug
   // Leave piece as-is on the board
 
-  return { params: { targetSquare, color: moverColor, originalColor: targetPiece.color } };
+  return { params: { square: targetSquare, targetSquare, color: moverColor, originalColor: targetPiece.color } };
 }
 
 // ============ HELPER FUNCTIONS ============
@@ -1415,37 +1433,70 @@ function revivePawns(gameState, moverColor, maxCount) {
  * Astral rebirth effect - resurrect one captured piece onto back rank
  */
 function astralRebirthEffect(gameState, moverColor) {
-  const chess = gameState.chess;
-  const backRank = moverColor === 'w' ? '1' : '8';
+  if (!moverColor) return null;
   
-  // Look for a captured piece to resurrect (prefer higher-value pieces)
+  const chess = gameState.chess;
+  if (!chess) return null;
+  
+  const backRank = moverColor === 'w' ? '1' : '8';
+  const secondRank = moverColor === 'w' ? '2' : '7';
+  
+  // Look for captured pieces to resurrect (prefer higher-value pieces)
   const captured = gameState.capturedByColor?.[moverColor] || [];
+  if (!Array.isArray(captured) || captured.length === 0) return null;
+  
   const pieceValue = { q: 5, r: 4, b: 3, n: 2, p: 1 };
-  // Sort by value descending to resurrect the best piece
+  // Sort by value descending to resurrect the best pieces
   const sortedCaptured = [...captured].sort((a, b) => (pieceValue[b.type] || 0) - (pieceValue[a.type] || 0));
   
-  // Find an empty square on back rank
-  for (let file = 0; file < 8; file++) {
-    const square = 'abcdefgh'[file] + backRank;
-    if (!chess.get(square)) {
-      // Determine piece type: use actual captured piece if available, else default to knight
-      let pieceType = 'n';
-      if (sortedCaptured.length > 0) {
-        const resurrected = sortedCaptured[0];
-        pieceType = resurrected.type;
+  const revivedSquares = [];
+  const maxRevive = Math.min(2, sortedCaptured.length); // Revive up to 2 pieces
+  
+  // Try to revive up to 2 pieces
+  for (let attempt = 0; attempt < maxRevive; attempt++) {
+    if (attempt >= sortedCaptured.length) break;
+    
+    const toRevive = sortedCaptured[attempt];
+    if (!toRevive || !toRevive.type) continue; // Skip if invalid
+    
+    let pieceType = toRevive.type;
+    
+    // Don't place pawns on back rank - they'd be immovable. Use knight instead.
+    if (pieceType === 'p') pieceType = 'n';
+    
+    // Try back rank first
+    let placed = false;
+    for (let file = 0; file < 8; file++) {
+      const square = 'abcdefgh'[file] + backRank;
+      if (!chess.get(square)) {
+        chess.put({ type: pieceType, color: moverColor }, square);
+        revivedSquares.push(square);
         // Remove from captured list since it's been revived
-        const idx = captured.findIndex(p => p.type === pieceType);
+        const idx = captured.findIndex(p => p && p.type === toRevive.type);
         if (idx !== -1) captured.splice(idx, 1);
+        placed = true;
+        break;
       }
-      // Don't place pawns on back rank - they'd be immovable. Use knight instead.
-      if (pieceType === 'p') pieceType = 'n';
-      
-      chess.put({ type: pieceType, color: moverColor }, square);
-      return square;
+    }
+    
+    // If back rank is full, try second rank
+    if (!placed) {
+      for (let file = 0; file < 8; file++) {
+        const square = 'abcdefgh'[file] + secondRank;
+        if (!chess.get(square)) {
+          chess.put({ type: pieceType, color: moverColor }, square);
+          revivedSquares.push(square);
+          // Remove from captured list since it's been revived
+          const idx = captured.findIndex(p => p && p.type === toRevive.type);
+          if (idx !== -1) captured.splice(idx, 1);
+          break;
+        }
+      }
     }
   }
   
-  return null; // No empty square found
+  // Return first square for camera focus, or null if none were revived
+  return revivedSquares.length > 0 ? revivedSquares[0] : null;
 }
 
 /**

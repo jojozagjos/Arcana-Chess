@@ -277,7 +277,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Astral Rebirth',
     rarity: 'legendary',
     category: 'resurrection',
-    description: 'Select a captured piece to resurrect back onto your back rank with astral energy and a golden glow.',
+    description: 'Resurrect up to 2 captured pieces back onto your back rank with astral energy. Higher-value pieces are revived first.',
     visual: { particles: true, animation: true, cutscene: true },
     soundKey: 'arcana:astral_rebirth',
     endsTurn: true,

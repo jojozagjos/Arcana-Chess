@@ -828,19 +828,65 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         gameState.capturedByColor = gameState.capturedByColor || { w: [], b: [] };
         const captured = gameState.capturedByColor[colorChar] || [];
         if (captured.length > 0) {
-          const lastCaptured = captured[captured.length - 1];
-          const rank = colorChar === 'w' ? '1' : '8';
-          for (const f of 'abcdefgh') {
-            const sq = f + rank;
-            if (!chess.get(sq)) {
-              chess.put({ type: lastCaptured.type, color: colorChar }, sq);
-              captured.pop();
-              result.success = true;
-              result.message = `Astral Rebirth: Revived ${lastCaptured.type} at ${sq}`;
-              result.visualEffect = 'astral_rebirth';
-              result.soundEffect = 'arcana:astral_rebirth';
-              break;
+          const backRank = colorChar === 'w' ? '1' : '8';
+          const secondRank = colorChar === 'w' ? '2' : '7';
+          const pieceValue = { q: 5, r: 4, b: 3, n: 2, p: 1 };
+          // Sort by value descending to revive the best pieces first
+          const sortedCaptured = [...captured].sort((a, b) => (pieceValue[b.type] || 0) - (pieceValue[a.type] || 0));
+          
+          const revivedSquares = [];
+          const maxRevive = Math.min(2, sortedCaptured.length);
+          
+          // Try to revive up to 2 pieces
+          for (let attempt = 0; attempt < maxRevive; attempt++) {
+            if (attempt >= sortedCaptured.length) break;
+            
+            const toRevive = sortedCaptured[attempt];
+            if (!toRevive || !toRevive.type) continue; // Skip if invalid
+            
+            let pieceType = toRevive.type;
+            
+            // Don't place pawns on back rank - they'd be immovable. Use knight instead.
+            if (pieceType === 'p') pieceType = 'n';
+            
+            // Try back rank first
+            let placed = false;
+            for (const f of 'abcdefgh') {
+              const sq = f + backRank;
+              if (!chess.get(sq)) {
+                chess.put({ type: pieceType, color: colorChar }, sq);
+                revivedSquares.push({ square: sq, piece: pieceType });
+                // Remove from captured list
+                const idx = captured.findIndex(p => p && p.type === toRevive.type);
+                if (idx !== -1) captured.splice(idx, 1);
+                placed = true;
+                break;
+              }
             }
+            
+            // If back rank is full, try second rank
+            if (!placed) {
+              for (const f of 'abcdefgh') {
+                const sq = f + secondRank;
+                if (!chess.get(sq)) {
+                  chess.put({ type: pieceType, color: colorChar }, sq);
+                  revivedSquares.push({ square: sq, piece: pieceType });
+                  // Remove from captured list
+                  const idx = captured.findIndex(p => p && p.type === toRevive.type);
+                  if (idx !== -1) captured.splice(idx, 1);
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (revivedSquares.length > 0) {
+            result.success = true;
+            result.message = `Astral Rebirth: Revived ${revivedSquares.length} piece(s)`;
+            result.visualEffect = 'astral_rebirth';
+            result.soundEffect = 'arcana:astral_rebirth';
+          } else {
+            result.message = 'Astral Rebirth: No space to revive pieces';
           }
         } else {
           result.message = 'Astral Rebirth: No captured pieces to revive';
@@ -1169,4 +1215,23 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
   }
 
   return result;
+}
+// Check if a card that doesn't need a target square can actually be used
+export function canUseCard(arcanaId, gameState = {}, playerColor = 'w') {
+  // Cards that check card usability based on game state
+  switch (arcanaId) {
+    case 'necromancy': {
+      // Can only use if there are captured pawns the current player can revive
+      const pawnsToRevive = (gameState.capturedByColor?.[playerColor] || []).filter(p => p.type === 'p');
+      return pawnsToRevive.length > 0;
+    }
+    case 'astral_rebirth': {
+      // Can only use if there are captured pieces the current player can revive
+      const captured = gameState.capturedByColor?.[playerColor] || [];
+      return captured.length > 0;
+    }
+    default:
+      // All other cards can be used
+      return true;
+  }
 }
