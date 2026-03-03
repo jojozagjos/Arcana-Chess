@@ -10,7 +10,13 @@
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js",
     "test": "node server/tests/arcana.test.js",
-    "test:server": "node server/tests/arcana.test.js && node server/tests/validation.test.js"
+    "test:server": "node server/tests/arcana.test.js && node server/tests/validation.test.js",
+    "test:comprehensive": "node server/tests/comprehensive.test.js",
+    "test:client-utils": "node server/tests/client-utils.test.js",
+    "test:socket": "node server/tests/socket.test.js",
+    "test:tool": "node server/tests/tool.test.js",
+    "test:e2e": "node server/tests/live-e2e.test.js",
+    "test:all": "node server/tests/arcana.test.js && node server/tests/validation.test.js && node server/tests/comprehensive.test.js && node server/tests/client-utils.test.js && node server/tests/socket.test.js && node server/tests/tool.test.js && node server/tests/live-e2e.test.js"
   },
   "dependencies": {
     "@react-three/drei": "9.99.4",

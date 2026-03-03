@@ -481,14 +481,59 @@ function applyBishopsBlessing({ chess, gameState, moverColor, moveResult, params
   if (targetSquare) {
     const targetPiece = chess.get(targetSquare);
     if (targetPiece && targetPiece.type === 'b' && targetPiece.color === moverColor) {
-      gameState.activeEffects.bishopsBlessing[moverColor] = targetSquare;
-      return { params: { square: targetSquare, color: moverColor } };
+      // Find all friendly pieces on this bishop's diagonals
+      const protectedSquares = getPiecesDiagonalFromBishop(chess, targetSquare, moverColor);
+      gameState.activeEffects.bishopsBlessing[moverColor] = protectedSquares;
+      return { params: { square: targetSquare, color: moverColor, protectedSquares } };
     }
   } else if (moverColor && moveResult?.piece === 'b') {
-    gameState.activeEffects.bishopsBlessing[moverColor] = moveResult.to;
-    return { params: { square: moveResult.to, color: moverColor } };
+    // If a bishop just moved, update Bishop's Blessing protection if active
+    const protectedSquares = getPiecesDiagonalFromBishop(chess, moveResult.to, moverColor);
+    gameState.activeEffects.bishopsBlessing[moverColor] = protectedSquares;
+    return { params: { square: moveResult.to, color: moverColor, protectedSquares } };
   }
   return null;
+}
+
+// Helper: Get all friendly pieces on all 4 diagonals from a bishop position
+function getPiecesDiagonalFromBishop(chess, bishopSquare, color) {
+  const protectedSquares = [];
+  if (!bishopSquare) return protectedSquares;
+  
+  const file = bishopSquare.charCodeAt(0) - 97; // a=0, h=7
+  const rank = parseInt(bishopSquare[1]); // 1-8
+  
+  // 4 diagonal directions: NE, NW, SE, SW
+  const directions = [
+    { df: 1, dr: 1 },  // NE
+    { df: -1, dr: 1 }, // NW
+    { df: 1, dr: -1 }, // SE
+    { df: -1, dr: -1 } // SW
+  ];
+  
+  for (const dir of directions) {
+    let f = file + dir.df;
+    let r = rank + dir.dr;
+    
+    while (f >= 0 && f < 8 && r >= 1 && r <= 8) {
+      const sq = String.fromCharCode(97 + f) + r;
+      const piece = chess.get(sq);
+      
+      // Stop if we hit an enemy piece (blocked on diagonal)
+      if (piece && piece.color !== color) {
+        break;
+      }
+      // Add friendly pieces to protected list
+      if (piece && piece.color === color) {
+        protectedSquares.push(sq);
+      }
+      
+      f += dir.df;
+      r += dir.dr;
+    }
+  }
+  
+  return protectedSquares;
 }
 
 function applyTimeFreeze({ gameState, moverColor }) {
@@ -608,12 +653,10 @@ function applyTemporalEcho({ gameState, moverColor }) {
 
 // ============ OFFENSE CARDS ============
 
-// Double Strike: After capturing with any non-king/non-queen piece, get one more capture if target is NOT adjacent to first kill
+// Double Strike: After capturing, ANY other piece can capture again (even adjacent targets)
 function applyDoubleStrike({ gameState, moverColor, moveResult }) {
-  // Works with any piece except king and queen (per card description)
-  const validPieces = ['p', 'n', 'b', 'r']; // pawn, knight, bishop, rook
-  if (moveResult && moveResult.captured && validPieces.includes(moveResult.piece)) {
-    // Enable double strike mode - can capture again if target is not adjacent to this capture
+  if (moveResult && moveResult.captured) {
+    // Enable double strike mode - ANY piece can capture again (including adjacent to first kill)
     gameState.activeEffects.doubleStrike = gameState.activeEffects.doubleStrike || { w: null, b: null };
     gameState.activeEffects.doubleStrike[moverColor] = {
       active: true,
@@ -679,19 +722,21 @@ function applySharpshooter({ gameState, moverColor }) {
 // Berserker Rage: After capturing a piece, get one more capture if target is NOT adjacent to first kill
 function applyBerserkerRage({ gameState, moverColor, moveResult }) {
   if (moveResult && moveResult.captured) {
-    // Enable berserker mode - can capture again if target is not adjacent to this capture
+    // Enable berserker mode - ONLY the same piece can capture again if target is NOT adjacent to first kill
     gameState.activeEffects.berserkerRage = gameState.activeEffects.berserkerRage || { w: null, b: null };
     gameState.activeEffects.berserkerRage[moverColor] = {
       active: true,
-      firstKillSquare: moveResult.to,  // Where the first capture happened
+      firstKillSquare: moveResult.from,  // The piece's current square (where it made the kill from)
       usedSecondKill: false
     };
     // Also set berserkerRageActive for the extra move check (allows another turn)
+    // Store from (where piece currently is after move = to) to enforce same-piece restriction
     gameState.activeEffects.berserkerRageActive = {
       color: moverColor,
-      firstKillSquare: moveResult.to
+      firstKillSquare: moveResult.to,    // Piece is now here
+      firstKillFrom: moveResult.from     // Piece moved from here
     };
-    return { params: { firstKillSquare: moveResult.to, color: moverColor } };
+    return { params: { firstKillSquare: moveResult.to, color: moverColor, piece: moveResult.piece } };
   }
   // When used via useArcana (before a move), set a pending flag.
   // The move handler will activate berserkerRageActive after the next capture.

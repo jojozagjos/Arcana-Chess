@@ -31,6 +31,54 @@ function getMovesForColor(chess, color) {
 }
 
 /**
+ * Get all friendly pieces on all 4 diagonals from a bishop position
+ * Used by Bishop's Blessing to protect diagonal pieces
+ * @param {Chess} chess - Chess.js instance
+ * @param {string} bishopSquare - Square where the bishop is located
+ * @param {string} colorChar - 'w' or 'b'
+ * @returns {Array<string>} Array of protected square names
+ */
+function getPiecesDiagonalFromBishop(chess, bishopSquare, colorChar) {
+  const protectedSquares = [];
+  if (!bishopSquare) return protectedSquares;
+  
+  const file = bishopSquare.charCodeAt(0) - 97; // a=0, h=7
+  const rank = parseInt(bishopSquare[1]); // 1-8
+  
+  // 4 diagonal directions: NE, NW, SE, SW
+  const directions = [
+    { df: 1, dr: 1 },  // NE
+    { df: -1, dr: 1 }, // NW
+    { df: 1, dr: -1 }, // SE
+    { df: -1, dr: -1 } // SW
+  ];
+  
+  for (const dir of directions) {
+    let f = file + dir.df;
+    let r = rank + dir.dr;
+    
+    while (f >= 0 && f < 8 && r >= 1 && r <= 8) {
+      const sq = String.fromCharCode(97 + f) + r;
+      const piece = chess.get(sq);
+      
+      // Stop if we hit an enemy piece (blocked on diagonal)
+      if (piece && piece.color !== colorChar) {
+        break;
+      }
+      // Add friendly pieces to protected list
+      if (piece && piece.color === colorChar) {
+        protectedSquares.push(sq);
+      }
+      
+      f += dir.df;
+      r += dir.dr;
+    }
+  }
+  
+  return protectedSquares;
+}
+
+/**
  * Calculate the soft push destination for a piece
  * Pawns: push forward one square
  * Other pieces: push toward center
@@ -468,12 +516,17 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         if (params.targetSquare) {
           const piece = chess.get(params.targetSquare);
           if (piece && piece.type === 'b' && piece.color === colorChar) {
-            gameState.activeEffects.bishopsBlessing = gameState.activeEffects.bishopsBlessing || { w: null, b: null };
-            gameState.activeEffects.bishopsBlessing[colorChar] = params.targetSquare;
+            // Find all friendly pieces on the bishop's diagonals
+            const protectedSquares = getPiecesDiagonalFromBishop(chess, params.targetSquare, colorChar);
+            gameState.activeEffects.bishopsBlessing = gameState.activeEffects.bishopsBlessing || { w: [], b: [] };
+            gameState.activeEffects.bishopsBlessing[colorChar] = protectedSquares;
             result.success = true;
-            result.message = `Bishop's Blessing: Diagonal pieces from ${params.targetSquare} protected`;
+            result.message = `Bishop's Blessing: ${protectedSquares.length} piece(s) on diagonals protected`;
             result.visualEffect = 'bishops_blessing';
             result.soundEffect = 'arcana:bishops_blessing';
+            // Highlight all protected pieces with a divine golden color
+            result.highlightSquares = protectedSquares;
+            result.highlightColor = '#e6c200';
           } else {
             result.message = "Bishop's Blessing: Must target your own bishop";
           }
@@ -680,19 +733,19 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
 
       case 'double_strike':
         gameState.activeEffects.doubleStrike = gameState.activeEffects.doubleStrike || { w: false, b: false };
-        gameState.activeEffects.doubleStrike[colorChar] = true;
+        gameState.activeEffects.doubleStrike[colorChar] = { pending: true };
         result.success = true;
-        result.message = 'Double Strike: Capture two pieces in one turn';
-        result.visualEffect = 'double_strike';
+        result.message = 'Double Strike: After capturing, ANY piece can capture again (including adjacent targets)';
+        // NO visual effect here - only show particles on actual captures during moves
         result.soundEffect = 'arcana:double_strike';
         break;
 
       case 'berserker_rage':
         gameState.activeEffects.berserkerRage = gameState.activeEffects.berserkerRage || { w: null, b: null };
-        gameState.activeEffects.berserkerRage[colorChar] = { active: true, firstKillSquare: null, usedSecondKill: false };
+        gameState.activeEffects.berserkerRage[colorChar] = { pending: true };
         result.success = true;
-        result.message = 'Berserker Rage: After capturing, get one more capture (if not adjacent to first)';
-        result.visualEffect = 'berserker_rage';
+        result.message = 'Berserker Rage: After capturing, ONLY that same piece can capture again (NOT adjacent targets)';
+        // NO visual effect here - only show particles on actual captures during moves
         result.soundEffect = 'arcana:berserker_rage';
         break;
 

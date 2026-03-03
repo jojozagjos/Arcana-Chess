@@ -65,7 +65,7 @@ app.post('/api/test-card', (req, res) => {
       activeEffects: clientActiveEffects || {
         ironFortress: { w: false, b: false },
         ironFortressShields: { w: [], b: [] },
-        bishopsBlessing: { w: null, b: null },
+        bishopsBlessing: { w: [], b: [] },
         timeFrozen: { w: false, b: false },
         cursedSquares: [],
         sanctuaries: [],
@@ -322,7 +322,7 @@ io.on('connection', (socket) => {
         activeEffects: {
           ironFortress: { w: false, b: false },
           ironFortressShields: { w: [], b: [] },
-          bishopsBlessing: { w: null, b: null },
+          bishopsBlessing: { w: [], b: [] },
           timeFrozen: { w: false, b: false },
           cursedSquares: [],
           sanctuaries: [],

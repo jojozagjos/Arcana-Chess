@@ -87,7 +87,7 @@ export function CardBalancingToolV2({ onBack }) {
   const [activeEffects, setActiveEffects] = useState({
     ironFortress: { w: false, b: false },
     ironFortressShields: { w: [], b: [] },
-    bishopsBlessing: { w: null, b: null },
+    bishopsBlessing: { w: [], b: [] },
     timeFrozen: { w: false, b: false },
     cursedSquares: [],
     sanctuaries: [],
@@ -232,7 +232,7 @@ export function CardBalancingToolV2({ onBack }) {
     setActiveEffects({
       ironFortress: { w: false, b: false },
       ironFortressShields: { w: [], b: [] },
-      bishopsBlessing: { w: null, b: null },
+      bishopsBlessing: { w: [], b: [] },
       timeFrozen: { w: false, b: false },
       cursedSquares: [],
       sanctuaries: [],
@@ -541,7 +541,9 @@ export function CardBalancingToolV2({ onBack }) {
     }
 
     // Trigger visual effect if card has one
-    if (card.visual?.particles || card.visual?.effect) {
+    // BUT skip particles for berserker_rage and double_strike on card application - they show on capture only
+    const skipParticlesForPending = (card.id === 'berserker_rage' || card.id === 'double_strike');
+    if ((card.visual?.particles || card.visual?.effect) && !skipParticlesForPending) {
       setValidationChecklist(prev => ({ ...prev, visuals: true }));
 
       const pascalCase = (id) => id.split(/[_-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
@@ -621,7 +623,12 @@ export function CardBalancingToolV2({ onBack }) {
     }
 
     // Trigger visual effect via activeVisualArcana (same as in-game)
-    if (result.visualEffect) {
+    // Skip visual for cards that show pending state (Berserker Rage, Double Strike show visual on capture, not on card use)
+    const isPendingCard = testGameState.activeEffects.berserkerRage?.[colorChar]?.pending || 
+                         testGameState.activeEffects.doubleStrike?.[colorChar]?.pending;
+    const shouldShowVisual = result.visualEffect && !(isPendingCard && (card.id === 'berserker_rage' || card.id === 'double_strike'));
+    
+    if (shouldShowVisual) {
       setValidationChecklist(prev => ({ ...prev, visuals: true }));
 
       // Prepare visual params: prefer highlightSquares (destination) when present,
@@ -821,17 +828,42 @@ export function CardBalancingToolV2({ onBack }) {
 
     // Otherwise, handle piece movement
     if (!selectedSquare) {
-      setSelectedSquare(square);
+      const colorChar = playerColor === 'white' ? 'w' : 'b';
       const piece = chess.get(square);
+      
+      // Berserker Rage restriction: can ONLY move the piece that made the first kill
+      const brActive = activeEffects?.berserkerRageActive;
+      if (brActive?.color === colorChar) {
+        if (square !== brActive.firstKillFrom) {
+          addLog('Berserker Rage: MUST use the same piece for the second capture!', 'error');
+          return;
+        }
+      }
+      
+      setSelectedSquare(square);
       if (piece) {
         // Get both standard and arcana-enhanced moves
-        const colorChar = playerColor === 'white' ? 'w' : 'b';
         const standardMoves = chess.moves({ square, verbose: true });
         const arcanaMoves = getArcanaEnhancedMoves(chess, square, { activeEffects: activeEffects || {} }, playerColor);
         
         // Merge moves, avoiding duplicates
-        const allMoveTargets = new Set(standardMoves.map(m => m.to));
+        let allMoveTargets = new Set(standardMoves.map(m => m.to));
         arcanaMoves.forEach(m => allMoveTargets.add(m.to));
+        
+        // Berserker Rage: only allow CAPTURE moves, and NOT adjacent to first kill
+        if (brActive?.color === colorChar) {
+          const captureOnlyMoves = standardMoves.filter(m => m.captured); // Only captures
+          const adjacentSquares = getAdjacentSquares(brActive.firstKillSquare || '');
+          const validCaptures = captureOnlyMoves.filter(m => !adjacentSquares.includes(m.to));
+          allMoveTargets = new Set(validCaptures.map(m => m.to));
+          
+          if (validCaptures.length === 0) {
+            addLog('Berserker Rage: no valid second captures available! Turn ending...', 'info');
+            setSelectedSquare(null);
+            setLegalTargets([]);
+            return;
+          }
+        }
         
         setLegalTargets([...allMoveTargets]);
         addLog(`Selected square: ${square} (${allMoveTargets.size} legal moves)`, 'info');
@@ -967,26 +999,46 @@ export function CardBalancingToolV2({ onBack }) {
           }
         }
 
+        // Activate pending Double Strike on first capture
+        const pendingDS = nextEffects.doubleStrike?.[move.color];
+        if (capturedPiece && pendingDS?.pending) {
+          // After capture, any piece can make the second capture (not restricted to same piece)
+          nextEffects.doubleStrikeActive = {
+            color: move.color,
+            firstKillSquare: move.to,      // Where the first kill happened
+          };
+          nextEffects.doubleStrike = { ...(nextEffects.doubleStrike || { w: null, b: null }) };
+          nextEffects.doubleStrike[move.color] = {
+            active: true,
+            firstKillSquare: move.to,      // Track where the first kill was
+            usedSecondKill: false,
+          };
+          addLog('Double Strike activated: ANY piece can make the second capture (can capture adjacent)!', 'success');
+          // Double Strike visual at capture square
+          setActiveVisualArcana({ arcanaId: 'double_strike', params: { square: move.to, from: move.from, to: move.to } });
+          const duration = getArcanaEffectDuration('double_strike') || 1500;
+          setTimeout(() => setActiveVisualArcana(null), duration);
+        }
+
         // Activate pending Berserker Rage on first capture
         const pendingBR = nextEffects.berserkerRage?.[move.color];
         if (capturedPiece && pendingBR?.pending) {
+          // After capture, ONLY the same piece can make another capture, and NOT adjacent targets
           nextEffects.berserkerRageActive = {
             color: move.color,
-            firstKillSquare: move.to,
+            firstKillSquare: move.to,      // Where the kill happened
+            firstKillFrom: move.from,      // Piece started move from here - must use same piece
           };
           nextEffects.berserkerRage = { ...(nextEffects.berserkerRage || { w: null, b: null }) };
           nextEffects.berserkerRage[move.color] = {
             active: true,
-            firstKillSquare: move.to,
+            firstKillSquare: move.to,      // Track where the first kill was
             usedSecondKill: false,
           };
           activatedBerserkerThisMove = true;
-          addLog('Berserker Rage activated: extra move available', 'success');
-        }
-
-        // Berserker visual at capture square (activation + follow-up capture)
-        if (capturedPiece && (pendingBR?.pending || nextEffects?.berserkerRageActive?.color === move.color)) {
-          setActiveVisualArcana({ arcanaId: 'berserker_rage', params: { square: move.to } });
+          addLog('Berserker Rage activated: ONLY the killing piece can capture again (NOT adjacent targets)!', 'success');
+          // Berserker visual at capture square
+          setActiveVisualArcana({ arcanaId: 'berserker_rage', params: { square: move.to, from: move.from, to: move.to } });
           const duration = getArcanaEffectDuration('berserker_rage') || 1500;
           setTimeout(() => setActiveVisualArcana(null), duration);
         }
@@ -1088,6 +1140,43 @@ export function CardBalancingToolV2({ onBack }) {
         // Sync board after all post-move effects (including poison deaths)
         setChess(new Chess(chess.fen()));
         setFen(chess.fen());
+        
+        // Check for extra moves BEFORE clearing selected square
+        // Queen's Gambit: queen moved + counter available + not already used
+        const hasQueensGambit = nextEffects.queensGambit?.[myColorChar] > 0 && 
+                               !nextEffects.queensGambitUsed?.[myColorChar] &&
+                               move.piece === 'q';
+        
+        // Double Strike: second attack available after first capture
+        const hasDoubleStrike = nextEffects.doubleStrikeActive?.color === myColorChar && !move.promotion;
+        
+        // Berserker Rage: extra move available after first capture
+        const hasBerserkerRage = nextEffects.berserkerRageActive?.color === myColorChar && !move.promotion;
+        
+        // If player has extra move, keep the turn and allow another move
+        if (hasQueensGambit || hasDoubleStrike || hasBerserkerRage) {
+          // Mark extra move as used (Queen's Gambit only)
+          if (hasQueensGambit) {
+            nextEffects.queensGambitUsed[myColorChar] = true;
+            setActiveEffects({ ...nextEffects });
+          }
+          // Clear double strike after use
+          if (hasDoubleStrike) {
+            nextEffects.doubleStrikeActive = null;
+            setActiveEffects({ ...nextEffects });
+          }
+          // Clear berserker rage after use
+          if (hasBerserkerRage) {
+            nextEffects.berserkerRageActive = null;
+            setActiveEffects({ ...nextEffects });
+          }
+          
+          addLog(`Extra move available (${hasQueensGambit ? 'Queen\'s Gambit' : (hasDoubleStrike ? 'Double Strike' : 'Berserker Rage')})`, 'success');
+          // Keep selected square null so user must click a piece, but don't change turn
+          setSelectedSquare(null);
+          setLegalTargets([]);
+          return;
+        }
         
         setSelectedSquare(null);
         setLegalTargets([]);

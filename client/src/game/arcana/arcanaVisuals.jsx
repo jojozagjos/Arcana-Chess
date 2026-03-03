@@ -1500,10 +1500,115 @@ export function VisionEffect({ onComplete }) {
   return null;
 }
 
-// Berserker Rage Effect - violent crimson burst at capture location
-export function BerserkerRageEffect({ square, onComplete }) {
+// Double Strike Effect - yellow lightning from move-from to move-to
+export function DoubleStrikeEffect({ square, from, to, onComplete }) {
   const [progress, setProgress] = useState(0);
-  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 400);
+  const groupRef = useRef();
+
+  // Use parameters or fallback to square
+  const originPos = from ? squareToPosition(from) : (square ? squareToPosition(square) : [0, 0, 0]);
+  const targetPos = to ? squareToPosition(to) : (square ? squareToPosition(square) : [0, 0, 0]);
+
+  useFrame((state, delta) => {
+    setProgress(prev => {
+      const next = prev + delta * 2.2;
+      if (next >= 1 && !finishing) triggerFinish();
+      return Math.min(next, 1);
+    });
+
+    if (groupRef.current) {
+      groupRef.current.rotation.z += delta * 4;
+    }
+  });
+
+  if (completed) return null;
+
+  const opacity = (1 - progress) * (1 - finishT);
+
+  return (
+    <group ref={groupRef}>
+      {/* Lightning trail from origin to target */}
+      {from && to && [...Array(8)].map((_, j) => {
+        const t = j / 7;
+        const x = originPos[0] + (targetPos[0] - originPos[0]) * t;
+        const z = originPos[2] + (targetPos[2] - originPos[2]) * t;
+        const jitter = Math.sin(t * 20 + progress * 15) * 0.15;
+
+        return (
+          <mesh key={`bolt-${j}`} position={[x + jitter, 0.3 + Math.sin(t * Math.PI) * 0.4, z + jitter]}>
+            <sphereGeometry args={[0.12, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#ffdd00"
+              emissiveIntensity={5 * opacity}
+              color="#ffff00"
+              transparent
+              depthWrite={false}
+              opacity={0.8 * opacity}
+            />
+          </mesh>
+        );
+      })}
+
+      {/* Origin spark (bright yellow) */}
+      <mesh position={[originPos[0], 0.4, originPos[2]]}>
+        <sphereGeometry args={[0.25 * (1 - progress * 0.3), 16, 16]} />
+        <meshStandardMaterial
+          emissive="#ffff00"
+          emissiveIntensity={6 * opacity}
+          color="#ffff99"
+          transparent
+          depthWrite={false}
+          opacity={0.85 * opacity}
+        />
+      </mesh>
+
+      {/* Target impact (bright yellow burst) */}
+      <mesh position={[targetPos[0], 0.4, targetPos[2]]}>
+        <sphereGeometry args={[0.3 * progress, 16, 16]} />
+        <meshStandardMaterial
+          emissive="#ffdd00"
+          emissiveIntensity={6 * (1 - progress) * opacity}
+          color="#ffff99"
+          transparent
+          depthWrite={false}
+          opacity={0.7 * (1 - progress) * opacity}
+        />
+      </mesh>
+
+      {/* Secondary particles around target */}
+      {[...Array(12)].map((_, i) => {
+        const angle = (i / 12) * Math.PI * 2 + progress * Math.PI;
+        const dist = progress * 0.6;
+        const y = 0.5 + progress * 0.3;
+
+        return (
+          <mesh key={`spark-${i}`} position={[
+            targetPos[0] + Math.cos(angle) * dist,
+            y,
+            targetPos[2] + Math.sin(angle) * dist
+          ]}>
+            <sphereGeometry args={[0.04, 6, 6]} />
+            <meshStandardMaterial
+              emissive="#ffdd00"
+              emissiveIntensity={4 * opacity}
+              color="#ffff99"
+              transparent
+              depthWrite={false}
+              opacity={0.7 * opacity}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+// Berserker Rage Effect - violent crimson burst with lightning trail
+export function BerserkerRageEffect({ square, from, to, onComplete }) {
+  const [progress, setProgress] = useState(0);
+  const originPos = from ? squareToPosition(from) : (square ? squareToPosition(square) : [0, 0, 0]);
+  const targetPos = to ? squareToPosition(to) : (square ? squareToPosition(square) : [0, 0, 0]);
   const groupRef = useRef();
   const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 350);
 
@@ -1525,8 +1630,31 @@ export function BerserkerRageEffect({ square, onComplete }) {
   const ringScale = 0.5 + progress * 1.8;
 
   return (
-    <group position={[x, 0.05, z]} ref={groupRef}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[ringScale, ringScale, 1]}>
+    <group ref={groupRef}>
+      {/* Red lightning trail from origin to target (if both provided) */}
+      {from && to && [...Array(8)].map((_, j) => {
+        const t = j / 7;
+        const x = originPos[0] + (targetPos[0] - originPos[0]) * t;
+        const z = originPos[2] + (targetPos[2] - originPos[2]) * t;
+        const jitter = Math.sin(t * 15 + progress * 12) * 0.12;
+
+        return (
+          <mesh key={`bolt-${j}`} position={[x + jitter, 0.25 + Math.sin(t * Math.PI) * 0.35, z + jitter]}>
+            <sphereGeometry args={[0.1, 8, 8]} />
+            <meshStandardMaterial
+              emissive="#ff1744"
+              emissiveIntensity={5 * opacity}
+              color="#ff5252"
+              transparent
+              depthWrite={false}
+              opacity={0.8 * opacity}
+            />
+          </mesh>
+        );
+      })}
+
+      {/* Main burst at the capture square */}
+      <mesh position={[targetPos[0], 0.05, targetPos[2]]} rotation={[-Math.PI / 2, 0, 0]} scale={[ringScale, ringScale, 1]}>
         <ringGeometry args={[0.25, 0.45, 40]} />
         <meshStandardMaterial
           emissive="#ff1744"
@@ -1538,12 +1666,13 @@ export function BerserkerRageEffect({ square, onComplete }) {
         />
       </mesh>
 
+      {/* Crimson particles radiating from capture point */}
       {[...Array(10)].map((_, i) => {
         const angle = (i / 10) * Math.PI * 2;
         const dist = 0.2 + progress * 1.0;
         const y = 0.15 + progress * 0.45;
         return (
-          <mesh key={i} position={[Math.cos(angle) * dist, y, Math.sin(angle) * dist]}>
+          <mesh key={i} position={[targetPos[0] + Math.cos(angle) * dist, y, targetPos[2] + Math.sin(angle) * dist]}>
             <sphereGeometry args={[0.035, 8, 8]} />
             <meshStandardMaterial
               emissive="#ff6f00"

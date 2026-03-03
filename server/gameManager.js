@@ -59,6 +59,54 @@ function validateNonAdjacentCapture(activeEffect, secondTargetSquare, cardName) 
 }
 
 /**
+ * Helper: Get all friendly pieces on all 4 diagonals from a bishop position
+ * Used by Bishop's Blessing to protect diagonal pieces
+ * @param {Chess} chess - Chess instance
+ * @param {string} bishopSquare - Square where the bishop is located
+ * @param {string} color - Color of the bishop ('w' or 'b')
+ * @returns {Array<string>} Array of protected square names
+ */
+function getPiecesDiagonalFromBishop(chess, bishopSquare, color) {
+  const protectedSquares = [];
+  if (!bishopSquare) return protectedSquares;
+  
+  const file = bishopSquare.charCodeAt(0) - 97; // a=0, h=7
+  const rank = parseInt(bishopSquare[1]); // 1-8
+  
+  // 4 diagonal directions: NE, NW, SE, SW
+  const directions = [
+    { df: 1, dr: 1 },  // NE
+    { df: -1, dr: 1 }, // NW
+    { df: 1, dr: -1 }, // SE
+    { df: -1, dr: -1 } // SW
+  ];
+  
+  for (const dir of directions) {
+    let f = file + dir.df;
+    let r = rank + dir.dr;
+    
+    while (f >= 0 && f < 8 && r >= 1 && r <= 8) {
+      const sq = String.fromCharCode(97 + f) + r;
+      const piece = chess.get(sq);
+      
+      // Stop if we hit an enemy piece (blocked on diagonal)
+      if (piece && piece.color !== color) {
+        break;
+      }
+      // Add friendly pieces to protected list
+      if (piece && piece.color === color) {
+        protectedSquares.push(sq);
+      }
+      
+      f += dir.df;
+      r += dir.dr;
+    }
+  }
+  
+  return protectedSquares;
+}
+
+/**
  * Creates the initial game state for a new game
  * @param {Object} config - Game configuration
  * @param {string} config.mode - Game mode ('Ascendant' or 'Classic')
@@ -118,7 +166,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     activeEffects: {
       ironFortress: { w: false, b: false },
       ironFortressShields: { w: [], b: [] },
-      bishopsBlessing: { w: null, b: null }, // stores bishop square
+      bishopsBlessing: { w: [], b: [] }, // [protected squares on diagonals]
       timeFrozen: { w: false, b: false },
       cursedSquares: [],  // [{ square, turns, setter }]
       sanctuaries: [],    // [{ square, turns }]
@@ -847,10 +895,10 @@ export class GameManager {
       }
     }
 
-    // Bishop's Blessing: prevent blessed bishop from being captured
-    const blessedSquare = gameState.activeEffects.bishopsBlessing[opponentColor];
-    if (blessedSquare && candidate.captured && candidate.to === blessedSquare) {
-      throw new Error('That bishop is blessed and cannot be captured!');
+    // Bishop's Blessing: prevent blessed pieces from being captured
+    const blessedSquares = gameState.activeEffects.bishopsBlessing[opponentColor];
+    if (Array.isArray(blessedSquares) && blessedSquares.includes(candidate.to)) {
+      throw new Error('That piece is blessed by Bishop\'s Blessing and cannot be captured!');
     }
 
     // Divine Intervention: prevent king from being in check or captured
@@ -869,20 +917,28 @@ export class GameManager {
       }
     }
 
-    // Double Strike: Validate second capture uses the SAME piece and is NOT adjacent to first kill
+    // Double Strike: Validate second capture is a capture, ANY piece allowed (no same-piece restriction), allows adjacent targets
     if (gameState.activeEffects.doubleStrikeActive?.color === moverColor) {
-      const dsFirstKill = gameState.activeEffects.doubleStrikeActive.firstKillSquare;
-      // Card says "Capture two enemy pieces in one turn with the same piece"
-      if (candidate.from !== dsFirstKill) {
-        throw new Error('Double Strike requires using the same piece for both captures!');
+      // Double Strike allows ANY piece to make the second capture
+      // No from-square restriction like Berserker Rage has
+      if (!candidate.captured) {
+        throw new Error('Double Strike second move must be a capture!');
       }
-      if (candidate.captured) {
-        validateNonAdjacentCapture(gameState.activeEffects.doubleStrikeActive, candidate.to, 'Double Strike');
-      }
+      // Unlike Berserker Rage, Double Strike ALLOWS adjacent captures
+      // (no non-adjacent validation here)
     }
 
-    // Berserker Rage: Validate second capture is NOT adjacent to first kill
-    if (gameState.activeEffects.berserkerRageActive?.color === moverColor && candidate.captured) {
+    // Berserker Rage: Validate ONLY the same piece can capture again, NOT adjacent to first kill
+    if (gameState.activeEffects.berserkerRageActive?.color === moverColor) {
+      const brFirstKillFrom = gameState.activeEffects.berserkerRageActive.firstKillFrom;
+      // Piece must be the same one that made the first kill (same starting square)
+      if (candidate.from !== brFirstKillFrom) {
+        throw new Error('Berserker Rage: ONLY the piece that made the first kill can capture again!');
+      }
+      // Second move must be a capture
+      if (!candidate.captured) {
+        throw new Error('Berserker Rage: second move MUST be a capture!');
+      }
       validateNonAdjacentCapture(gameState.activeEffects.berserkerRageActive, candidate.to, 'Berserker Rage');
     }
 
@@ -1056,11 +1112,28 @@ export class GameManager {
       }
     }
 
-    // Update Bishop's Blessing position if the blessed bishop moved
+    // Update Bishop's Blessing if the blessed bishop moved (recalculate protected pieces)
     const myBlessing = gameState.activeEffects.bishopsBlessing[moverColor];
-    if (myBlessing && result.from === myBlessing && result.piece === 'b') {
-      // Blessing follows the bishop to its new square
-      gameState.activeEffects.bishopsBlessing[moverColor] = result.to;
+    if (Array.isArray(myBlessing) && result.piece === 'b') {
+      // Check if any blessed piece was the one that just moved (now at result.to)
+      // Recalculate all protected diagonals
+      const protectedSquares = [];
+      const board = chess.board();
+      
+      // Find all bishops of this color and calculate their diagonals
+      for (let r = 0; r < 8; r++) {
+        for (let f = 0; f < 8; f++) {
+          const piece = board[r][f];
+          const sq = String.fromCharCode(97 + f) + (8 - r);
+          if (piece && piece.type === 'b' && piece.color === moverColor) {
+            // Get diagonal pieces from this bishop
+            const diagonalPieces = getPiecesDiagonalFromBishop(chess, sq, moverColor);
+            protectedSquares.push(...diagonalPieces);
+          }
+        }
+      }
+      
+      gameState.activeEffects.bishopsBlessing[moverColor] = [...new Set(protectedSquares)]; // Deduplicate
     }
 
     // Update poisoned piece square if a poisoned piece moved
@@ -1254,7 +1327,8 @@ export class GameManager {
       if (pendingBR?.pending) {
         gameState.activeEffects.berserkerRageActive = {
           color: moverColor,
-          firstKillSquare: result.to
+          firstKillSquare: result.to,    // Where the kill happened
+          firstKillFrom: result.to       // Piece is now here - next move must come from here
         };
         gameState.activeEffects.berserkerRage[moverColor] = {
           active: true,

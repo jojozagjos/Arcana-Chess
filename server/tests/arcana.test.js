@@ -244,7 +244,7 @@ test('Cursed square does not destroy king', () => {
 
 console.log('\n--- Double Strike & Berserker Tests ---');
 
-test('Double strike allows second capture if not adjacent', () => {
+test('Double strike allows second capture with ANY piece (different from first)', () => {
   const state = createMockGameState();
   state.activeEffects.doubleStrike.w = {
     active: true,
@@ -260,7 +260,7 @@ test('Double strike allows second capture if not adjacent', () => {
   assert(state.activeEffects.doubleStrike.w.active, 'Double strike should be active');
 });
 
-test('Double strike blocked if second target is adjacent', () => {
+test('Double strike ALLOWS second target to be adjacent (tactical coordination)', () => {
   const state = createMockGameState();
   state.activeEffects.doubleStrike.w = {
     active: true,
@@ -269,10 +269,27 @@ test('Double strike blocked if second target is adjacent', () => {
   };
   
   const firstKill = 'e4';
-  const secondTarget = 'e5'; // Adjacent to e4
+  const secondTarget = 'e5'; // Adjacent to e4 - this is ALLOWED for Double Strike
   const isAdjacent = getAdjacentSquares(firstKill).includes(secondTarget);
   
   assert(isAdjacent, 'e5 should be adjacent to e4');
+  assert(state.activeEffects.doubleStrike.w.active, 'Double strike should allow adjacent captures');
+});
+
+test('Berserker Rage blocks adjacent captures (bloodlust restraint)', () => {
+  const state = createMockGameState();
+  state.activeEffects.berserkerRageActive = {
+    color: 'w',
+    firstKillSquare: 'e4',
+    firstKillFrom: 'd3'
+  };
+  
+  const firstKill = 'e4';
+  const secondTarget = 'e5'; // Adjacent to e4 - this is BLOCKED for Berserker Rage
+  const isAdjacent = getAdjacentSquares(firstKill).includes(secondTarget);
+  
+  assert(isAdjacent, 'e5 should be adjacent to e4');
+  assert(state.activeEffects.berserkerRageActive.color === 'w', 'Berserker rage should restrict adjacent captures');
 });
 
 test('Extra move not granted on promotion', () => {
