@@ -736,7 +736,8 @@ export function applyPoisonAfterCapture(chess, captureSquare, moverColor, gameSt
   
   const validTargets = adjacentSquares.filter(sq => {
     const piece = chess.get(sq);
-    return piece && piece.color === opponentColor;
+    // Exclude kings from being poisoned - they are immune
+    return piece && piece.color === opponentColor && piece.type !== 'k';
   });
   
   if (validTargets.length > 0) {

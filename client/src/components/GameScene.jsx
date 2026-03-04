@@ -12,7 +12,6 @@ import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares, ca
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
-import { extractCardTargetSquare, getCutsceneCardIds } from '../game/arcanaCardService.js';
 const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.jsx').then(m => ({ default: m.default ?? m.ParticleOverlay })));
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import CutsceneOverlay from './CutsceneOverlay.jsx';
@@ -270,20 +269,24 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }
   }, [cardReveal, mySocketId]);
 
-  // Dismiss card when player's turn ends (with delay to allow animation to play)
+  // Dismiss card when player's turn ends
   useEffect(() => {
     if (cardReveal && cardReveal.playerId === mySocketId && cardReveal.type === 'draw' && cardReveal.stayUntilClick) {
       const currentTurn = chess?.turn();
-      // If turn has changed and we're no longer in the turn when card was revealed, auto-dismiss after animation
+      // For draws that stay until click, don't auto-dismiss based on turn changes
+      // The player must explicitly click the card to dismiss it
+      // This ensures the draw animation stays visible as long as the player wants
+      return;
+    }
+    // Only auto-dismiss for opponent draws or non-stay-until-click scenarios
+    if (cardReveal && cardReveal.playerId === mySocketId && cardReveal.type === 'draw' && !cardReveal.stayUntilClick) {
+      const currentTurn = chess?.turn();
+      // If turn has changed and we're no longer in the turn when card was revealed, auto-dismiss
       if (playerCardTurnRef.current && currentTurn && currentTurn !== playerCardTurnRef.current) {
-        // Wait 2.5 seconds to let draw animation complete before dismissing
-        const dismissTimer = setTimeout(() => {
-          setCardReveal(null);
-          playerCardTurnRef.current = null;
-          playerCardInstanceRef.current = null;
-          setIsCardAnimationPlaying(false);
-        }, 2500);
-        return () => clearTimeout(dismissTimer);
+        setCardReveal(null);
+        playerCardTurnRef.current = null;
+        playerCardInstanceRef.current = null;
+        setIsCardAnimationPlaying(false);
       }
     }
   }, [chess?.fen(), cardReveal, mySocketId]);
@@ -320,15 +323,18 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     setActiveVisualArcana(lastArcanaEvent);
     
     // Check if this arcana has cutscene enabled and a target square
-    // Use shared cutscene cards list to stay consistent with dev tool
-    const cutsceneCards = getCutsceneCardIds();
+    // Note: divine_intervention is excluded because it only triggers when check actually happens, not when activated
+    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
     let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
     
     if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
       const config = getCutsceneConfig(lastArcanaEvent.arcanaId);
       
-      // Extract square from various possible param field names using shared service
-      const targetSquare = extractCardTargetSquare(lastArcanaEvent.params);
+      // Extract square from various possible param field names
+      const targetSquare = lastArcanaEvent.params?.targetSquare || 
+                          lastArcanaEvent.params?.square ||
+                          lastArcanaEvent.params?.kingTo ||
+                          lastArcanaEvent.params?.rebornSquare;
       
       if (targetSquare && typeof targetSquare === 'string') {
         // Trigger camera cutscene to focus on the effect
@@ -454,7 +460,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Listen for arcana drawn events
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
-      console.log('[GameScene] arcanaDrawn received:', { data, mySocketId: socket?.id, isMyDraw: data?.playerId === socket?.id });
       soundManager.play('cardDraw');
       // If this draw was triggered by Focus Fire (bonus on capture), play its arcana sound
       try {
@@ -2173,7 +2178,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         clearInterval(progressInterval);
       };
     } else if (type === 'draw' && isHidden && !stayUntilClick && onDismiss) {
-      const autoDismissTimer = setTimeout(() => onDismiss(), 2000);
+      const autoDismissTimer = setTimeout(() => onDismiss(), 3500);
       return () => clearTimeout(autoDismissTimer);
     }
   }, [type, isHidden, stayUntilClick, onDismiss]);
@@ -2515,14 +2520,17 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
 }
 
 function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, rematchTotalPlayers, opponentLeft, onRematchVote, onReturnToMenu }) {
-  const isWinner = outcome.winnerSocketId === mySocketId;
-  const title = isWinner ? '🏆 VICTORY!' : '💀 DEFEAT';
+  const isDraw = !outcome.winnerSocketId || outcome.type === 'draw';
+  const isWinner = !isDraw && outcome.winnerSocketId === mySocketId;
+  const title = isDraw ? '🤝 DRAW' : (isWinner ? '🏆 VICTORY!' : '💀 DEFEAT');
   const message = outcome.type === 'disconnect' 
     ? (isWinner ? 'Opponent disconnected' : 'You disconnected')
     : outcome.type === 'forfeit'
     ? (isWinner ? 'Opponent forfeited' : 'You forfeited')
+    : outcome.type === 'draw'
+    ? 'Game ended in a draw'
     : 'Game ended';
-  const color = isWinner ? '#a3be8c' : '#bf616a';
+  const color = isDraw ? '#88c0d0' : (isWinner ? '#a3be8c' : '#bf616a');
   const voteCountText = `${rematchVoteCount}/${rematchTotalPlayers}`;
   const rematchButtonText = opponentLeft 
     ? '❌ Player Left'
