@@ -2009,7 +2009,7 @@ export class GameManager {
       'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
       'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
       'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning', 'necromancy',
-      'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
+      'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'en_passant_master',
       'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress'
     ];
     
@@ -2170,6 +2170,22 @@ export class GameManager {
               }
             }
             if (params.targetSquare) break;
+          }
+          break;
+
+        case 'peek_card':
+          // AI automatically peeks at a random opponent card
+          const opponentId = gameState.playerIds.find(id => id !== aiSocketId);
+          if (opponentId) {
+            const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
+            if (opponentCards.length > 0) {
+              // Pick a random card index
+              params.cardIndex = Math.floor(Math.random() * opponentCards.length);
+            } else {
+              return { ok: false, error: 'No cards to peek' };
+            }
+          } else {
+            return { ok: false, error: 'No opponent found' };
           }
           break;
 

@@ -116,7 +116,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const pendingLastArcanaRef = useRef([]);
   const lastProcessedArcanaAtRef = useRef(null);
   const lastActiveVisualKeyRef = useRef(null);
-  const USE_CARD_ANIM_MS = 800;
+  const USE_CARD_ANIM_MS = 2500;
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
@@ -416,12 +416,61 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     lastProcessedArcanaAtRef.current = next.at || Date.now();
     lastActiveVisualKeyRef.current = nextKey;
     setActiveVisualArcana(next);
-    // Auto-clear visual after same duration used above
+
+    // Apply the same cutscene/overlay flow as the immediate path
+    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
+    let visualClearTimeout = 1500;
+
+    if (cutsceneCards.includes(next.arcanaId)) {
+      const config = getCutsceneConfig(next.arcanaId);
+      const targetSquare = next.params?.targetSquare ||
+                          next.params?.square ||
+                          next.params?.kingTo ||
+                          next.params?.rebornSquare;
+
+      if (targetSquare && typeof targetSquare === 'string') {
+        triggerCutscene(targetSquare, {
+          zoom: config?.config?.camera?.targetZoom || 1.5,
+          holdDuration: config?.config?.camera?.holdDuration || 2000,
+        });
+
+        const holdDuration = config?.config?.camera?.holdDuration || 2000;
+        visualClearTimeout = Math.ceil(1112 + holdDuration + 200);
+      }
+
+      if (config?.config?.overlay && overlayRef.current) {
+        const overlay = config.config.overlay;
+        if (overlay.effect) {
+          overlayRef.current.playEffect({
+            effect: overlay.effect,
+            color: overlay.color,
+            duration: overlay.duration,
+            intensity: overlay.intensity,
+            fadeIn: overlay.fadeIn,
+            hold: overlay.hold,
+            fadeOut: overlay.fadeOut,
+          });
+        } else if (Array.isArray(overlay)) {
+          overlay.forEach((o) => {
+            overlayRef.current?.playEffect({
+              effect: o.effect,
+              color: o.color,
+              duration: o.duration,
+              intensity: o.intensity,
+              fadeIn: o.fadeIn,
+              hold: o.hold,
+              fadeOut: o.fadeOut,
+            });
+          });
+        }
+      }
+    }
+
     const t = setTimeout(() => {
       setActiveVisualArcana(null);
-    }, 1500);
+    }, visualClearTimeout);
     timeoutsRef.current.push(t);
-  }, [isCardAnimationPlaying]);
+  }, [isCardAnimationPlaying, triggerCutscene]);
 
   // Track fog of war effects and display particles while active
   useEffect(() => {
@@ -968,10 +1017,18 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Counter to ensure unique UIDs for promoted/new pieces
   const uidCounterRef = useRef(0);
 
+  // Keep a deferred render FEN so board updates can wait for card-use animation
+  const [renderFen, setRenderFen] = useState(() => gameState?.displayFen || gameState?.fen || null);
+
+  useEffect(() => {
+    const nextRenderFen = gameState?.displayFen || gameState?.fen || null;
+    if (!nextRenderFen) return;
+    if (isCardAnimationPlaying) return;
+    setRenderFen(nextRenderFen);
+  }, [gameState?.displayFen, gameState?.fen, isCardAnimationPlaying]);
+
   // Maintain piecesState so pieces keep stable ids and can animate between squares
   const [piecesState, setPiecesState] = useState(() => {
-    // Use displayFen (Fog of War redacted) if available, else fall back to full fen
-    const renderFen = gameState?.displayFen || gameState?.fen;
     const initial = parseFenPieces(renderFen);
     // Assign initial UIDs with unique counter to prevent duplicates
     return initial.map((p) => {
@@ -983,8 +1040,6 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
   // Reconcile piecesState when FEN changes: match by nearest same type/color to preserve uid
   useEffect(() => {
-    // Use displayFen (Fog of War redacted) if available for rendering
-    const renderFen = gameState?.displayFen || gameState?.fen;
     const newPieces = parseFenPieces(renderFen);
     if (!piecesState || piecesState.length === 0) {
       // First assignment: give UIDs with unique counter
@@ -1086,7 +1141,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     setPiecesState(result);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState?.fen]);
+  }, [renderFen]);
 
   // Play sounds for moves coming from the server (opponent moves).
   // We rely on `gameState.lastMove` and `gameState.turn` to infer who moved.
@@ -2166,12 +2221,13 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
       const t2 = setTimeout(() => setUsePhase(2), 1800);
       const startTime = Date.now();
       const duration = 2000;
+      // Reduced interval from 50ms to 100ms for better performance
       const progressInterval = setInterval(() => {
         const elapsed = Date.now() - startTime;
         const progress = Math.min(1, elapsed / duration);
         setUseProgress(progress);
         if (progress >= 1) clearInterval(progressInterval);
-      }, 50);
+      }, 100);
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);
@@ -2264,15 +2320,12 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         
         @keyframes useGlow {
           0% { 
-            filter: brightness(1) saturate(1);
             transform: scale(1);
           }
           50% { 
-            filter: brightness(1.4) saturate(1.3);
             transform: scale(1.05);
           }
           100% { 
-            filter: brightness(1.8) saturate(1.5);
             transform: scale(1.08);
           }
         }
@@ -2281,22 +2334,18 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           0% { 
             opacity: 1;
             transform: scale(1.08);
-            filter: brightness(1.8) blur(0px);
           }
           30% {
-            opacity: 0.9;
+            opacity: 0.85;
             transform: scale(1.12);
-            filter: brightness(2.2) blur(2px);
           }
-          60% {
-            opacity: 0.5;
-            transform: scale(1.2);
-            filter: brightness(3) blur(6px);
+          70% {
+            opacity: 0.4;
+            transform: scale(1.25);
           }
           100% { 
             opacity: 0;
-            transform: scale(1.4);
-            filter: brightness(4) blur(15px);
+            transform: scale(1.35);
           }
         }
         
@@ -2391,6 +2440,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
       <div 
         style={{
           ...styles.cardRevealOverlay,
+          willChange: type === 'use' && usePhase >= 2 ? 'background' : 'auto',
           animation: type === 'use' && usePhase >= 2 ? 'overlayFadeOut 1s ease-out forwards' : 'none'
         }}
         onClick={handleClick}
@@ -2403,6 +2453,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           right: 0,
           display: 'flex',
           justifyContent: 'center',
+          willChange: 'transform, opacity',
           animation: type === 'use' && usePhase >= 2 
             ? 'textFadeOut 0.8s ease-out forwards' 
             : 'textReveal 0.5s ease-out forwards',
@@ -2426,6 +2477,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
+          willChange: 'transform, opacity',
           animation: type === 'draw' 
             ? 'cardDrawIn 1s ease-out forwards' 
             : usePhase === 0 
@@ -2437,9 +2489,9 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         }}>
           <div style={{
             position: 'relative',
+            willChange: type === 'use' ? 'filter' : 'auto',
             animation: type === 'draw' ? 'innerGlow 2s ease-in-out infinite, floatCard 3s ease-in-out infinite' : 'none',
-            filter: type === 'use' ? `drop-shadow(0 0 ${20 + usePhase * 15}px ${colors.glow})` : 'none',
-            transition: 'filter 0.5s ease-out',
+            filter: type === 'use' && usePhase < 2 ? `drop-shadow(0 0 30px ${colors.glow})` : 'none',
           }}>
             {isHidden ? (
               // Show a card back or placeholder for hidden opponent draws

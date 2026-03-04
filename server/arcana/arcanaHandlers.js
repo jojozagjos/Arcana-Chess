@@ -1081,7 +1081,8 @@ function applyPeekCard({ gameState, socketId, params, io }) {
   // 1. If no cardIndex in params, send opponent's card count to client
   // 2. Client picks a card by index, server reveals it
   
-  const opponentId = gameState.playerIds.find(id => id !== socketId && !id.startsWith('AI-'));
+  // Find opponent (can be AI or human player)
+  const opponentId = gameState.playerIds.find(id => id !== socketId);
   if (!opponentId) return null;
   
   const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
