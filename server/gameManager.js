@@ -317,7 +317,12 @@ export class GameManager {
           const personalised = this.serialiseGameStateForViewer(gameState, humanId);
             this.io.to(humanId).emit('gameUpdated', personalised);
           if (personalised.status === 'finished') {
-            this.emitGameEndedToPlayer(humanId, { type: 'ai-finished' }, gameState);
+            // Determine the game outcome
+            const checkmatedColor = chess.turn();
+            const winnerColor = checkmatedColor === 'w' ? 'b' : 'w';
+            const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+            console.log('[gameManager] AI game finished in finalizeReveal:', { checkmatedColor, winnerColor, winnerSocketId });
+            this.emitGameEndedToPlayer(humanId, { type: 'checkmate', winnerSocketId }, gameState);
           }
         }
       }
@@ -593,11 +598,14 @@ export class GameManager {
         throw new Error('You cannot draw after using an arcana card');
       }
       // Do not allow drawing while the player's king is in check
-      // chess.js exposes either in_check() or inCheck() depending on version, so guard both
-      if (typeof gameState.chess.in_check === 'function') {
-        if (gameState.chess.in_check()) throw new Error('You cannot draw while in check');
-      } else if (typeof gameState.chess.inCheck === 'function') {
-        if (gameState.chess.inCheck()) throw new Error('You cannot draw while in check');
+      // Use inCheck() method from chess.js 1.0.0
+      try {
+        if (gameState.chess.inCheck && gameState.chess.inCheck()) {
+          throw new Error('You cannot draw while in check');
+        }
+      } catch (err) {
+        if (err.message.includes('cannot draw')) throw err;
+        // If inCheck fails, continue (might be old chess.js version)
       }
       
       // Check draw cooldown rule: require at least DRAW_COOLDOWN_PLIES plies between draws.
@@ -650,6 +658,7 @@ export class GameManager {
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
           const isDrawer = pid === socket.id;
+          console.log('[gameManager] Emitting arcanaDrawn:', { playerId: socket.id, hasArcana: !!instanceCard, isDrawer, recipient: pid });
           this.io.to(pid).emit('arcanaDrawn', {
             playerId: socket.id,
             arcana: isDrawer ? instanceCard : null,
@@ -1463,6 +1472,15 @@ export class GameManager {
     let outcome = null;
     if (chess.isCheckmate()) {
       const checkmatedColor = chess.turn(); // The player who is checkmated ('w' or 'b')
+      const winnerColor = checkmatedColor === 'w' ? 'b' : 'w'; // Opposite color
+      const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+      console.log('[gameManager] Checkmate detected:', { 
+        checkmatedColor, 
+        winnerColor, 
+        winnerSocketId,
+        playerColors: gameState.playerColors,
+        moveResult: { from: result.from, to: result.to, color: result.color }
+      });
       
       // Check if Divine Intervention can save the checkmated player
       if (gameState.activeEffects.divineIntervention[checkmatedColor]) {
@@ -1501,15 +1519,11 @@ export class GameManager {
         } else {
           // No empty square available - Divine Intervention fails
           gameState.status = 'finished';
-          const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
-          const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
           outcome = { type: 'checkmate', winnerSocketId };
         }
       } else {
         // No Divine Intervention - checkmate occurs
         gameState.status = 'finished';
-        const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
-        const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
         outcome = { type: 'checkmate', winnerSocketId };
       }
     } else if (chess.isStalemate() || chess.isDraw()) {
@@ -1541,7 +1555,23 @@ export class GameManager {
         const personalised = this.serialiseGameStateForViewer(gameState, humanId);
         this.io.to(humanId).emit('gameUpdated', personalised);
         if (personalised.status === 'finished') {
-          this.io.to(humanId).emit('gameEnded', { type: 'ai-finished' });
+          // Determine the game outcome
+          const chess = gameState.chess;
+          let aiOutcome = null;
+          if (chess.isCheckmate()) {
+            const checkmatedColor = chess.turn();
+            const winnerColor = checkmatedColor === 'w' ? 'b' : 'w';
+            const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+            console.log('[gameManager] AI game checkmate detected:', { checkmatedColor, winnerColor, winnerSocketId });
+            aiOutcome = { type: 'checkmate', winnerSocketId };
+          } else if (chess.isStalemate()) {
+            aiOutcome = { type: 'draw' };
+          } else if (chess.isDraw()) {
+            aiOutcome = { type: 'draw' };
+          } else {
+            aiOutcome = { type: 'ai-finished' };
+          }
+          this.io.to(humanId).emit('gameEnded', aiOutcome);
         }
       }
     }
@@ -1666,7 +1696,7 @@ export class GameManager {
       const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= DRAW_COOLDOWN_PLIES;
       
       // AI should NOT draw while in check
-      const aiInCheck = chess.in_check();
+      const aiInCheck = chess.inCheck();
       
       if (!aiUsedCardThisTurn && aiCanDraw && !aiInCheck && Math.random() < settings.arcanaDrawChance) {
         const newCard = pickWeightedArcana();
@@ -1677,6 +1707,7 @@ export class GameManager {
         // Notify human player that AI drew a card
         const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));
         if (humanId) {
+          console.log('[gameManager] AI drew card, notifying player:', { aiSocketId, humanId, card: newCard, hasInst: !!newInst });
           this.io.to(humanId).emit('arcanaDrawn', {
               playerId: aiSocketId,
               arcana: newInst,
@@ -1752,7 +1783,7 @@ export class GameManager {
         }
         
         // Check if AI is under threat - defend more if needed
-        const aiKingInDanger = chess.in_check();
+        const aiKingInDanger = chess.inCheck();
         if (aiKingInDanger) {
           cardPriority['iron_fortress'] = 5;
           cardPriority['divine_intervention'] = 6;
@@ -1953,6 +1984,13 @@ export class GameManager {
       gameState.status = 'finished';
     } else if (chess.isStalemate() || chess.isDraw()) {
       gameState.status = 'finished';
+    }
+
+    // Broadcast updated game state to all human players after AI move
+    const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));
+    if (humanId) {
+      const personalised = this.serialiseGameStateForViewer(gameState, humanId);
+      this.io.to(humanId).emit('gameUpdated', personalised);
     }
   }
 

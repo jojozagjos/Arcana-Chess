@@ -12,6 +12,7 @@ import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares, ca
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
+import { extractCardTargetSquare, getCutsceneCardIds } from '../game/arcanaCardService.js';
 const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.jsx').then(m => ({ default: m.default ?? m.ParticleOverlay })));
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import CutsceneOverlay from './CutsceneOverlay.jsx';
@@ -269,16 +270,20 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }
   }, [cardReveal, mySocketId]);
 
-  // Dismiss card when player's turn ends
+  // Dismiss card when player's turn ends (with delay to allow animation to play)
   useEffect(() => {
     if (cardReveal && cardReveal.playerId === mySocketId && cardReveal.type === 'draw' && cardReveal.stayUntilClick) {
       const currentTurn = chess?.turn();
-      // If turn has changed and we're no longer in the turn when card was revealed, auto-dismiss
+      // If turn has changed and we're no longer in the turn when card was revealed, auto-dismiss after animation
       if (playerCardTurnRef.current && currentTurn && currentTurn !== playerCardTurnRef.current) {
-        setCardReveal(null);
-        playerCardTurnRef.current = null;
-        playerCardInstanceRef.current = null;
-        setIsCardAnimationPlaying(false);
+        // Wait 2.5 seconds to let draw animation complete before dismissing
+        const dismissTimer = setTimeout(() => {
+          setCardReveal(null);
+          playerCardTurnRef.current = null;
+          playerCardInstanceRef.current = null;
+          setIsCardAnimationPlaying(false);
+        }, 2500);
+        return () => clearTimeout(dismissTimer);
       }
     }
   }, [chess?.fen(), cardReveal, mySocketId]);
@@ -315,18 +320,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     setActiveVisualArcana(lastArcanaEvent);
     
     // Check if this arcana has cutscene enabled and a target square
-    // Note: divine_intervention is excluded because it only triggers when check actually happens, not when activated
-    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
+    // Use shared cutscene cards list to stay consistent with dev tool
+    const cutsceneCards = getCutsceneCardIds();
     let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
     
     if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
       const config = getCutsceneConfig(lastArcanaEvent.arcanaId);
       
-      // Extract square from various possible param field names
-      const targetSquare = lastArcanaEvent.params?.targetSquare || 
-                          lastArcanaEvent.params?.square ||
-                          lastArcanaEvent.params?.kingTo ||
-                          lastArcanaEvent.params?.rebornSquare;
+      // Extract square from various possible param field names using shared service
+      const targetSquare = extractCardTargetSquare(lastArcanaEvent.params);
       
       if (targetSquare && typeof targetSquare === 'string') {
         // Trigger camera cutscene to focus on the effect
@@ -452,6 +454,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Listen for arcana drawn events
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
+      console.log('[GameScene] arcanaDrawn received:', { data, mySocketId: socket?.id, isMyDraw: data?.playerId === socket?.id });
       soundManager.play('cardDraw');
       // If this draw was triggered by Focus Fire (bonus on capture), play its arcana sound
       try {

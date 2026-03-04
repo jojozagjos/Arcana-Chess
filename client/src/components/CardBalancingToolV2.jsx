@@ -16,6 +16,13 @@ import CutsceneOverlay from './CutsceneOverlay.jsx';
 import { orchestrateCutscene } from '../game/arcana/cutsceneOrchestrator.js';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor, getLogColor } from '../game/arcanaHelpers.js';
+import { 
+  extractCardTargetSquare, 
+  getCutsceneCardIds, 
+  shouldShowVisualsOnActivation,
+  validateCardUsability,
+  snakeToPascal
+} from '../game/arcanaCardService.js';
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import * as THREE from 'three';
 
@@ -549,6 +556,12 @@ export function CardBalancingToolV2({ onBack }) {
   const triggerCardVisualsAndSounds = (card, params, colorChar) => {
     const visualParams = { ...(params || {}), actorColor: colorChar };
 
+    // Use shared validation to check if card should show visuals on activation
+    if (!shouldShowVisualsOnActivation(card.id)) {
+      addLog(`${card.name} activated silently - visuals appear when check occurs`, 'info');
+      return;
+    }
+
     // Play sound effect if card has one (use soundKey)
     if (card.soundKey) {
       try {
@@ -565,10 +578,8 @@ export function CardBalancingToolV2({ onBack }) {
     if ((card.visual?.particles || card.visual?.effect) && !skipParticlesForPending) {
       setValidationChecklist(prev => ({ ...prev, visuals: true }));
 
-      const pascalCase = (id) => id.split(/[_-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
-
       const triggerVisual = (effectsMod) => {
-        const compName = `${pascalCase(card.id)}Effect`;
+        const compName = snakeToPascal(card.id);
         if (!effectsMod || !effectsMod[compName]) {
           addLog(`No visual component for ${card.id} (${compName})`, 'info');
           return;
@@ -596,7 +607,7 @@ export function CardBalancingToolV2({ onBack }) {
       if (card.visual?.cutscene) {
         setValidationChecklist(prev => ({ ...prev, cutscene: true }));
         try {
-          triggerCardCutscene(card.id, params.targetSquare || params.square);
+          triggerCardCutscene(card.id, extractCardTargetSquare(params));
         } catch (e) {
           addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
         }
