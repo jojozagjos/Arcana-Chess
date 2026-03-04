@@ -2178,14 +2178,14 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         clearInterval(progressInterval);
       };
     } else if (type === 'draw' && isHidden && !stayUntilClick && onDismiss) {
-      const autoDismissTimer = setTimeout(() => onDismiss(), 3500);
+      const autoDismissTimer = setTimeout(() => onDismiss(), 2500);
       return () => clearTimeout(autoDismissTimer);
     }
   }, [type, isHidden, stayUntilClick, onDismiss]);
 
   React.useEffect(() => {
     if (type === 'use' && !stayUntilClick && onDismiss) {
-      const AUTO_DISMISS_MS = 3500;
+      const AUTO_DISMISS_MS = 2500;
       const auto = setTimeout(() => onDismiss(), AUTO_DISMISS_MS);
       return () => clearTimeout(auto);
     }
