@@ -2233,8 +2233,11 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         clearTimeout(t2);
         clearInterval(progressInterval);
       };
-    } else if (type === 'draw' && isHidden && !stayUntilClick && onDismiss) {
-      const autoDismissTimer = setTimeout(() => onDismiss(), 2500);
+    } else if (type === 'draw' && onDismiss) {
+      // Auto-dismiss all draw animations after a short delay
+      // Player can still click to dismiss early if stayUntilClick is true
+      const AUTO_DISMISS_DRAW_MS = 1500; // Reduced from requiring manual click
+      const autoDismissTimer = setTimeout(() => onDismiss(), AUTO_DISMISS_DRAW_MS);
       return () => clearTimeout(autoDismissTimer);
     }
   }, [type, isHidden, stayUntilClick, onDismiss]);
