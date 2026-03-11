@@ -29,7 +29,7 @@ export function MainMenu({
   quickMatchStatus,
   quickMatchLoading = false,
 }) {
-  const [showUpdateLog, setShowUpdateLog] = useState(() => !sessionStorage.getItem('arcana_updatelog_dismissed'));
+  const [showUpdateLog, setShowUpdateLog] = useState(true);
   // Music is handled globally in App; no per-mode control needed here  
   if (mode === 'root') {
     return (
@@ -47,14 +47,14 @@ export function MainMenu({
             <button className="menu-button" onClick={onQuickMatch} disabled={quickMatchLoading}>{quickMatchStatus || 'Find Match'}</button>
           </div>
 
-          {showUpdateLog && (
+          {showUpdateLog ? (
             <div className="update-log">
               <div className="update-log-header">
                 <div>
                   <h2 className="update-log-title">Update Log</h2>
                   <div className="update-log-subtitle">Recent fixes, polish, and multiplayer quality-of-life changes.</div>
                 </div>
-                <button className="dismiss-btn" onClick={() => { setShowUpdateLog(false); sessionStorage.setItem('arcana_updatelog_dismissed', '1'); }}>✕</button>
+                <button className="dismiss-btn" title="Collapse" onClick={() => setShowUpdateLog(false)}>✕</button>
               </div>
 
               <div className="update-log-section">
@@ -70,8 +70,14 @@ export function MainMenu({
                 </ul>
               </div>
 
-              <div className="update-log-footer">Dismiss to hide this panel.</div>
+              <div className="update-log-footer">Click ✕ to collapse into a pill.</div>
             </div>
+          ) : (
+            <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
+              <span className="update-log-pill-dot" />
+              <span>v1.3.1</span>
+              <span className="update-log-pill-label">What's new</span>
+            </button>
           )}
 
           <div className="menu-secondary-row">

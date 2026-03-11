@@ -8,7 +8,7 @@ import { ARCANA_DEFINITIONS } from '../../../shared/arcanaDefinitions.js';
 // Change these constants to tweak particle/nebula/card behavior quickly.
 const PARTICLE_SPAWN_PROB = 0.001; // per-frame probability for particle spawn
 const NEBULA_AUTO_SPAWN_PROB = 0.0005; // per-frame probability for nebula auto-spawn
-const FLOATING_CARD_SPAWN_PROB = 0.0007; // per-frame prob for floating card overlay spawn
+const FLOATING_CARD_SPAWN_PROB = 0.0001; // per-frame prob for floating card overlay spawn
 
 const FLOATING_CARD_DEFAULT_DURATION_MS = 14000; // overlay card travel time (ms)
 const FLOATING_CARD_DEV_DURATION_MS = 18000; // dev button spawn duration (ms)
@@ -53,10 +53,9 @@ function useTextures() {
 }
 
 // --- 2. STAR FIELD (reverted to original look) ---
-function StarField({ count = 250 }) {
+function StarField({ count = 300 }) {
   const { size } = useThree();
   const geomRef = useRef();
-  const frameSkipRef = useRef(0);
 
   // positions
   const positions = useMemo(() => {
@@ -115,9 +114,6 @@ function StarField({ count = 250 }) {
   // Attach color attribute and animate brightness per-star
   useFrame((state) => {
     if (!geomRef.current) return;
-    frameSkipRef.current++;
-    // Only re-upload the color buffer every 2 frames — halves GPU pressure
-    if (frameSkipRef.current % 2 !== 0) return;
     const colAttr = geomRef.current.attributes.color;
     const t = state.clock.getElapsedTime();
     for (let i = 0; i < count; i++) {
@@ -290,7 +286,7 @@ function ParticleWrapper({ mouseRef, forceRef }) {
 
   return (
     <>
-      <StarField count={250} mouseRef={mouseRef} forceRef={forceRef} />
+      <StarField count={400} mouseRef={mouseRef} forceRef={forceRef} />
       <ParticleSystem textures={textures} mouseRef={mouseRef} forceRef={forceRef} />
       {/* Replace three.js floating-card with a single DOM ArcanaCard overlay for sharper visuals */}
       <NebulaCloud />
@@ -301,14 +297,6 @@ function ParticleWrapper({ mouseRef, forceRef }) {
 // DOM-based floating card overlay: uses the `ArcanaCard` JSX component so art is consistent.
 function FloatingCardOverlay({ devMode = false }) {
   const [cards, setCards] = useState([]);
-
-  // Spawn one card shortly after mount so the user sees one quickly
-  useEffect(() => {
-    const t = setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('spawnFloatingCard', { detail: { domOnly: true } }));
-    }, 2200);
-    return () => clearTimeout(t);
-  }, []);
 
   useEffect(() => {
     const handler = (e) => {

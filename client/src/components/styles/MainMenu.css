@@ -168,6 +168,44 @@
   .menu-button { font-size: 1.12rem; padding: 18px 26px; }
 }
 
+.update-log-pill {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px 7px 10px;
+  background: linear-gradient(135deg, rgba(76, 40, 160, 0.82), rgba(118, 72, 220, 0.82));
+  border: 1px solid rgba(191, 161, 255, 0.28);
+  border-radius: 999px;
+  color: #f1e8ff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 18px rgba(110, 62, 214, 0.18);
+  transition: transform 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+  letter-spacing: 0.02em;
+}
+.update-log-pill:hover {
+  transform: translateY(-1px) scale(1.03);
+  background: linear-gradient(135deg, rgba(92, 51, 187, 0.95), rgba(138, 92, 255, 0.95));
+  box-shadow: 0 6px 22px rgba(0,0,0,0.5), 0 0 24px rgba(138, 92, 255, 0.28);
+}
+.update-log-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a97fff;
+  box-shadow: 0 0 6px rgba(169, 127, 255, 0.8);
+  flex-shrink: 0;
+}
+.update-log-pill-label {
+  opacity: 0.75;
+  font-weight: 400;
+}
+
 .update-log {
   position: absolute;
   top: 22px;
@@ -262,6 +300,9 @@
   .update-log {
     position: static;
     width: min(100%, 560px);
+  }
+  .update-log-pill {
+    position: static;
   }
 
   .menu-ui {
