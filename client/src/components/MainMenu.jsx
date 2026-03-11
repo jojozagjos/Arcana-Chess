@@ -29,7 +29,7 @@ export function MainMenu({
   quickMatchStatus,
   quickMatchLoading = false,
 }) {
-  const [showUpdateLog, setShowUpdateLog] = useState(true);
+  const [showUpdateLog, setShowUpdateLog] = useState(() => !sessionStorage.getItem('arcana_updatelog_dismissed'));
   // Music is handled globally in App; no per-mode control needed here  
   if (mode === 'root') {
     return (
@@ -54,7 +54,7 @@ export function MainMenu({
                   <h2 className="update-log-title">Update Log</h2>
                   <div className="update-log-subtitle">Recent fixes, polish, and multiplayer quality-of-life changes.</div>
                 </div>
-                <button className="dismiss-btn" onClick={() => setShowUpdateLog(false)}>✕</button>
+                <button className="dismiss-btn" onClick={() => { setShowUpdateLog(false); sessionStorage.setItem('arcana_updatelog_dismissed', '1'); }}>✕</button>
               </div>
 
               <div className="update-log-section">
