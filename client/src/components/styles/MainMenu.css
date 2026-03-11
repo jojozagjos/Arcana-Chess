@@ -45,7 +45,12 @@
   margin: 0;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  text-shadow: 0 8px 30px rgba(157, 110, 255, 0.35);
+  color: #f7efff;
+  background: linear-gradient(120deg, #f7efff 8%, #d4b4ff 40%, #ffffff 56%, #c596ff 92%);
+  background-size: 160% 160%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: menuTitleBreathe 3.1s ease-in-out infinite, menuTitleGradientShift 7.8s linear infinite;
 }
 
 .menu-subtitle {
@@ -166,6 +171,27 @@
 @media (min-width: 1200px) {
   .menu-title { font-size: 3.6rem; }
   .menu-button { font-size: 1.12rem; padding: 18px 26px; }
+}
+
+@keyframes menuTitleBreathe {
+  from {
+    text-shadow: 0 8px 24px rgba(157, 110, 255, 0.28), 0 0 14px rgba(174, 131, 255, 0.16);
+  }
+  to {
+    text-shadow: 0 8px 30px rgba(157, 110, 255, 0.42), 0 0 22px rgba(194, 164, 255, 0.3);
+  }
+}
+
+@keyframes menuTitleGradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .update-log-pill {

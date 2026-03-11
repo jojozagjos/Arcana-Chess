@@ -110,28 +110,32 @@ function IntroScene({ phase }) {
 }
 
 export function IntroScreen({ onContinue }) {
-  const [textPhase, setTextPhase] = useState('none'); // 'none', 'creator', 'continue'
+  const [textPhase, setTextPhase] = useState('none'); // 'none', 'creator', 'fading', 'title', 'continue'
   const [scenePhase, setScenePhase] = useState('falling'); // 'falling', 'wait', 'fadeout'
   const [opacity, setOpacity] = useState(1);
   const fadeIntervalRef = useRef(null);
 
   useEffect(() => {
     // Sequence:
-    // 2.5s -> show creator text
-    // 4.5s -> fade creator out
-    // 5.1s -> show title + continue together and enter wait state
+    // 2.4s -> show creator text
+    // 4.6s -> fade creator out
+    // 5.7s -> show title
+    // 6.8s -> show continue prompt and enter wait state
     const timers = [];
 
-    timers.push(setTimeout(() => setTextPhase('creator'), 2500));
+    timers.push(setTimeout(() => setTextPhase('creator'), 2400));
 
     // start fade out after creator shows for a bit
-    timers.push(setTimeout(() => setTextPhase('fading'), 4500));
+    timers.push(setTimeout(() => setTextPhase('fading'), 4600));
 
-    // show title and continue together and enter wait state
+    // title forms after creator fades out
+    timers.push(setTimeout(() => setTextPhase('title'), 5700));
+
+    // then show continue and enter wait state
     timers.push(setTimeout(() => {
       setTextPhase('continue');
       setScenePhase('wait');
-    }, 5100));
+    }, 6800));
 
     return () => {
       timers.forEach((t) => clearTimeout(t));
@@ -185,21 +189,21 @@ export function IntroScreen({ onContinue }) {
       {/* Text Overlays */}
       <div className={`intro-text-overlay ${textPhase === 'continue' ? 'overlay-active' : ''}`}>
         {textPhase === 'creator' && (
-          <div className="creator-text fade-in">Made by Joseph Slade</div>
+          <div className="creator-text liquid-reveal creator-glow">Made by Joseph Slade</div>
         )}
 
         {textPhase === 'fading' && (
-          <div className="creator-text fade-out">Made by Joseph Slade</div>
+          <div className="creator-text liquid-fade-out">Made by Joseph Slade</div>
         )}
 
         {textPhase === 'title' && (
-          <div className="game-title fade-in">Arcana Chess</div>
+          <div className="game-title liquid-reveal title-glow">Arcana Chess</div>
         )}
 
         {textPhase === 'continue' && (
           <>
-            <div className="game-title fade-in">Arcana Chess</div>
-            <div className="continue-text fade-in">(Click to Continue)</div>
+            <div className="game-title title-settled">Arcana Chess</div>
+            <div className="continue-text continue-pulse">(Click to Continue)</div>
           </>
         )}
       </div>

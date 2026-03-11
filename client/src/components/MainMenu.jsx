@@ -29,7 +29,7 @@ export function MainMenu({
   quickMatchStatus,
   quickMatchLoading = false,
 }) {
-  const [showUpdateLog, setShowUpdateLog] = useState(true);
+  const [showUpdateLog, setShowUpdateLog] = useState(false);
   // Music is handled globally in App; no per-mode control needed here  
   if (mode === 'root') {
     return (
