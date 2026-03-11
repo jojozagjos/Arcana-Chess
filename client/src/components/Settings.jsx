@@ -193,7 +193,7 @@ function SliderRow({ label, value, onChange }) {
 }
 
 function ToggleRow({ label, value, onChange, trueLabel = 'On', falseLabel = 'Off', trueStyle = {}, falseStyle = {} }) {
-  const background = value ? (trueStyle.background ?? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)') : (falseStyle.background ?? 'rgba(76, 86, 106, 0.5)');
+  const background = value ? (trueStyle.background ?? 'linear-gradient(135deg, #1f8ea8 0%, #2ec4b6 100%)') : (falseStyle.background ?? 'rgba(28, 44, 63, 0.72)');
   const color = value ? (trueStyle.color ?? '#eceff4') : (falseStyle.color ?? '#eceff4');
 
   return (
@@ -228,17 +228,18 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'radial-gradient(circle at top, #1b2735, #090a0f)',
-    color: '#e5e9f0',
-    fontFamily: 'system-ui, sans-serif',
+    background: 'radial-gradient(circle at 20% 10%, #173047 0%, #0a1824 45%, #04070c 100%)',
+    color: '#e9f4fb',
+    fontFamily: 'Trebuchet MS, Segoe UI, sans-serif',
   },
   panel: {
     minWidth: 420,
     maxWidth: 720,
     padding: 24,
-    borderRadius: 18,
-    background: 'rgba(5, 6, 10, 0.95)',
-    boxShadow: '0 22px 60px rgba(0,0,0,0.65)',
+    borderRadius: 22,
+    border: '1px solid rgba(69, 170, 194, 0.28)',
+    background: 'linear-gradient(180deg, rgba(9, 17, 27, 0.97) 0%, rgba(6, 12, 20, 0.98) 100%)',
+    boxShadow: '0 24px 70px rgba(0,0,0,0.62), 0 0 60px rgba(45, 173, 186, 0.12)',
   },
   headerRow: {
     display: 'flex',
@@ -248,21 +249,23 @@ const styles = {
   },
   heading: {
     margin: 0,
-    fontSize: '1.4rem',
+    fontSize: '1.45rem',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
   },
   backButton: {
     padding: '6px 12px',
     borderRadius: 999,
-    border: '1px solid #394867',
-    background: 'transparent',
-    color: '#d0d6ea',
+    border: '1px solid rgba(87, 198, 208, 0.36)',
+    background: 'rgba(10, 22, 36, 0.75)',
+    color: '#d9edf6',
     cursor: 'pointer',
     fontSize: '0.8rem',
   },
   section: {
     marginTop: 10,
-    paddingTop: 10,
-    borderTop: '1px solid rgba(255,255,255,0.05)',
+    paddingTop: 12,
+    borderTop: '1px solid rgba(87, 198, 208, 0.18)',
   },
   sectionHeading: {
     margin: 0,
@@ -283,9 +286,9 @@ const styles = {
     flex: 1,
     padding: '6px 10px',
     borderRadius: 8,
-    border: '1px solid #3b4252',
-    background: 'rgba(8,10,20,0.9)',
-    color: '#e5e9f0',
+    border: '1px solid rgba(87, 198, 208, 0.3)',
+    background: 'rgba(8, 20, 32, 0.9)',
+    color: '#e9f4fb',
     fontSize: '0.9rem',
   },
   sliderValue: {
@@ -297,9 +300,9 @@ const styles = {
   resetButton: {
     padding: '6px 12px',
     borderRadius: 999,
-    border: '1px solid #394867',
-    background: 'transparent',
-    color: '#f8f9fb',
+    border: '1px solid rgba(87, 198, 208, 0.32)',
+    background: 'rgba(10, 22, 36, 0.75)',
+    color: '#f0fbff',
     cursor: 'pointer',
     fontSize: '0.8rem',
   },

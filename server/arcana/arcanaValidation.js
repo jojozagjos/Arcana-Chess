@@ -257,25 +257,30 @@ function validateEnPassantMaster(chess, from, to, color) {
   const fileDiff = Math.abs(toFile - fromFile);
   const rankDiff = Math.abs(toRank - fromRank);
 
-  // En passant master allows capturing adjacent pawns diagonally forward
-  if (fileDiff !== 1 || rankDiff !== 1) return null;
+  // Variant behavior requested:
+  // 1) Sideways adjacent pawn capture (from e4 to f4), any time.
+  // 2) Keep diagonal-forward en-passant-style capture as fallback.
+  if (fileDiff === 1 && rankDiff === 0) {
+    const target = chess.get(to);
+    if (target && target.type === 'p' && target.color !== color) {
+      return { from, to, piece: 'p', color, captured: 'p' };
+    }
+    return null;
+  }
 
-  const direction = color === 'w' ? 1 : -1;
-  if (toRank !== fromRank + direction) return null;
+  if (fileDiff === 1 && rankDiff === 1) {
+    const direction = color === 'w' ? 1 : -1;
+    if (toRank !== fromRank + direction) return null;
 
-  // Prevent en-passant variant from landing on own promotion rank
-  const ownPromotionRank = color === 'w' ? 8 : 1;
-  if (toRank === ownPromotionRank) return null;
+    // Prevent en-passant variant from landing on own promotion rank
+    const ownPromotionRank = color === 'w' ? 8 : 1;
+    if (toRank === ownPromotionRank) return null;
 
-  // The pawn to capture must be on the same rank as the source (adjacent horizontally)
-  const adjacentSquare = String.fromCharCode(toFile) + fromRank;
-  const adjacentPiece = chess.get(adjacentSquare);
+    // The pawn to capture must be on the same rank as the source (adjacent horizontally)
+    const adjacentSquare = String.fromCharCode(toFile) + fromRank;
+    const adjacentPiece = chess.get(adjacentSquare);
 
-  // Can only capture if there's an enemy pawn on the adjacent square
-  // AND the destination square is EMPTY (the pawn moves diagonally forward to empty square)
-  if (adjacentPiece && adjacentPiece.type === 'p' && adjacentPiece.color !== color) {
-    // Make sure destination is empty (standard en passant rule)
-    if (!chess.get(to)) {
+    if (adjacentPiece && adjacentPiece.type === 'p' && adjacentPiece.color !== color && !chess.get(to)) {
       return { from, to, piece: 'p', color, flags: 'e', captured: 'p' };
     }
   }

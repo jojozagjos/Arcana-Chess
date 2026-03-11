@@ -45,12 +45,15 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [highlightedArcana, setHighlightedArcana] = useState(null); // which arcana produced highlightedSquares
   const [peekCardDialog, setPeekCardDialog] = useState(null); // { cardCount, opponentId } when selecting card to peek
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
+  const [filteredCycleDialog, setFilteredCycleDialog] = useState(null); // { arcanaId }
   // Hover threat sources: set of squares (e.g. new Set(['e5','d4'])) that attack a simulated destination
   const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
   // Fog of war effect tracking - persist particles while fog is active
   const [activeFogEffects, setActiveFogEffects] = useState({}); // { 'w' or 'b': true/false }
   // Time control - client-side countdown display
   const [clientSideTimes, setClientSideTimes] = useState({}); // { socketId: remainingSeconds }
+  const [combatLog, setCombatLog] = useState([]);
+  const [showCombatLog, setShowCombatLog] = useState(true);
   // WebGL context loss state - prevents flashing during recovery
   const [isContextLost, setIsContextLost] = useState(false);
   const contextLossCountRef = useRef(0); // Track consecutive context losses
@@ -117,6 +120,22 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const lastProcessedArcanaAtRef = useRef(null);
   const lastActiveVisualKeyRef = useRef(null);
   const USE_CARD_ANIM_MS = 2500;
+  const FILTERED_CYCLE_CATEGORIES = [
+    { key: 'offense', label: 'Offense' },
+    { key: 'defense', label: 'Defense' },
+    { key: 'movement', label: 'Movement' },
+    { key: 'utility', label: 'Utility' },
+    { key: 'resurrection', label: 'Resurrection' },
+    { key: 'transformation', label: 'Transformation' },
+    { key: 'special', label: 'Special' },
+  ];
+
+  const appendCombatLog = (entry) => {
+    setCombatLog((prev) => {
+      const next = [...prev, { at: Date.now(), ...entry }];
+      return next.length > 300 ? next.slice(next.length - 300) : next;
+    });
+  };
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
@@ -151,6 +170,36 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const arr = gameState.usedArcanaIdsByPlayer[mySocketId] || [];
     return new Set(arr);
   }, [gameState?.usedInstanceIdsByPlayer, gameState?.usedArcanaIdsByPlayer, mySocketId]);
+
+  const postGameStats = useMemo(() => {
+    const moves = combatLog.filter((e) => e.type === 'move').length;
+    const captures = combatLog.filter((e) => e.type === 'move' && e.captured).length;
+    const arcanaUsed = combatLog.filter((e) => e.type === 'arcana_used').length;
+    const cardsDrawn = combatLog.filter((e) => e.type === 'arcana_drawn').length;
+    const statusEvents = combatLog.filter((e) => e.type === 'effect').length;
+    return { moves, captures, arcanaUsed, cardsDrawn, statusEvents };
+  }, [combatLog]);
+
+  const exportReplay = () => {
+    const replay = {
+      exportedAt: new Date().toISOString(),
+      gameId: gameState?.id || null,
+      outcome: gameEndOutcome || null,
+      settings,
+      stats: postGameStats,
+      finalState: gameState,
+      combatLog,
+    };
+    const blob = new Blob([JSON.stringify(replay, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `arcana-replay-${gameState?.id || 'match'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const isAscended = gameState?.ascended || !!ascendedInfo;
 
@@ -201,6 +250,47 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     }
   }, [hasVision, chess, myColor, opponentColorChar]);
 
+  // Quiet Thought: persistent private highlights for 3 turns of the card user.
+  useEffect(() => {
+    const turnsLeft = gameState?.activeEffects?.quietThought?.[myColorCode] || 0;
+    if (!turnsLeft) {
+      if (highlightedArcana === 'quiet_thought') {
+        setHighlightedSquares([]);
+        setHighlightedArcana(null);
+      }
+      return;
+    }
+    if (!chess) return;
+
+    let kingSquare = null;
+    const board = chess.board();
+    for (let rank = 0; rank < 8; rank++) {
+      for (let file = 0; file < 8; file++) {
+        const piece = board[rank][file];
+        if (piece && piece.type === 'k' && piece.color === myColorCode) {
+          kingSquare = 'abcdefgh'[file] + (8 - rank);
+        }
+      }
+    }
+    if (!kingSquare) return;
+
+    const opp = myColorCode === 'w' ? 'b' : 'w';
+    const temp = new Chess(chess.fen());
+    const fenParts = temp.fen().split(' ');
+    fenParts[1] = opp;
+    try {
+      temp.load(fenParts.join(' '));
+    } catch {
+      return;
+    }
+    const moves = temp.moves({ verbose: true });
+    const threats = [...new Set(moves.filter((m) => m.to === kingSquare).map((m) => m.from))];
+
+    setHighlightedSquares(threats);
+    setHighlightedArcana('quiet_thought');
+    setHighlightColor('#ff4444');
+  }, [gameState?.activeEffects?.quietThought?.w, gameState?.activeEffects?.quietThought?.b, myColorCode, chess]);
+
   // Time control countdown - update client-side display in real-time
   useEffect(() => {
     if (!gameState?.timePerPlayer || gameState?.status !== 'ongoing') {
@@ -214,15 +304,21 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const timerInterval = setInterval(() => {
       setClientSideTimes(prevTimes => {
         const updated = { ...prevTimes };
-        for (const playerId in updated) {
-          updated[playerId] = Math.max(0, updated[playerId] - 0.1);
+        const activeTurnChar = gameState?.turn;
+        const activePlayerId = Object.entries(gameState?.playerColors || {}).find(([, colorName]) => {
+          const colorChar = colorName === 'white' ? 'w' : 'b';
+          return colorChar === activeTurnChar;
+        })?.[0];
+
+        if (activePlayerId && typeof updated[activePlayerId] === 'number') {
+          updated[activePlayerId] = Math.max(0, updated[activePlayerId] - 0.1);
         }
         return updated;
       });
     }, 100);
 
     return () => clearInterval(timerInterval);
-  }, [gameState?.timePerPlayer, gameState?.status]);
+  }, [gameState?.timePerPlayer, gameState?.status, gameState?.turn, gameState?.playerColors]);
 
   useEffect(() => {
     if (ascendedInfo) {
@@ -510,6 +606,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
       soundManager.play('cardDraw');
+      appendCombatLog({ type: 'arcana_drawn', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} drew ${data.arcana?.name || 'a card'}` });
       // If this draw was triggered by Focus Fire (bonus on capture), play its arcana sound
       try {
         if (data && data.reason && typeof data.reason === 'string' && data.reason.toLowerCase().includes('focus fire')) {
@@ -535,6 +632,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const handleArcanaUsed = (data) => {
       console.log('[CLIENT] Received arcanaUsed event:', data);
       soundManager.play('cardUse');
+      appendCombatLog({ type: 'arcana_used', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} used ${data.arcana?.name || data.arcana?.id || 'Arcana'}` });
       const isMyUse = data.playerId === socket?.id;
 
       // Phase A: Record the pending visual event
@@ -612,12 +710,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           break;
         }
         case 'quiet_thought': {
-          const squares = params?.threats || [];
-          setHighlightedSquares(Array.isArray(squares) ? squares : []);
-          setHighlightedArcana('quiet_thought');
-          setHighlightColor('#ff4444');
-          const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
-          timeoutsRef.current.push(t);
+          // Quiet Thought is maintained from activeEffects.quietThought turns,
+          // so this event only confirms activation and does not auto-clear.
           break;
         }
         case 'vision': {
@@ -686,6 +780,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     // Lightweight handlers for server-only events to provide feedback
     const handlePiecePoisoned = (data) => {
       try { soundManager.play('arcana:poison_touch'); } catch {}
+      appendCombatLog({ type: 'effect', text: `Poison applied${Array.isArray(data?.squares) ? ` at ${data.squares.join(', ')}` : ''}` });
       const squares = Array.isArray(data?.squares) ? data.squares.join(', ') : '';
       setPendingMoveError(squares ? `Pieces poisoned: ${squares}` : 'A piece has been poisoned');
       const timeout = setTimeout(() => setPendingMoveError(''), 3000);
@@ -694,6 +789,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     const handleChainLightning = (data) => {
       try { soundManager.play('arcana:chain_lightning'); } catch {}
+      appendCombatLog({ type: 'effect', text: 'Chain Lightning triggered' });
       const destroyedSquares = Array.isArray(data?.destroyedPieces)
         ? data.destroyedPieces.map((p) => p.square).filter(Boolean)
         : [];
@@ -719,6 +815,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     const handleExtraMoveAvailable = (data) => {
       try { soundManager.play('cardUse'); } catch {}
+      appendCombatLog({ type: 'effect', text: `Extra move available (${data?.type || 'extra-move'})` });
       const typ = data?.type || 'extra-move';
       if (typ === 'berserkerRage' && data?.square) {
         setActiveVisualArcana({ arcanaId: 'berserker_rage', params: { square: data.square } });
@@ -732,9 +829,60 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
     const handleServerWarning = (data) => {
       const msg = data?.message || 'Server warning';
+      appendCombatLog({ type: 'effect', text: `Server: ${msg}` });
       setPendingMoveError(msg);
       const timeout = setTimeout(() => setPendingMoveError(''), 3000);
       timeoutsRef.current.push(timeout);
+    };
+
+    const handleSessionResumed = () => {
+      appendCombatLog({ type: 'effect', text: 'Connection restored. Match resumed.' });
+      setPendingMoveError('Connection restored. Match resumed.');
+      const timeout = setTimeout(() => setPendingMoveError(''), 2200);
+      timeoutsRef.current.push(timeout);
+    };
+
+    const toWorldPos = (sq) => {
+      const file = 'abcdefgh'.indexOf(sq[0]);
+      const rank = 8 - parseInt(sq[1], 10);
+      return [file - 3.5, 0.15, rank - 3.5];
+    };
+
+    const handleSquireSupportBounce = (data) => {
+      const from = data?.from;
+      const to = data?.to;
+      if (!from || !to) return;
+
+      // Phase 1: attacker lunges to capture square.
+      setPiecesState((prev) => {
+        const attacker = prev.find((p) => p.square === from);
+        if (!attacker) return prev;
+        return prev.map((p) => (p.uid === attacker.uid ? { ...p, targetPosition: toWorldPos(to) } : p));
+      });
+
+      const t1 = setTimeout(() => {
+        // Phase 2: defender bumps the attacker back.
+        setPiecesState((prev) => {
+          const attacker = prev.find((p) => p.square === from);
+          const defender = prev.find((p) => p.square === to);
+          return prev.map((p) => {
+            if (attacker && p.uid === attacker.uid) return { ...p, targetPosition: toWorldPos(from) };
+            if (defender && p.uid === defender.uid) return { ...p, targetPosition: toWorldPos(from) };
+            return p;
+          });
+        });
+      }, 260);
+
+      const t2 = setTimeout(() => {
+        // Phase 3: defender returns to original square.
+        setPiecesState((prev) => {
+          const defender = prev.find((p) => p.square === to);
+          if (!defender) return prev;
+          return prev.map((p) => (p.uid === defender.uid ? { ...p, targetPosition: toWorldPos(to) } : p));
+        });
+      }, 520);
+
+      timeoutsRef.current.push(t1, t2);
     };
 
     socket.on('arcanaDrawn', handleArcanaDrawn);
@@ -750,6 +898,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     socket.on('chainLightningTriggered', handleChainLightning);
     socket.on('extraMoveAvailable', handleExtraMoveAvailable);
     socket.on('serverWarning', handleServerWarning);
+    socket.on('squireSupportBounce', handleSquireSupportBounce);
+    socket.on('sessionResumed', handleSessionResumed);
 
     return () => {
       socket.off('arcanaDrawn', handleArcanaDrawn);
@@ -765,6 +915,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       socket.off('chainLightningTriggered', handleChainLightning);
       socket.off('extraMoveAvailable', handleExtraMoveAvailable);
       socket.off('serverWarning', handleServerWarning);
+      socket.off('squireSupportBounce', handleSquireSupportBounce);
+      socket.off('sessionResumed', handleSessionResumed);
       // Clean up all pending timeouts
       timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
       timeoutsRef.current = [];
@@ -1156,6 +1308,12 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     // Determine mover color: after the move, `gameState.turn` is the side to move.
     const moverColor = gameState?.turn === 'w' ? 'b' : 'w';
     const myColorCode = myColor === 'white' ? 'w' : 'b';
+    const actor = moverColor === myColorCode ? 'You' : 'Opponent';
+    appendCombatLog({
+      type: 'move',
+      captured: !!lm.captured,
+      text: `${actor} moved ${lm.from} -> ${lm.to}${lm.captured ? ` (captured ${lm.captured})` : ''}`,
+    });
 
     // If the mover is me, we already played the sound at the local gesture.
     const lmShortKey = `${lm.from}-${lm.to}`;
@@ -1372,6 +1530,27 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         <OrbitControls ref={controlsRef} enabled={!cutsceneTarget} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
       </Canvas>
 
+      {gameState?.timePerPlayer && (
+        <div style={styles.topTimerBar}>
+          {gameState.playerIds.map((playerId) => {
+            const timeRemaining = clientSideTimes[playerId] ?? gameState.timePerPlayer[playerId] ?? 0;
+            const minutes = Math.floor(Math.max(0, timeRemaining) / 60);
+            const seconds = Math.floor(Math.max(0, timeRemaining) % 60);
+            const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            const isMyTime = playerId === mySocketId;
+            const isLowTime = timeRemaining < 60;
+            const playerTurnChar = gameState?.playerColors?.[playerId] === 'white' ? 'w' : 'b';
+            const isActive = playerTurnChar === gameState?.turn;
+            return (
+              <div key={playerId} style={{ ...styles.topTimerPill, ...(isActive ? styles.topTimerPillActive : {}) }}>
+                <div style={{ fontSize: 11, opacity: 0.75 }}>{isMyTime ? 'You' : 'Opponent'}</div>
+                <div style={{ fontWeight: 700, color: isLowTime ? '#ff6b6b' : '#e5e9f0' }}>{timeStr}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div style={styles.hud}>
         <div>Turn: {gameState?.turn === 'w' ? 'White' : 'Black'}</div>
         <div>Status: {gameState?.status || 'unknown'}</div>
@@ -1404,8 +1583,21 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           </div>
         )}
         
+        <button style={styles.button} onClick={() => setShowCombatLog((v) => !v)}>{showCombatLog ? 'Hide Log' : 'Show Log'}</button>
         <button style={styles.button} onClick={() => setShowMenu(true)}>Menu</button>
       </div>
+
+      {showCombatLog && (
+        <div style={styles.combatLogPanel}>
+          <div style={styles.combatLogHeader}>Combat Log</div>
+          <div style={styles.combatLogList}>
+            {combatLog.slice(-40).map((e, idx) => (
+              <div key={`${e.at}-${idx}`} style={styles.combatLogItem}>{e.text}</div>
+            ))}
+            {combatLog.length === 0 && <div style={styles.combatLogEmpty}>No events yet.</div>}
+          </div>
+        </div>
+      )}
 
       {pendingMoveError && (
         <div style={styles.errorBanner}>
@@ -1477,6 +1669,13 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                   errorMsg = 'No captured pieces to revive';
                 }
                 setPendingMoveError(errorMsg);
+                return;
+              }
+
+              if (arcanaId === 'arcane_cycle') {
+                setFilteredCycleDialog({ arcanaId });
+                setSelectedArcanaId(null);
+                setTargetingMode(null);
                 return;
               }
               
@@ -1626,8 +1825,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       style={{
                         ...styles.menuToggle,
                         background: settings.graphics?.postProcessing
-                          ? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)'
-                          : 'rgba(76, 86, 106, 0.5)',
+                          ? 'linear-gradient(135deg, #1f8ea8 0%, #2ec4b6 100%)'
+                          : 'rgba(28, 44, 63, 0.72)',
                       }}
                     >
                       {settings.graphics?.postProcessing ? 'On' : 'Off'}
@@ -1642,8 +1841,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       style={{
                         ...styles.menuToggle,
                         background: settings.graphics?.shadows
-                          ? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)'
-                          : 'rgba(76, 86, 106, 0.5)',
+                          ? 'linear-gradient(135deg, #1f8ea8 0%, #2ec4b6 100%)'
+                          : 'rgba(28, 44, 63, 0.72)',
                       }}
                     >
                       {settings.graphics?.shadows ? 'On' : 'Off'}
@@ -1657,8 +1856,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       style={{
                         ...styles.menuToggle,
                         background: settings.display?.fullscreen
-                          ? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)'
-                          : 'rgba(76, 86, 106, 0.5)',
+                          ? 'linear-gradient(135deg, #1f8ea8 0%, #2ec4b6 100%)'
+                          : 'rgba(28, 44, 63, 0.72)',
                       }}
                     >
                       {settings.display?.fullscreen ? 'On' : 'Off'}
@@ -1682,8 +1881,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       style={{
                         ...styles.menuToggle,
                         background: settings.gameplay?.showLegalMoves
-                          ? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)'
-                          : 'rgba(76, 86, 106, 0.5)',
+                          ? 'linear-gradient(135deg, #1f8ea8 0%, #2ec4b6 100%)'
+                          : 'rgba(28, 44, 63, 0.72)',
                       }}
                     >
                       {settings.gameplay?.showLegalMoves ? 'On' : 'Off'}
@@ -1698,8 +1897,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       style={{
                         ...styles.menuToggle,
                         background: settings.gameplay?.highlightLastMove
-                          ? 'linear-gradient(135deg, #a3be8c 0%, #8fbcbb 100%)'
-                          : 'rgba(76, 86, 106, 0.5)',
+                          ? 'linear-gradient(135deg, #1f8ea8 0%, #2ec4b6 100%)'
+                          : 'rgba(28, 44, 63, 0.72)',
                       }}
                     >
                       {settings.gameplay?.highlightLastMove ? 'On' : 'Off'}
@@ -1841,6 +2040,44 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         </div>
       )}
 
+      {filteredCycleDialog && (
+        <div style={styles.peekOverlay} onClick={() => setFilteredCycleDialog(null)}>
+          <div style={styles.peekPanel} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Filtered Cycle</h3>
+            <div style={{ opacity: 0.85, marginBottom: 12 }}>Choose a category to draw a common Arcana from:</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {FILTERED_CYCLE_CATEGORIES.map((category) => (
+                <button
+                  key={category.key}
+                  style={styles.button}
+                  onClick={() => {
+                    if (pendingActionRef.current) return;
+                    pendingActionRef.current = true;
+                    usedArcanaThisTurnRef.current = true;
+                    socket.emit('playerAction', {
+                      actionType: 'useArcana',
+                      arcanaUsed: [{ arcanaId: filteredCycleDialog.arcanaId, params: { category: category.key } }],
+                    }, (res) => {
+                      pendingActionRef.current = false;
+                      if (!res || !res.ok) {
+                        setPendingMoveError(res?.error || 'Failed to use arcana');
+                      } else {
+                        setPendingMoveError('');
+                      }
+                    });
+                    setFilteredCycleDialog(null);
+                    setSelectedArcanaId(null);
+                    setTargetingMode(null);
+                  }}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* activeVisualArcana overlay removed - CardRevealAnimation handles all card displays */}
 
       {cardReveal && (
@@ -1885,6 +2122,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           rematchVoteCount={rematchVoteCount}
           rematchTotalPlayers={rematchTotalPlayers}
           opponentLeft={opponentLeftDuringRematch}
+          stats={postGameStats}
+          onExportReplay={exportReplay}
           onRematchVote={() => {
             setRematchVote('voted');
             socket.emit('voteRematch');
@@ -2212,27 +2451,20 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
 
 function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClick, isHidden, onDismiss }) {
   // Hooks must always be called in the same order — declare them before any early returns
-  const [usePhase, setUsePhase] = React.useState(0);
   const [useProgress, setUseProgress] = React.useState(0);
 
   React.useEffect(() => {
     if (type === 'use') {
-      const t1 = setTimeout(() => setUsePhase(1), 800);
-      const t2 = setTimeout(() => setUsePhase(2), 1800);
       const startTime = Date.now();
-      const duration = 2000;
-      // Reduced interval from 50ms to 100ms for better performance
+      const duration = 2500;
+      // Track progress for particle switching
       const progressInterval = setInterval(() => {
         const elapsed = Date.now() - startTime;
         const progress = Math.min(1, elapsed / duration);
         setUseProgress(progress);
         if (progress >= 1) clearInterval(progressInterval);
       }, 100);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearInterval(progressInterval);
-      };
+      return () => clearInterval(progressInterval);
     } else if (type === 'draw' && onDismiss) {
       // Auto-dismiss all draw animations after a short delay
       // Player can still click to dismiss early if stayUntilClick is true
@@ -2298,57 +2530,37 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           }
         }
         
-        /* Use animation - smooth flowing phases */
-        @keyframes useAppear {
+        /* Use animation - single continuous animation to avoid restarts on phase changes */
+        @keyframes useCardSequence {
           0% { 
             transform: scale(0.8) rotateX(10deg);
             opacity: 0;
           }
-          100% { 
+          30% {
             transform: scale(1) rotateX(0deg);
             opacity: 1;
           }
-        }
-        
-        @keyframes usePulse {
-          0%, 100% { 
-            transform: scale(1);
-            filter: brightness(1);
-          }
-          50% { 
+          40% {
             transform: scale(1.03);
             filter: brightness(1.1);
           }
-        }
-        
-        @keyframes useGlow {
-          0% { 
-            transform: scale(1);
-          }
           50% { 
             transform: scale(1.05);
+            filter: brightness(1);
           }
-          100% { 
+          60% {
             transform: scale(1.08);
+            filter: brightness(0.95);
           }
-        }
-        
-        @keyframes useDissolve {
-          0% { 
-            opacity: 1;
-            transform: scale(1.08);
-          }
-          30% {
-            opacity: 0.85;
-            transform: scale(1.12);
-          }
-          70% {
+          80% {
             opacity: 0.4;
             transform: scale(1.25);
+            filter: brightness(0.9);
           }
           100% { 
             opacity: 0;
             transform: scale(1.35);
+            filter: brightness(0.8);
           }
         }
         
@@ -2443,8 +2655,8 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
       <div 
         style={{
           ...styles.cardRevealOverlay,
-          willChange: type === 'use' && usePhase >= 2 ? 'background' : 'auto',
-          animation: type === 'use' && usePhase >= 2 ? 'overlayFadeOut 1s ease-out forwards' : 'none'
+          willChange: type === 'use' ? 'background' : 'auto',
+          animation: type === 'use' ? 'overlayFadeOut 2.5s ease-out forwards' : 'none'
         }}
         onClick={handleClick}
       >
@@ -2457,8 +2669,8 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           display: 'flex',
           justifyContent: 'center',
           willChange: 'transform, opacity',
-          animation: type === 'use' && usePhase >= 2 
-            ? 'textFadeOut 0.8s ease-out forwards' 
+          animation: type === 'use'
+            ? 'textFadeOut 1.2s ease-out 1.3s forwards'
             : 'textReveal 0.5s ease-out forwards',
         }}>
           <div style={{
@@ -2474,7 +2686,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           </div>
         </div>
         
-        {/* Card container with phase-based animations for use */}
+        {/* Card container with single continuous animation (no phase restarts) */}
         <div style={{ 
           display: 'flex', 
           flexDirection: 'column',
@@ -2483,18 +2695,14 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           willChange: 'transform, opacity',
           animation: type === 'draw' 
             ? 'cardDrawIn 1s ease-out forwards' 
-            : usePhase === 0 
-              ? 'useAppear 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards'
-              : usePhase === 1
-                ? 'usePulse 0.8s ease-in-out infinite, useGlow 1s ease-in-out forwards'
-                : 'useDissolve 1.5s ease-out forwards',
+            : 'useCardSequence 2.5s ease-out forwards',
           transformStyle: 'preserve-3d',
         }}>
           <div style={{
             position: 'relative',
             willChange: type === 'use' ? 'filter' : 'auto',
             animation: type === 'draw' ? 'innerGlow 2s ease-in-out infinite, floatCard 3s ease-in-out infinite' : 'none',
-            filter: type === 'use' && usePhase < 2 ? `drop-shadow(0 0 30px ${colors.glow})` : 'none',
+            filter: type === 'use' ? `drop-shadow(0 0 30px ${colors.glow})` : 'none',
           }}>
             {isHidden ? (
               // Show a card back or placeholder for hidden opponent draws
@@ -2529,8 +2737,8 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            animation: type === 'use' && usePhase >= 2 
-              ? 'textFadeOut 0.8s ease-out forwards'
+            animation: type === 'use'
+              ? 'textFadeOut 1.2s ease-out 1.3s forwards'
               : 'textReveal 0.6s ease-out 0.5s forwards',
             opacity: 0,
           }}>
@@ -2549,10 +2757,10 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         )}
         
         {/* Use animation effects - GPU-accelerated particles */}
-        {type === 'use' && usePhase >= 1 && useProgress > 0.05 && (
+        {type === 'use' && useProgress > 0.1 && (
           <Suspense fallback={null}>
             <ParticleOverlay
-              type={usePhase === 1 ? 'ring' : 'dissolve'}
+              type={useProgress < 0.7 ? 'ring' : 'dissolve'}
               rarity={arcana ? arcana.rarity : 'common'}
               active={true}
             />
@@ -2574,7 +2782,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   );
 }
 
-function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, rematchTotalPlayers, opponentLeft, onRematchVote, onReturnToMenu }) {
+function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, rematchTotalPlayers, opponentLeft, stats, onExportReplay, onRematchVote, onReturnToMenu }) {
   const isDraw = !outcome.winnerSocketId || outcome.type === 'draw';
   const isWinner = !isDraw && outcome.winnerSocketId === mySocketId;
   const title = isDraw ? '🤝 DRAW' : (isWinner ? '🏆 VICTORY!' : '💀 DEFEAT');
@@ -2598,6 +2806,15 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, re
       <div style={styles.gameEndContainer}>
         <div style={{ ...styles.gameEndTitle, color }}>{title}</div>
         <div style={styles.gameEndMessage}>{message}</div>
+        {stats && (
+          <div style={styles.postGameStats}>
+            <div>Moves: {stats.moves}</div>
+            <div>Captures: {stats.captures}</div>
+            <div>Arcana Used: {stats.arcanaUsed}</div>
+            <div>Cards Drawn: {stats.cardsDrawn}</div>
+            <div>Effects Triggered: {stats.statusEvents}</div>
+          </div>
+        )}
         <div style={styles.gameEndButtons}>
           <button
             style={{
@@ -2617,6 +2834,12 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, re
           >
             ← Return to Menu
           </button>
+          <button
+            style={{ ...styles.gameEndButton, ...styles.gameEndButtonSecondary }}
+            onClick={onExportReplay}
+          >
+            Export Replay
+          </button>
         </div>
       </div>
     </div>
@@ -2624,6 +2847,28 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, re
 }
 
 const styles = {
+  topTimerBar: {
+    position: 'absolute',
+    top: 10,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    gap: 8,
+    zIndex: 30,
+  },
+  topTimerPill: {
+    minWidth: 120,
+    textAlign: 'center',
+    padding: '6px 10px',
+    borderRadius: 10,
+    background: 'rgba(8, 10, 16, 0.85)',
+    border: '1px solid rgba(136,192,208,0.35)',
+    fontFamily: 'system-ui, sans-serif',
+  },
+  topTimerPillActive: {
+    boxShadow: '0 0 14px rgba(136,192,208,0.45)',
+    border: '1px solid rgba(136,192,208,0.65)',
+  },
   hud: {
     position: 'absolute',
     top: 12,
@@ -2636,6 +2881,7 @@ const styles = {
     borderRadius: 8,
     fontFamily: 'system-ui, sans-serif',
     fontSize: '0.9rem',
+    zIndex: 20,
   },
   button: {
     padding: '6px 10px',
@@ -2666,16 +2912,16 @@ const styles = {
     zIndex: 1000,
   },
   menuPanel: {
-    background: 'linear-gradient(180deg, rgba(46, 52, 64, 0.98) 0%, rgba(36, 40, 51, 0.98) 100%)',
+    background: 'linear-gradient(180deg, rgba(9, 17, 27, 0.98) 0%, rgba(6, 12, 20, 0.98) 100%)',
     padding: 'clamp(20px, 4vw, 32px)',
-    borderRadius: 16,
+    borderRadius: 20,
     width: 'min(90vw, 900px)',
     maxHeight: '85vh',
     overflowY: 'auto',
-    border: '1px solid rgba(136, 192, 208, 0.2)',
-    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 60px rgba(136, 192, 208, 0.1)',
-    color: '#eceff4',
-    fontFamily: 'system-ui, sans-serif',
+    border: '1px solid rgba(69, 170, 194, 0.28)',
+    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 60px rgba(45, 173, 186, 0.12)',
+    color: '#e9f4fb',
+    fontFamily: 'Trebuchet MS, Segoe UI, sans-serif',
   },
   menuActionButton: {
     flex: 1,
@@ -2692,18 +2938,18 @@ const styles = {
     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
   },
   menuSettingsCard: {
-    background: 'rgba(59, 66, 82, 0.5)',
-    borderRadius: 12,
-    border: '1px solid rgba(136, 192, 208, 0.1)',
+    background: 'rgba(10, 22, 36, 0.72)',
+    borderRadius: 14,
+    border: '1px solid rgba(87, 198, 208, 0.16)',
     overflow: 'hidden',
   },
   menuCardHeader: {
     padding: '12px 16px',
-    background: 'rgba(136, 192, 208, 0.1)',
-    borderBottom: '1px solid rgba(136, 192, 208, 0.1)',
+    background: 'rgba(45, 173, 186, 0.14)',
+    borderBottom: '1px solid rgba(87, 198, 208, 0.16)',
     fontSize: 'clamp(0.95rem, 2vw, 1.1rem)',
     fontWeight: 600,
-    color: '#88c0d0',
+    color: '#6ed6df',
     display: 'flex',
     alignItems: 'center',
   },
@@ -2771,14 +3017,14 @@ const styles = {
   },
   menuSettingLabel: {
     fontSize: 'clamp(0.85rem, 1.8vw, 0.95rem)',
-    color: '#d8dee9',
+    color: '#d6ecf6',
   },
   menuSelect: {
     padding: '8px 12px',
     borderRadius: 8,
-    border: '1px solid rgba(136, 192, 208, 0.3)',
-    background: 'rgba(46, 52, 64, 0.8)',
-    color: '#eceff4',
+    border: '1px solid rgba(87, 198, 208, 0.3)',
+    background: 'rgba(8, 20, 32, 0.9)',
+    color: '#e9f4fb',
     fontSize: '0.9rem',
     cursor: 'pointer',
     minWidth: 100,
@@ -2807,7 +3053,7 @@ const styles = {
     color: '#d8dee9',
   },
   menuSliderValue: {
-    color: '#88c0d0',
+    color: '#6ed6df',
     fontWeight: 500,
     fontSize: '0.85rem',
   },
@@ -2816,7 +3062,7 @@ const styles = {
     height: 6,
     borderRadius: 3,
     appearance: 'none',
-    background: 'rgba(76, 86, 106, 0.5)',
+    background: 'rgba(28, 44, 63, 0.72)',
     cursor: 'pointer',
   },
   menuButton: {
@@ -2856,6 +3102,46 @@ const styles = {
     fontFamily: 'system-ui, sans-serif',
     fontSize: '0.9rem',
   },
+  combatLogPanel: {
+    position: 'absolute',
+    top: 68,
+    right: 12,
+    width: 340,
+    maxHeight: '48vh',
+    background: 'rgba(5, 6, 10, 0.85)',
+    border: '1px solid rgba(136,192,208,0.28)',
+    borderRadius: 10,
+    zIndex: 25,
+    overflow: 'hidden',
+    fontFamily: 'system-ui, sans-serif',
+  },
+  combatLogHeader: {
+    padding: '8px 10px',
+    borderBottom: '1px solid rgba(136,192,208,0.22)',
+    color: '#88c0d0',
+    fontWeight: 700,
+    fontSize: '0.85rem',
+  },
+  combatLogList: {
+    maxHeight: '42vh',
+    overflowY: 'auto',
+    padding: 8,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  combatLogItem: {
+    fontSize: '0.8rem',
+    color: '#d8dee9',
+    opacity: 0.95,
+    borderBottom: '1px solid rgba(255,255,255,0.05)',
+    paddingBottom: 4,
+  },
+  combatLogEmpty: {
+    fontSize: '0.8rem',
+    color: '#aeb7c7',
+    opacity: 0.8,
+  },
   arcanaText: {
     color: '#eceff4',
   },
@@ -2886,9 +3172,13 @@ const styles = {
   arcanaCardRow: {
     display: 'flex',
     gap: 12,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     paddingBottom: 4,
     alignItems: 'flex-end',
+    overflowX: 'auto',
+    overflowY: 'hidden',
+    whiteSpace: 'nowrap',
+    scrollbarWidth: 'thin',
   },
   arcanaTooltip: {
     position: 'absolute',
@@ -3113,6 +3403,18 @@ const styles = {
     color: '#d8dee9',
     marginBottom: 8,
     opacity: 0.95,
+  },
+  postGameStats: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    border: '1px solid rgba(136,192,208,0.25)',
+    background: 'rgba(3, 8, 20, 0.55)',
+    color: '#e5e9f0',
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 6,
+    textAlign: 'left',
   },
   gameEndSubtext: {
     fontSize: '0.9rem',

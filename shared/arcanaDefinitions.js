@@ -314,10 +314,10 @@ export const ARCANA_DEFINITIONS = [
   },
   {
     id: 'arcane_cycle',
-    name: 'Arcane Cycle',
+    name: 'Filtered Cycle',
     rarity: 'common',
     category: 'utility',
-    description: 'Discard one Arcana card from your hand and draw a new common Arcana card.',
+    description: 'Choose a category and draw a new common Arcana card from that category.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:arcane_cycle',
   },

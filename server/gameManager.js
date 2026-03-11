@@ -39,6 +39,20 @@ const STATUS_FINISHED = 'finished';
 // AI prefix
 const AI_PREFIX = 'AI-';
 
+function normalizeTimeControlMinutes(timeControl) {
+  if (timeControl === null || timeControl === undefined || timeControl === 'unlimited') return null;
+  if (typeof timeControl === 'number' && Number.isFinite(timeControl) && timeControl > 0) return timeControl;
+  if (typeof timeControl === 'string') {
+    const key = timeControl.trim().toLowerCase();
+    if (key === 'blitz') return 10;
+    if (key === 'rapid') return 30;
+    if (key === 'classical') return 60;
+    const parsed = Number(key);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 30;
+}
+
 /**
  * Helper: Validates that second capture is not adjacent to first kill square
  * Used by both Double Strike and Berserker Rage cards
@@ -132,11 +146,11 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
   const lastDrawTurn = {};
   for (const pid of playerIds) lastDrawTurn[pid] = INITIAL_DRAW_PLY;
 
-  // Initialize time control (in seconds)
-  const timePerPlayer = {};
-  for (const pid of playerIds) {
-    timePerPlayer[pid] = timeControl * 60; // Convert minutes to seconds
-  }
+  // Initialize time control (in seconds); null means unlimited time.
+  const timeMinutes = normalizeTimeControlMinutes(timeControl);
+  const timePerPlayer = timeMinutes === null
+    ? null
+    : Object.fromEntries(playerIds.map((pid) => [pid, timeMinutes * 60]));
 
   return {
     id: Math.random().toString(36).slice(2),
@@ -153,7 +167,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     arcanaByPlayer,
     usedArcanaIdsByPlayer: {},
     // Time control tracking
-    timeControl: timeControl, // minutes per player
+    timeControl: timeMinutes, // minutes per player, null for unlimited
     timePerPlayer: timePerPlayer, // remaining time in seconds
     lastMoveTime: Date.now(), // when current turn started
     timeLossLoser: null, // socketId of player who lost on time
@@ -172,6 +186,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       sanctuaries: [],    // [{ square, turns }]
       fogOfWar: { w: false, b: false },
       vision: { w: null, b: null },  // stores socketId of player who activated vision
+      quietThought: { w: 0, b: 0 },  // remaining owner turns of threat visibility
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
@@ -334,7 +349,7 @@ export class GameManager {
     const gameState = createInitialGameState({
       mode: lobby.gameMode,
       playerIds: [...lobby.players],
-      timeControl: lobby.timeControl || 30, // pass timeControl from lobby
+      timeControl: normalizeTimeControlMinutes(lobby.timeControl),
     });
 
     this.games.set(gameState.id, gameState);
@@ -380,7 +395,7 @@ export class GameManager {
       playerIds,
       aiDifficulty: difficulty,
       playerColor,
-      timeControl: timeControl || 30, // fallback to 30 if not provided
+      timeControl: normalizeTimeControlMinutes(timeControl),
     });
 
     this.games.set(gameState.id, gameState);
@@ -440,6 +455,10 @@ export class GameManager {
       fen: gameState.chess.fen(),
       turn: gameState.chess.turn(),
       status: gameState.status,
+      timeControl: gameState.timeControl ?? null,
+      timePerPlayer: gameState.timePerPlayer || null,
+      lastMoveTime: gameState.lastMoveTime || null,
+      timeLossLoser: gameState.timeLossLoser || null,
       ascended: gameState.ascended,
       ascensionTrigger: gameState.ascensionTrigger,
       arcanaByPlayer: Object.fromEntries(
@@ -522,6 +541,18 @@ export class GameManager {
           }
         }
         base.arcanaByPlayer = redacted;
+      }
+
+      // Quiet Thought is private utility intel. Only expose remaining turns
+      // for the viewer's own color; hide opponent's remaining turns.
+      if (base.activeEffects?.quietThought) {
+        base.activeEffects = {
+          ...base.activeEffects,
+          quietThought: {
+          w: viewerChar === 'w' ? (base.activeEffects.quietThought.w || 0) : 0,
+          b: viewerChar === 'b' ? (base.activeEffects.quietThought.b || 0) : 0,
+          },
+        };
       }
     } catch (e) {
       // Fail closed: if any error, remove lastMove to avoid leaking info
@@ -842,6 +873,17 @@ export class GameManager {
       }
     }
 
+    // If no capture is currently available, clear forced extra-capture states
+    // so the player cannot be soft-locked into illegal-only moves.
+    if (!legalMoves.some((m) => !!m.captured)) {
+      if (gameState.activeEffects.doubleStrikeActive?.color === moverColor) {
+        gameState.activeEffects.doubleStrikeActive = null;
+      }
+      if (gameState.activeEffects.berserkerRageActive?.color === moverColor) {
+        gameState.activeEffects.berserkerRageActive = null;
+      }
+    }
+
     // If not a standard legal move, check if it's an arcana-enhanced move
     if (!candidate && gameState.activeEffects) {
       candidate = validateArcanaMove(chess, move, gameState.activeEffects, moverColor);
@@ -986,7 +1028,10 @@ export class GameManager {
     if (isArcanaMove) {
       // Manually execute arcana move (e.g., spectral march through pieces)
       const movingPiece = chess.get(candidate.from);
-      const capturedPiece = chess.get(candidate.to);
+      const capturedSquare = candidate.flags && candidate.flags.includes('e')
+        ? `${candidate.to[0]}${candidate.from[1]}`
+        : candidate.to;
+      const capturedPiece = chess.get(capturedSquare);
       
       if (!movingPiece) {
         throw new Error(`Invalid move: No piece at ${candidate.from}`);
@@ -994,7 +1039,7 @@ export class GameManager {
       
       // Remove pieces
       chess.remove(candidate.from);
-      if (capturedPiece) chess.remove(candidate.to);
+      if (capturedPiece) chess.remove(capturedSquare);
       
       // Place piece at destination
       chess.put(movingPiece, candidate.to);
@@ -1211,6 +1256,17 @@ export class GameManager {
         
         result.squireBounce = { from: result.from, to: result.to };
         result.captured = null;  // No actual capture occurred
+
+        // Reveal bounce animation only to the protected player so the selected
+        // protected piece remains hidden from the opponent.
+        const protectedColorName = opponentColor === 'w' ? 'white' : 'black';
+        const protectedOwnerId = Object.entries(gameState.playerColors || {}).find(([, c]) => c === protectedColorName)?.[0];
+        if (protectedOwnerId && !protectedOwnerId.startsWith('AI-')) {
+          this.io.to(protectedOwnerId).emit('squireSupportBounce', {
+            from: result.from,
+            to: result.to,
+          });
+        }
       }
     }
 
@@ -2394,6 +2450,10 @@ export class GameManager {
     if (effects.vision[endingColor]) {
       effects.vision[endingColor] = null;
     }
+    effects.quietThought = effects.quietThought || { w: 0, b: 0 };
+    if (effects.quietThought[endingColor] > 0) {
+      effects.quietThought[endingColor]--;
+    }
     effects.focusFire = effects.focusFire || { w: false, b: false };
     // Keep structure consistent: doubleStrike stores objects or nulls per color
     effects.doubleStrike = { w: null, b: null };
@@ -2560,6 +2620,48 @@ export class GameManager {
     for (const pid of gameState.playerIds) {
       this.socketToGame.delete(pid);
     }
+  }
+
+  rebindSocket(oldSocketId, newSocketId) {
+    const gameId = this.socketToGame.get(oldSocketId);
+    if (!gameId) return null;
+    const gameState = this.games.get(gameId);
+    if (!gameState) return null;
+
+    gameState.playerIds = (gameState.playerIds || []).map((pid) => (pid === oldSocketId ? newSocketId : pid));
+
+    if (gameState.playerColors && Object.prototype.hasOwnProperty.call(gameState.playerColors, oldSocketId)) {
+      gameState.playerColors[newSocketId] = gameState.playerColors[oldSocketId];
+      delete gameState.playerColors[oldSocketId];
+    }
+
+    const remapObjectKey = (obj) => {
+      if (!obj || typeof obj !== 'object') return;
+      if (Object.prototype.hasOwnProperty.call(obj, oldSocketId)) {
+        obj[newSocketId] = obj[oldSocketId];
+        delete obj[oldSocketId];
+      }
+    };
+
+    remapObjectKey(gameState.arcanaByPlayer);
+    remapObjectKey(gameState.usedArcanaIdsByPlayer);
+    remapObjectKey(gameState.usedArcanaInstanceIdsByPlayer);
+    remapObjectKey(gameState.lastDrawTurn);
+    remapObjectKey(gameState.rematchVotes);
+    remapObjectKey(gameState.arcanaUsedThisTurn);
+
+    if (gameState.pendingReveal?.playerId === oldSocketId) {
+      gameState.pendingReveal.playerId = newSocketId;
+    }
+    if (gameState.pendingPeek && gameState.pendingPeek[oldSocketId]) {
+      gameState.pendingPeek[newSocketId] = gameState.pendingPeek[oldSocketId];
+      delete gameState.pendingPeek[oldSocketId];
+    }
+
+    this.socketToGame.delete(oldSocketId);
+    this.socketToGame.set(newSocketId, gameId);
+
+    return gameState;
   }
 
   handleDisconnect(socketId) {

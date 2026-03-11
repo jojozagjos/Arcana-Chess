@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonArcana, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
+import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonArcana, pickCommonArcanaByCategory, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
 
 /**
  * Validates arcana targeting before applying effects
@@ -263,6 +263,9 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
         visual: def.visual,
       };
 
+      const privateTriggerCards = new Set(['vision', 'line_of_sight', 'map_fragments', 'quiet_thought', 'peek_card']);
+      const ownerOnlyTrigger = privateTriggerCards.has(def.id);
+
       for (const pid of gameState.playerIds) {
         if (pid.startsWith('AI-')) continue;
         try {
@@ -292,9 +295,11 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
             arcana: def,
           });
 
-          // Full payload to the owner, redacted payload to others
-          const payload = pid === socketId ? ownerPayload : redactedPayload;
-          io.to(pid).emit('arcanaTriggered', payload);
+          // Full payload to the owner, redacted payload to others (unless owner-only utility intel)
+          if (!ownerOnlyTrigger || pid === socketId) {
+            const payload = pid === socketId ? ownerPayload : redactedPayload;
+            io.to(pid).emit('arcanaTriggered', payload);
+          }
         } catch (err) {
           // Non-fatal: log and continue. This prevents a single emit failure
           // (for example due to a stale socket reference) from throwing.
@@ -1000,6 +1005,8 @@ function applyLineOfSight({ chess, moverColor, params }) {
 function applyArcaneCycle({ gameState, socketId, params }) {
   // Requires discarding a card first (by index)
   const discardIndex = params?.discardIndex;
+  const selectedCategory = typeof params?.category === 'string' ? params.category : null;
+  let derivedCategory = null;
   
   // If no discard index provided, just draw (for backward compatibility)
   // But ideally client should provide a card to discard
@@ -1007,20 +1014,29 @@ function applyArcaneCycle({ gameState, socketId, params }) {
     const cards = gameState.arcanaByPlayer[socketId];
     if (discardIndex >= 0 && discardIndex < cards.length) {
       const discarded = cards.splice(discardIndex, 1)[0];
+      derivedCategory = discarded?.category || null;
       // Mark the card as used so it's not counted in usedArcanaIdsByPlayer
       // Actually we already mark arcane_cycle as used, so this is fine
     }
   }
-  
-  // Draw a new common arcana (card description specifies "common")
-  const newCard = makeArcanaInstance(pickCommonArcana());
+
+  // Filtered Cycle: draw a common card from a selected category when provided.
+  // Fallback order: explicit category -> discarded card category -> any common.
+  const targetCategory = selectedCategory || derivedCategory;
+  const newCard = makeArcanaInstance(
+    targetCategory ? pickCommonArcanaByCategory(targetCategory) : pickCommonArcana()
+  );
   gameState.arcanaByPlayer[socketId].push(newCard);
-  return { params: { drewCard: newCard.id, discardIndex } };
+  return { params: { drewCard: newCard.id, discardIndex, category: targetCategory || 'any' } };
 }
 
-function applyQuietThought({ chess, moverColor }) {
+function applyQuietThought({ chess, gameState, moverColor }) {
   const kingSquare = findKing(chess, moverColor);
   if (!kingSquare) return null;
+
+  // Quiet Thought is private intel and should persist for 3 turns of the card user.
+  gameState.activeEffects.quietThought = gameState.activeEffects.quietThought || { w: 0, b: 0 };
+  gameState.activeEffects.quietThought[moverColor] = 3;
   
   // Find squares where opponent pieces can attack the king
   // We need to check opponent's attack potential regardless of whose turn it is
@@ -1053,7 +1069,7 @@ function applyQuietThought({ chess, moverColor }) {
     }
   }
   
-  return { params: { kingSquare, threats: [...attackerSquares] } };
+  return { params: { kingSquare, threats: [...attackerSquares], turnsRemaining: 3 } };
 }
 
 function applyMapFragments({ chess, moverColor }) {

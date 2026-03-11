@@ -1,7 +1,7 @@
 .arcana-list {
   /* Nice thin scrollbar by default */
   scrollbar-width: thin;
-  scrollbar-color: #8f94fb rgba(255,255,255,0.02);
+  scrollbar-color: #2ec4b6 rgba(255,255,255,0.02);
 }
 
 /* WebKit-based browsers */
@@ -14,7 +14,7 @@
   border-radius: 10px;
 }
 .arcana-list::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #5b6bff, #8f94fb);
+  background: linear-gradient(180deg, #1f8ea8, #2ec4b6);
   border-radius: 10px;
   border: 3px solid rgba(0,0,0,0.18);
 }

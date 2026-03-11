@@ -4,6 +4,15 @@ import { socket } from '../game/socket.js';
 import './styles/MainMenu.css';
 import MenuParticlesCanvas from './MenuParticles.jsx';
 
+const TIME_CONTROL_LABELS = {
+  unlimited: 'Unlimited',
+  blitz: 'Blitz (10 min each)',
+  rapid: 'Rapid (30 min each)',
+  classical: 'Classical (60 min each)',
+};
+
+const getTimeControlLabel = (value) => TIME_CONTROL_LABELS[value] || String(value || 'Unlimited');
+
 export function MainMenu({
   mode = 'root',
   initialLobby = null,
@@ -40,17 +49,28 @@ export function MainMenu({
 
           {showUpdateLog && (
             <div className="update-log">
-              <button className="dismiss-btn" onClick={() => setShowUpdateLog(false)}>✕</button>
-              <strong>Update Log</strong>
-              <div className="log-entry"><strong>v1.2.4</strong> — Rare Card Verification & Fixes (Mar 02, 2026)</div>
-              <div className="log-entry">• Verified all 11 rare cards work correctly in dev manager and PvP multiplayer.</div>
-              <div className="log-entry">• Fixed Castle Breaker targeting validation bug (was incorrectly requiring target when it shouldn't).</div>
-              <div className="log-entry">• Passed full server regression: 58/58 tests + validation suite.</div>
-              <div className="log-entry">• Confirmed live two-client PvP socket flow with turn/draw gating enforcement.</div>
-              <div className="log-entry" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.1)' }}><strong>v1.2.3</strong> — Balancing Tool Fix (Mar 02, 2026)</div>
-              <div className="log-entry">• Dev Tool: Fixed critical bug preventing arcana-enhanced moves from working correctly.</div>
-              <div className="log-entry">• Cutscenes: Fixed Z-fighting on board visuals, improved camera control handling.</div>
-              <div style={{ marginTop: 6, fontSize: '0.8rem', color: '#8f9fb3' }}>Dismiss to hide</div>
+              <div className="update-log-header">
+                <div>
+                  <h2 className="update-log-title">Update Log</h2>
+                  <div className="update-log-subtitle">Recent fixes, polish, and multiplayer quality-of-life changes.</div>
+                </div>
+                <button className="dismiss-btn" onClick={() => setShowUpdateLog(false)}>✕</button>
+              </div>
+
+              <div className="update-log-section">
+                <div className="update-log-version">
+                  <span>v1.3.1  Lobby UX + Menu Polish</span>
+                  <span className="update-log-date">Mar 11, 2026</span>
+                </div>
+                <ul className="update-log-list">
+                  <li>Updated the menu update log to a latest-version format with no older release entries.</li>
+                  <li>Made secondary menu buttons fully rounded for a cleaner pill-button look.</li>
+                  <li>Improved in-lobby information layout so privacy, mode, clock, and player count are grouped in one place.</li>
+                  <li>Restored full host time-control choices, including Classical.</li>
+                </ul>
+              </div>
+
+              <div className="update-log-footer">Dismiss to hide this panel.</div>
             </div>
           )}
 
@@ -242,70 +262,38 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
               Lobby code: <strong style={{ fontSize: '1rem', opacity: 1 }}>{currentLobby.code}</strong>
               {currentLobby.isPrivate && <span style={{ marginLeft: 8 }}>🔒 Private</span>}
             </div>
-          </div>
-          <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>
-            Players: <strong>{playersCount}/2</strong>
+            <div style={{ marginTop: 6, fontSize: '0.85rem', opacity: 0.8 }}>
+              Players: <strong>{playersCount}/2</strong>
+            </div>
           </div>
         </div>
 
         {/* Settings section - editable for host, read-only for guest */}
         <div style={styles.settingsSection}>
           <h4 style={{ margin: 0, marginBottom: 10, fontSize: '0.95rem', opacity: 0.8 }}>Lobby settings</h4>
-          
-          {isHost ? (
-            // Host can edit settings
-            <>
-              <label style={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={currentLobby.isPrivate}
-                  onChange={(e) => handleSettingChange('isPrivate', e.target.checked)}
-                />
-                <span>Private lobby (requires code to join)</span>
-              </label>
-
-              <label style={styles.label}>
-                Game mode
-                <select
-                  style={styles.input}
-                  value={currentLobby.gameMode}
-                  onChange={(e) => handleSettingChange('gameMode', e.target.value)}
-                >
-                  <option value="Ascendant">Ascendant (Arcana unlock after capture)</option>
-                  <option value="Classic">Classic Chess (no Arcana cards)</option>
-                </select>
-              </label>
-
-              <label style={styles.label}>
-                Time control
-                <select
-                  style={styles.input}
-                  value={currentLobby.timeControl}
-                  onChange={(e) => handleSettingChange('timeControl', e.target.value)}
-                >
-                  <option value="unlimited">Unlimited</option>
-                  <option value="blitz">Blitz (fast)</option>
-                  <option value="rapid">Rapid</option>
-                </select>
-              </label>
-            </>
-          ) : (
-            // Guest sees read-only settings
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={styles.readOnlySetting}>
-                <span style={{ opacity: 0.7 }}>Game mode:</span>
-                <strong>{currentLobby.gameMode}</strong>
-              </div>
-              <div style={styles.readOnlySetting}>
-                <span style={{ opacity: 0.7 }}>Time control:</span>
-                <strong>{currentLobby.timeControl}</strong>
-              </div>
+          <div style={styles.lobbyMetaGrid}>
+            <div style={styles.lobbyMetaCard}>
+              <div style={styles.lobbyMetaLabel}>Privacy</div>
+              <div style={styles.lobbyMetaValue}>{currentLobby.isPrivate ? 'Private' : 'Public'}</div>
             </div>
-          )}
+            <div style={styles.lobbyMetaCard}>
+              <div style={styles.lobbyMetaLabel}>Game mode</div>
+              <div style={styles.lobbyMetaValue}>{currentLobby.gameMode}</div>
+            </div>
+            <div style={styles.lobbyMetaCard}>
+              <div style={styles.lobbyMetaLabel}>Time control</div>
+              <div style={styles.lobbyMetaValue}>{getTimeControlLabel(currentLobby.timeControl)}</div>
+            </div>
+            <div style={styles.lobbyMetaCard}>
+              <div style={styles.lobbyMetaLabel}>Lobby status</div>
+              <div style={styles.lobbyMetaValue}>Locked</div>
+            </div>
+          </div>
+          <div style={styles.lockedNote}>Settings are locked while in lobby.</div>
         </div>
 
         {/* Action buttons */}
-        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {isHost && (
             <button
               style={{ ...styles.primaryButton, width: '100%' }}
@@ -336,55 +324,83 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
   // Creation form (only shown when not in a lobby)
   return (
     <div style={styles.form}>
-      <label style={styles.label}>
-        Lobby name
-        <input
-          style={styles.input}
-          value={lobbyName}
-          onChange={(e) => setLobbyName(e.target.value)}
-          placeholder="My Awesome Lobby"
-        />
-      </label>
+      <div style={styles.setupGrid}>
+        <div style={styles.formSectionCard}>
+          <div style={styles.sectionEyebrow}>Online Match Setup</div>
+          <h3 style={styles.sectionTitle}>Create a lobby</h3>
+          <div style={styles.helperText}>Set the match rules once, share the code, and wait for one opponent to join.</div>
 
-      <label style={styles.checkboxRow}>
-        <input
-          type="checkbox"
-          checked={isPrivate}
-          onChange={(e) => setIsPrivate(e.target.checked)}
-        />
-        <span>Private lobby (requires code to join)</span>
-      </label>
+          <label style={styles.label}>
+            Lobby name
+            <input
+              style={styles.input}
+              value={lobbyName}
+              onChange={(e) => setLobbyName(e.target.value)}
+              placeholder="My Awesome Lobby"
+            />
+          </label>
 
-      <label style={styles.label}>
-        Game mode
-        <select
-          style={styles.input}
-          value={gameMode}
-          onChange={(e) => setGameMode(e.target.value)}
-        >
-          <option value="Ascendant">Ascendant (Arcana enabled)</option>
-          <option value="Classic">Classic Chess (no Arcana)</option>
-        </select>
-      </label>
+          <label style={styles.label}>
+            Game mode
+            <select
+              style={styles.input}
+              value={gameMode}
+              onChange={(e) => setGameMode(e.target.value)}
+            >
+              <option value="Ascendant">Ascendant (Arcana enabled)</option>
+              <option value="Classic">Classic Chess (no Arcana)</option>
+            </select>
+          </label>
 
-      <label style={styles.label}>
-        Time control
-        <select
-          style={styles.input}
-          value={timeControl}
-          onChange={(e) => setTimeControl(e.target.value)}
-        >
-          <option value="unlimited">Unlimited</option>
-          <option value="blitz">Blitz (fast)</option>
-          <option value="rapid">Rapid</option>
-        </select>
-      </label>
+          <label style={styles.label}>
+            Time control
+            <select
+              style={styles.input}
+              value={timeControl}
+              onChange={(e) => setTimeControl(e.target.value)}
+            >
+              <option value="unlimited">{TIME_CONTROL_LABELS.unlimited}</option>
+              <option value="blitz">{TIME_CONTROL_LABELS.blitz}</option>
+              <option value="rapid">{TIME_CONTROL_LABELS.rapid}</option>
+              <option value="classical">{TIME_CONTROL_LABELS.classical}</option>
+            </select>
+          </label>
 
-      <button style={{ ...styles.primaryButton, marginTop: 8 }} onClick={handleCreateLobby}>
-        Create lobby
-      </button>
+          <label style={styles.checkboxTile}>
+            <input
+              type="checkbox"
+              checked={isPrivate}
+              onChange={(e) => setIsPrivate(e.target.checked)}
+            />
+            <div>
+              <div style={styles.checkboxTitle}>Private lobby</div>
+              <div style={styles.checkboxText}>Requires a share code for entry.</div>
+            </div>
+          </label>
+        </div>
 
-      {status && <div style={styles.status}>{status}</div>}
+        <div style={styles.previewCard}>
+          <div style={styles.sectionEyebrow}>Match Preview</div>
+          <h3 style={styles.sectionTitle}>{lobbyName || 'Untitled Lobby'}</h3>
+          <div style={styles.previewList}>
+            <div style={styles.previewRow}><span>Mode</span><strong>{gameMode}</strong></div>
+            <div style={styles.previewRow}><span>Privacy</span><strong>{isPrivate ? 'Private' : 'Public'}</strong></div>
+            <div style={styles.previewRow}><span>Clock</span><strong>{getTimeControlLabel(timeControl)}</strong></div>
+            <div style={styles.previewRow}><span>Seats</span><strong>2 players</strong></div>
+          </div>
+
+          <div style={styles.calloutBox}>
+            Once created, lobby settings are locked until the lobby is closed.
+          </div>
+
+          <div style={styles.actionStack}>
+            <button style={{ ...styles.primaryButton, width: '100%' }} onClick={handleCreateLobby}>
+              Create lobby
+            </button>
+            {status && <div style={styles.statusCard}>{status}</div>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -413,63 +429,87 @@ function AIGameForm() {
 
   return (
     <div style={styles.form}>
-      <label style={styles.label}>
-        Game mode
-        <select
-          style={styles.input}
-          value={gameMode}
-          onChange={(e) => setGameMode(e.target.value)}
-        >
-          <option value="Ascendant">Ascendant (Arcana enabled)</option>
-          <option value="Classic">Classic Chess (no Arcana)</option>
-        </select>
-      </label>
+      <div style={styles.setupGrid}>
+        <div style={styles.formSectionCard}>
+          <div style={styles.sectionEyebrow}>Solo Match Setup</div>
+          <h3 style={styles.sectionTitle}>Create an AI game</h3>
+          <div style={styles.helperText}>Choose the board rules, bot difficulty, and side before the match starts.</div>
 
-      <label style={styles.label}>
-        AI difficulty
-        <select
-          style={styles.input}
-          value={difficulty}
-          onChange={(e) => setDifficulty(e.target.value)}
-        >
-          <option value="Scholar">Scholar (easy)</option>
-          <option value="Knight">Knight (medium)</option>
-          <option value="Monarch">Monarch (hard)</option>
-        </select>
-      </label>
+          <label style={styles.label}>
+            Game mode
+            <select
+              style={styles.input}
+              value={gameMode}
+              onChange={(e) => setGameMode(e.target.value)}
+            >
+              <option value="Ascendant">Ascendant (Arcana enabled)</option>
+              <option value="Classic">Classic Chess (no Arcana)</option>
+            </select>
+          </label>
 
-      <label style={styles.label}>
-        Your color
-        <select
-          style={styles.input}
-          value={playerColor}
-          onChange={(e) => setPlayerColor(e.target.value)}
-        >
-          <option value="white">White (move first)</option>
-          <option value="black">Black (AI moves first)</option>
-        </select>
-      </label>
+          <label style={styles.label}>
+            AI difficulty
+            <select
+              style={styles.input}
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value)}
+            >
+              <option value="Scholar">Scholar (easy)</option>
+              <option value="Knight">Knight (medium)</option>
+              <option value="Monarch">Monarch (hard)</option>
+            </select>
+          </label>
 
-      <label style={styles.label}>
-        Time control
-        <select
-          style={styles.input}
-          value={timeControl}
-          onChange={(e) => setTimeControl(e.target.value)}
-        >
-          <option value="unlimited">Unlimited</option>
-          <option value="5">Bullet (5 min)</option>
-          <option value="10">Blitz (10 min)</option>
-          <option value="30">Rapid (30 min)</option>
-          <option value="60">Classical (60 min)</option>
-        </select>
-      </label>
+          <label style={styles.label}>
+            Your color
+            <select
+              style={styles.input}
+              value={playerColor}
+              onChange={(e) => setPlayerColor(e.target.value)}
+            >
+              <option value="white">White (move first)</option>
+              <option value="black">Black (AI moves first)</option>
+            </select>
+          </label>
 
-      <button style={styles.primaryButton} onClick={handleStartAI}>
-        Start AI match
-      </button>
+          <label style={styles.label}>
+            Time control
+            <select
+              style={styles.input}
+              value={timeControl}
+              onChange={(e) => setTimeControl(e.target.value)}
+            >
+              <option value="unlimited">Unlimited</option>
+              <option value="5">Bullet (5 min)</option>
+              <option value="10">Blitz (10 min)</option>
+              <option value="30">Rapid (30 min)</option>
+              <option value="60">Classical (60 min)</option>
+            </select>
+          </label>
+        </div>
 
-      {status && <div style={styles.status}>{status}</div>}
+        <div style={styles.previewCard}>
+          <div style={styles.sectionEyebrow}>Match Preview</div>
+          <h3 style={styles.sectionTitle}>Versus AI</h3>
+          <div style={styles.previewList}>
+            <div style={styles.previewRow}><span>Mode</span><strong>{gameMode}</strong></div>
+            <div style={styles.previewRow}><span>Difficulty</span><strong>{difficulty}</strong></div>
+            <div style={styles.previewRow}><span>Your side</span><strong>{playerColor === 'white' ? 'White' : 'Black'}</strong></div>
+            <div style={styles.previewRow}><span>Clock</span><strong>{timeControl === 'unlimited' ? 'Unlimited' : `${timeControl} min`}</strong></div>
+          </div>
+
+          <div style={styles.calloutBox}>
+            AI matches start immediately after the server finishes setup.
+          </div>
+
+          <div style={styles.actionStack}>
+            <button style={{ ...styles.primaryButton, width: '100%' }} onClick={handleStartAI}>
+              Create AI game
+            </button>
+            {status && <div style={styles.statusCard}>{status}</div>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -602,7 +642,7 @@ function JoinLobbyScreen({ onBack, initialLobby = null }) {
 
   return (
     <div style={styles.container}>
-      <div style={{ ...styles.panel, maxWidth: 640 }}>
+      <div style={{ ...styles.panel, width: '94vw', maxWidth: 'none', height: '86vh', maxHeight: '86vh', display: 'flex', flexDirection: 'column' }}>
         <div style={styles.headerRow}>
           <h2 style={styles.heading}>Join game</h2>
           <button style={styles.backButton} onClick={onBack}>Back</button>
@@ -697,17 +737,22 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    background: 'radial-gradient(circle at top, #1b2735, #090a0f)',
-    color: '#e5e9f0',
-    fontFamily: 'system-ui, sans-serif',
+    background: 'radial-gradient(circle at 18% 14%, rgba(145, 92, 255, 0.28) 0%, rgba(145, 92, 255, 0.08) 22%, transparent 42%), linear-gradient(180deg, #221133 0%, #12091d 52%, #07040d 100%)',
+    color: '#efe7ff',
+    fontFamily: 'Segoe UI, Tahoma, sans-serif',
   },
   panel: {
+    width: 'min(96vw, 1180px)',
     minWidth: 420,
-    maxWidth: 860,
-    padding: 24,
-    borderRadius: 18,
-    background: 'rgba(5, 6, 10, 0.95)',
-    boxShadow: '0 22px 60px rgba(0,0,0,0.65)',
+    maxWidth: 1180,
+    minHeight: '78vh',
+    padding: 30,
+    borderRadius: 24,
+    border: '1px solid rgba(191, 161, 255, 0.18)',
+    background: 'linear-gradient(180deg, rgba(18, 10, 31, 0.96), rgba(9, 6, 17, 0.97))',
+    boxShadow: '0 22px 60px rgba(0,0,0,0.65), 0 0 60px rgba(95, 54, 184, 0.12)',
+    display: 'flex',
+    flexDirection: 'column',
   },
   title: {
     fontSize: '2.6rem',
@@ -727,14 +772,15 @@ const styles = {
     gap: 12,
   },
   primaryButton: {
-    padding: '10px 18px',
+    padding: '12px 18px',
     borderRadius: 999,
-    border: 'none',
-    background: 'linear-gradient(135deg, #4c6fff, #8f94fb)',
+    border: '1px solid rgba(214, 194, 255, 0.18)',
+    background: 'linear-gradient(135deg, #5c33bb, #8a5cff 58%, #b687ff 100%)',
     color: 'white',
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: 'pointer',
     fontSize: '0.95rem',
+    boxShadow: '0 10px 24px rgba(85, 44, 171, 0.26)',
   },
   secondaryRow: {
     marginTop: 20,
@@ -742,11 +788,11 @@ const styles = {
     gap: 10,
   },
   secondaryButton: {
-    padding: '8px 14px',
+    padding: '10px 14px',
     borderRadius: 999,
-    border: '1px solid #394867',
-    background: 'transparent',
-    color: '#d0d6ea',
+    border: '1px solid rgba(191, 161, 255, 0.18)',
+    background: 'rgba(28, 14, 44, 0.48)',
+    color: '#ddd1fb',
     cursor: 'pointer',
     fontSize: '0.9rem',
   },
@@ -754,20 +800,22 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 18,
   },
   heading: {
     margin: 0,
-    fontSize: '1.3rem',
+    fontSize: '1.55rem',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
   },
   backButton: {
-    padding: '6px 12px',
+    padding: '8px 14px',
     borderRadius: 999,
-    border: '1px solid #394867',
-    background: 'transparent',
-    color: '#d0d6ea',
+    border: '1px solid rgba(191, 161, 255, 0.22)',
+    background: 'rgba(38, 19, 64, 0.65)',
+    color: '#e3d8ff',
     cursor: 'pointer',
-    fontSize: '0.8rem',
+    fontSize: '0.82rem',
   },
   disabledButton: {
     opacity: 0.55,
@@ -775,21 +823,21 @@ const styles = {
   },
   tabRow: {
     display: 'flex',
-    gap: 8,
-    marginBottom: 16,
+    gap: 10,
+    marginBottom: 20,
   },
   tabButton: {
     flex: 1,
-    padding: '8px 10px',
+    padding: '12px 14px',
     borderRadius: 999,
-    border: '1px solid #394867',
-    background: 'transparent',
-    color: '#d0d6ea',
+    border: '1px solid rgba(191, 161, 255, 0.16)',
+    background: 'rgba(29, 15, 47, 0.74)',
+    color: '#d7caf5',
     cursor: 'pointer',
-    fontSize: '0.9rem',
+    fontSize: '0.95rem',
   },
   tabButtonActive: {
-    background: 'linear-gradient(135deg, #4c6fff, #8f94fb)',
+    background: 'linear-gradient(135deg, #5c33bb, #8a5cff 58%, #b687ff 100%)',
     color: '#fdfdfd',
     border: '1px solid transparent',
   },
@@ -797,27 +845,89 @@ const styles = {
     marginTop: 8,
     display: 'flex',
     flexDirection: 'column',
-    gap: 10,
+    gap: 14,
+  },
+  setupGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+    gap: 20,
+    alignItems: 'stretch',
+    minHeight: '58vh',
+  },
+  formSectionCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+    padding: 22,
+    borderRadius: 20,
+    border: '1px solid rgba(191, 161, 255, 0.14)',
+    background: 'linear-gradient(180deg, rgba(31, 16, 49, 0.72), rgba(18, 10, 29, 0.84))',
+  },
+  previewCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 16,
+    padding: 22,
+    borderRadius: 20,
+    border: '1px solid rgba(191, 161, 255, 0.18)',
+    background: 'linear-gradient(180deg, rgba(54, 27, 92, 0.42), rgba(18, 10, 29, 0.88))',
+  },
+  sectionEyebrow: {
+    fontSize: '0.75rem',
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+    color: '#b89ff0',
+  },
+  sectionTitle: {
+    margin: 0,
+    fontSize: '1.5rem',
+    color: '#f4eeff',
+  },
+  helperText: {
+    fontSize: '0.92rem',
+    lineHeight: 1.5,
+    color: '#cbbceb',
+    marginBottom: 4,
   },
   label: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 4,
-    fontSize: '0.85rem',
+    gap: 6,
+    fontSize: '0.88rem',
+    color: '#e7deff',
   },
   input: {
-    padding: '6px 10px',
-    borderRadius: 8,
-    border: '1px solid #3b4252',
-    background: 'rgba(8,10,20,0.9)',
-    color: '#e5e9f0',
-    fontSize: '0.9rem',
+    padding: '11px 13px',
+    borderRadius: 12,
+    border: '1px solid rgba(191, 161, 255, 0.18)',
+    background: 'rgba(10, 7, 19, 0.82)',
+    color: '#f3edff',
+    fontSize: '0.95rem',
   },
   checkboxRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
     fontSize: '0.85rem',
+  },
+  checkboxTile: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    border: '1px solid rgba(191, 161, 255, 0.14)',
+    background: 'rgba(28, 14, 44, 0.56)',
+    fontSize: '0.9rem',
+  },
+  checkboxTitle: {
+    fontWeight: 600,
+    color: '#f0e9ff',
+    marginBottom: 4,
+  },
+  checkboxText: {
+    fontSize: '0.82rem',
+    color: '#c2b3e5',
   },
   lobbyInfo: {
     marginTop: 12,
@@ -828,8 +938,17 @@ const styles = {
   },
   status: {
     marginTop: 10,
-    fontSize: '0.8rem',
-    opacity: 0.85,
+    fontSize: '0.82rem',
+    opacity: 0.88,
+    color: '#d6c8f6',
+  },
+  statusCard: {
+    padding: '12px 14px',
+    borderRadius: 12,
+    background: 'rgba(22, 11, 38, 0.86)',
+    border: '1px solid rgba(191, 161, 255, 0.14)',
+    fontSize: '0.86rem',
+    color: '#d8c9f5',
   },
   joinLayout: {
     display: 'flex',
@@ -863,8 +982,8 @@ const styles = {
   smallButton: {
     padding: '6px 10px',
     borderRadius: 999,
-    border: '1px solid #394867',
-    background: 'transparent',
+    border: '1px solid rgba(191, 161, 255, 0.18)',
+    background: 'rgba(28, 14, 44, 0.48)',
     color: '#d0d6ea',
     cursor: 'pointer',
     fontSize: '0.8rem',
@@ -872,35 +991,35 @@ const styles = {
   filterButton: {
     padding: '8px 14px',
     borderRadius: 999,
-    border: '1px solid #394867',
-    background: 'transparent',
+    border: '1px solid rgba(191, 161, 255, 0.18)',
+    background: 'rgba(28, 14, 44, 0.48)',
     color: '#d0d6ea',
     cursor: 'pointer',
     fontSize: '0.85rem',
     transition: 'all 0.2s',
   },
   filterButtonActive: {
-    background: 'rgba(76, 111, 255, 0.2)',
-    border: '1px solid #4c6fff',
-    color: '#8f94fb',
+    background: 'rgba(138, 92, 255, 0.18)',
+    border: '1px solid #8a5cff',
+    color: '#cdb6ff',
   },
   lobbyCard: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 14,
-    borderRadius: 10,
-    background: 'linear-gradient(135deg, rgba(11,16,32,0.95), rgba(8,12,25,0.9))',
-    border: '1px solid rgba(59, 66, 82, 0.4)',
+    borderRadius: 12,
+    background: 'linear-gradient(135deg, rgba(33, 17, 52, 0.95), rgba(14, 8, 23, 0.9))',
+    border: '1px solid rgba(191, 161, 255, 0.14)',
     transition: 'all 0.2s',
   },
   joinButton: {
-    padding: '8px 20px',
+    padding: '10px 20px',
     borderRadius: 999,
-    border: 'none',
-    background: 'linear-gradient(135deg, #4c6fff, #8f94fb)',
+    border: '1px solid rgba(214, 194, 255, 0.18)',
+    background: 'linear-gradient(135deg, #5c33bb, #8a5cff 58%, #b687ff 100%)',
     color: 'white',
-    fontWeight: 600,
+    fontWeight: 700,
     cursor: 'pointer',
     fontSize: '0.9rem',
     transition: 'all 0.2s',
@@ -910,27 +1029,91 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 16,
+    flex: 1,
+    minHeight: 0,
   },
   lobbyHeader: {
     padding: 16,
-    borderRadius: 10,
-    background: 'linear-gradient(135deg, rgba(76,111,255,0.15), rgba(143,148,251,0.1))',
-    border: '1px solid rgba(76, 111, 255, 0.3)',
+    borderRadius: 12,
+    background: 'linear-gradient(135deg, rgba(92, 51, 187, 0.22), rgba(182, 135, 255, 0.12))',
+    border: '1px solid rgba(191, 161, 255, 0.24)',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   settingsSection: {
-    padding: 14,
-    borderRadius: 10,
-    background: 'rgba(11,16,32,0.6)',
-    border: '1px solid rgba(59, 66, 82, 0.4)',
+    padding: 16,
+    borderRadius: 12,
+    background: 'rgba(20, 10, 33, 0.68)',
+    border: '1px solid rgba(191, 161, 255, 0.14)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    flex: 1,
   },
   readOnlySetting: {
     display: 'flex',
     justifyContent: 'space-between',
     padding: '6px 0',
     fontSize: '0.9rem',
+  },
+  lobbyMetaGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 10,
+  },
+  lobbyMetaCard: {
+    padding: '10px 12px',
+    borderRadius: 10,
+    border: '1px solid rgba(191, 161, 255, 0.16)',
+    background: 'rgba(33, 17, 52, 0.75)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  lobbyMetaLabel: {
+    fontSize: '0.78rem',
+    color: '#b9a6df',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+  },
+  lobbyMetaValue: {
+    fontSize: '0.95rem',
+    color: '#f0e8ff',
+    fontWeight: 700,
+  },
+  lockedNote: {
+    fontSize: '0.82rem',
+    color: '#cdbbe9',
+    opacity: 0.88,
+  },
+  previewList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+  },
+  previewRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 14,
+    padding: '10px 0',
+    borderBottom: '1px solid rgba(191, 161, 255, 0.1)',
+    color: '#d7caf5',
+  },
+  calloutBox: {
+    padding: '14px 16px',
+    borderRadius: 14,
+    background: 'rgba(255, 255, 255, 0.04)',
+    border: '1px solid rgba(191, 161, 255, 0.12)',
+    color: '#c8b8eb',
+    fontSize: '0.88rem',
+    lineHeight: 1.45,
+  },
+  actionStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+    marginTop: 'auto',
   },
   devModeToggle: {
     position: 'absolute',

@@ -142,11 +142,29 @@ export class LobbyManager {
     return this.lobbies.get(lobbyId) || null;
   }
 
+  migrateSocket(oldSocketId, newSocketId) {
+    const lobbyId = this.socketToLobby.get(oldSocketId);
+    if (!lobbyId) return null;
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return null;
+
+    lobby.players = (lobby.players || []).map((pid) => (pid === oldSocketId ? newSocketId : pid));
+    if (lobby.hostId === oldSocketId) lobby.hostId = newSocketId;
+
+    this.socketToLobby.delete(oldSocketId);
+    this.socketToLobby.set(newSocketId, lobbyId);
+    this.lobbies.set(lobbyId, lobby);
+    return lobby;
+  }
+
   updateLobbySettings(socketId, settings) {
     const lobby = this.getLobbyForSocket(socketId);
     if (!lobby) {
       throw new Error('Not in a lobby');
     }
+
+    // Lock lobby settings once a lobby exists to avoid desync/confusion.
+    throw new Error('Lobby settings cannot be changed after lobby creation');
 
     // Only host can update settings
     if (lobby.hostId !== socketId) {

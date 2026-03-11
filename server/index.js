@@ -150,6 +150,9 @@ function getAllPiecesFromChess(chess) {
 
 const lobbyManager = new LobbyManager();
 const gameManager = new GameManager(io, lobbyManager);
+const CLIENT_RECONNECT_GRACE_MS = 20000;
+const clientIdToSocketId = new Map();
+const pendingDisconnectTimers = new Map();
 // Backwards-compatible wrapper: some callers expect `gameManager.applyArcana`
 // Attach a method that delegates to the centralized `applyArcana` handler.
 gameManager.applyArcana = (socketId, gameState, arcanaUsed, moveResult) => {
@@ -158,6 +161,40 @@ gameManager.applyArcana = (socketId, gameState, arcanaUsed, moveResult) => {
 
 io.on('connection', (socket) => {
   logger.info('Socket connected', socket.id);
+
+  const rawClientId = socket.handshake?.auth?.clientId;
+  const clientId = (typeof rawClientId === 'string' && rawClientId.trim()) ? rawClientId.trim() : null;
+  socket.data.clientId = clientId;
+
+  if (clientId) {
+    const pending = pendingDisconnectTimers.get(clientId);
+    if (pending) {
+      clearTimeout(pending);
+      pendingDisconnectTimers.delete(clientId);
+    }
+
+    const previousSocketId = clientIdToSocketId.get(clientId);
+    if (previousSocketId && previousSocketId !== socket.id) {
+      try {
+        const lobby = lobbyManager.migrateSocket(previousSocketId, socket.id);
+        if (lobby) {
+          socket.join(lobby.id);
+          io.to(lobby.id).emit('lobbyUpdated', lobby);
+        }
+
+        const reboundGameState = gameManager.rebindSocket(previousSocketId, socket.id);
+        if (reboundGameState) {
+          const personalised = gameManager.serialiseGameStateForViewer(reboundGameState, socket.id);
+          io.to(socket.id).emit('gameUpdated', personalised);
+          io.to(socket.id).emit('sessionResumed', { ok: true, gameId: reboundGameState.id });
+        }
+      } catch (err) {
+        logger.error('Failed to restore session on reconnect', err);
+      }
+    }
+
+    clientIdToSocketId.set(clientId, socket.id);
+  }
 
   const safeAck = (ack, payload) => {
     if (typeof ack === 'function') {
@@ -373,15 +410,38 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     logger.info('Socket disconnected', socket.id);
-    const result = lobbyManager.leaveLobby(socket.id);
-    if (result) {
-      if (result.closed) {
-        io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player disconnected' });
-      } else if (result.lobby) {
-        io.to(result.lobby.id).emit('lobbyUpdated', result.lobby);
+    const cid = socket.data?.clientId;
+    if (!cid) {
+      const result = lobbyManager.leaveLobby(socket.id);
+      if (result) {
+        if (result.closed) {
+          io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player disconnected' });
+        } else if (result.lobby) {
+          io.to(result.lobby.id).emit('lobbyUpdated', result.lobby);
+        }
       }
+      gameManager.handleDisconnect(socket.id);
+      return;
     }
-    gameManager.handleDisconnect(socket.id);
+
+    const t = setTimeout(() => {
+      pendingDisconnectTimers.delete(cid);
+      const currentSocket = clientIdToSocketId.get(cid);
+      // If the client reconnected and mapped to a new socket, do nothing.
+      if (currentSocket && currentSocket !== socket.id) return;
+
+      clientIdToSocketId.delete(cid);
+      const result = lobbyManager.leaveLobby(socket.id);
+      if (result) {
+        if (result.closed) {
+          io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player disconnected' });
+        } else if (result.lobby) {
+          io.to(result.lobby.id).emit('lobbyUpdated', result.lobby);
+        }
+      }
+      gameManager.handleDisconnect(socket.id);
+    }, CLIENT_RECONNECT_GRACE_MS);
+    pendingDisconnectTimers.set(cid, t);
   });
 });
 

@@ -55,6 +55,20 @@ export function pickCommonArcana() {
 }
 
 /**
+ * Pick a random common arcana card from a specific category.
+ * Falls back to any common card when the category has no common cards.
+ */
+export function pickCommonArcanaByCategory(category) {
+  const commonCards = ARCANA_DEFINITIONS.filter(a => a.rarity === 'common');
+  if (commonCards.length === 0) return pickWeightedArcana();
+
+  const filtered = commonCards.filter((a) => a.category === category);
+  const pool = filtered.length > 0 ? filtered : commonCards;
+  const idx = Math.floor(Math.random() * pool.length);
+  return pool[idx];
+}
+
+/**
  * Pick a weighted arcana biased by the strength of the sacrificed piece.
  * pieceType: one of 'p','n','b','r','q' (king not allowed)
  * Stronger pieces get a higher multiplier for rare/epic/legendary weights.
