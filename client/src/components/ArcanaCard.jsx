@@ -8,10 +8,16 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
   const [iconLoaded, setIconLoaded] = useState(false);
   const cardRef = useRef(null);
   const TOOLTIP_MAX_W = 280;
-  const rarity = arcana.rarity || 'common';
+  const arcanaId = typeof arcana?.id === 'string'
+    ? arcana.id
+    : (typeof arcana === 'string' && arcana.trim() ? arcana.trim() : 'unknown_arcana');
+  const arcanaName = typeof arcana?.name === 'string' && arcana.name.trim()
+    ? arcana.name
+    : arcanaId.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const rarity = typeof arcana?.rarity === 'string' ? arcana.rarity : 'common';
   const rarityCapitalized = rarity.charAt(0).toUpperCase() + rarity.slice(1);
   const backgroundPath = `/cards/backgrounds/${rarityCapitalized}.png`;
-  const iconId = arcana.id.replace(/_/g, '-');
+  const iconId = arcanaId.replace(/_/g, '-');
   const iconPath = `/cards/icons/${iconId}.png`;
 
   const sizes = {
@@ -49,16 +55,18 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
           try {
             const rect = cardRef.current.getBoundingClientRect();
             const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+            const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
             const tooltipW = Math.min(TOOLTIP_MAX_W, vw - 32);
             let left = rect.left + rect.width / 2 - tooltipW / 2;
             left = Math.max(8, Math.min(left, vw - tooltipW - 8));
             // place tooltip a bit above the card
-            const estimatedH = 92; // rough estimate to avoid overlap
+            const estimatedH = Math.min(220, Math.max(96, Math.round(vh * 0.34)));
             let top = rect.top - estimatedH - 8;
             if (top < 8) {
               // if not enough room above, place below the card
               top = rect.bottom + 8;
             }
+            top = Math.max(8, Math.min(top, vh - estimatedH - 8));
             setTooltipStyle({ left, top, width: tooltipW });
           } catch (err) {
             setTooltipStyle(null);
@@ -116,7 +124,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
             maxWidth: '100%',
           }}
         >
-          {arcana.name}
+          {arcanaName}
         </div>
       </div>
 
@@ -136,7 +144,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
       >
         <img
           src={iconPath}
-          alt={arcana.name}
+          alt={arcanaName}
           onLoad={() => setIconLoaded(true)}
           style={{
             width: dims.iconSize,
@@ -189,9 +197,11 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
             pointerEvents: 'none',
             textAlign: 'center',
             lineHeight: 1.2,
+            maxHeight: '34vh',
+            overflowY: 'auto',
           }}
         >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>{arcana.name}</div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>{arcanaName}</div>
           <div style={{ opacity: 0.95, marginBottom: 4 }}>{hoverInfo}</div>
           <div style={{ fontSize: '0.7rem', opacity: 0.7, color: rarity === 'common' ? '#a0a0a0' : rarity === 'uncommon' ? '#1eff00' : rarity === 'rare' ? '#0070dd' : rarity === 'epic' ? '#a335ee' : '#ff8000' }}>
             {rarityCapitalized} Rarity

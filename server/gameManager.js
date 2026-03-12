@@ -39,6 +39,93 @@ const STATUS_FINISHED = 'finished';
 // AI prefix
 const AI_PREFIX = 'AI-';
 
+function normalizeColorToken(color) {
+  if (color === WHITE || color === WHITE_CHAR) return WHITE;
+  if (color === BLACK || color === BLACK_CHAR) return BLACK;
+  return color;
+}
+
+function findPlayerIdByColor(playerColors, color) {
+  const target = normalizeColorToken(color);
+  return Object.entries(playerColors || {}).find(([, c]) => normalizeColorToken(c) === target)?.[0] || null;
+}
+
+function sanitizeEdgeRankPawnsInFen(fen) {
+  if (!fen || typeof fen !== 'string') return fen;
+  const parts = fen.split(' ');
+  if (!parts[0]) return fen;
+
+  const ranks = parts[0].split('/');
+  if (ranks.length !== 8) return fen;
+
+  const expandRank = (rank) => {
+    let out = '';
+    for (const ch of rank) {
+      if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
+      else out += ch;
+    }
+    return out;
+  };
+
+  const compressRank = (expanded) => {
+    let out = '';
+    let empty = 0;
+    for (const ch of expanded) {
+      if (ch === '.') {
+        empty += 1;
+      } else {
+        if (empty > 0) {
+          out += String(empty);
+          empty = 0;
+        }
+        out += ch;
+      }
+    }
+    if (empty > 0) out += String(empty);
+    return out;
+  };
+
+  const normalizeEdgeRank = (rank, edge) => {
+    const expanded = expandRank(rank);
+    let changed = false;
+    let next = '';
+    for (const ch of expanded) {
+      if (edge === 'top' && ch === 'p') {
+        next += 'q';
+        changed = true;
+      } else if (edge === 'bottom' && ch === 'P') {
+        next += 'Q';
+        changed = true;
+      } else {
+        next += ch;
+      }
+    }
+    return { rank: changed ? compressRank(next) : rank, changed };
+  };
+
+  let anyChanged = false;
+  const top = normalizeEdgeRank(ranks[0], 'top');
+  const bottom = normalizeEdgeRank(ranks[7], 'bottom');
+  if (top.changed) {
+    ranks[0] = top.rank;
+    anyChanged = true;
+  }
+  if (bottom.changed) {
+    ranks[7] = bottom.rank;
+    anyChanged = true;
+  }
+
+  if (!anyChanged) return fen;
+  parts[0] = ranks.join('/');
+  return parts.join(' ');
+}
+
+function safeLoadFen(chess, fen) {
+  const safeFen = sanitizeEdgeRankPawnsInFen(fen);
+  chess.load(safeFen);
+  return safeFen;
+}
+
 function normalizeTimeControlMinutes(timeControl) {
   if (timeControl === null || timeControl === undefined || timeControl === 'unlimited') return null;
   if (typeof timeControl === 'number' && Number.isFinite(timeControl) && timeControl > 0) return timeControl;
@@ -305,7 +392,7 @@ export class GameManager {
         fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
         // Clear en-passant square when swapping without a real move to avoid invalid FEN
         if (fenParts.length > 3) fenParts[3] = '-';
-        chess.load(fenParts.join(' '));
+        safeLoadFen(chess, fenParts.join(' '));
 
         // Broadcast updated game state to players
         for (const pid of gameState.playerIds) {
@@ -672,7 +759,7 @@ export class GameManager {
       fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w'; // Swap active color
       // Clear en-passant square when swapping without a real move to avoid invalid FEN
       if (fenParts.length > 3) fenParts[3] = '-';
-      chess.load(fenParts.join(' '));
+      safeLoadFen(chess, fenParts.join(' '));
       
       // Increment ply counter (drawing a card counts as a turn action)
       gameState.plyCount++;
@@ -751,7 +838,7 @@ export class GameManager {
       if (arcanaKingCheck.kingRemoved) {
         gameState.status = 'finished';
         const winnerColor = arcanaKingCheck.winner;
-        const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+        const winnerSocketId = findPlayerIdByColor(gameState.playerColors, winnerColor);
         const outcome = { type: 'king-destroyed', winnerSocketId };
         for (const pid of gameState.playerIds) {
           if (!pid.startsWith('AI-')) {
@@ -950,7 +1037,7 @@ export class GameManager {
         throw new Error('Divine Intervention protects the king!');
       }
       // Also check if move would put divine king in check
-      const tempChess = new Chess(chess.fen());
+      const tempChess = new Chess(sanitizeEdgeRankPawnsInFen(chess.fen()));
       tempChess.move(candidate);
       if (tempChess.inCheck()) {
         // After move, it's opponent's turn. If they're in check, their king is threatened.
@@ -993,7 +1080,7 @@ export class GameManager {
       const fenParts = fen.split(' ');
       fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
       if (fenParts.length > 3) fenParts[3] = '-'; // Clear en-passant
-      chess.load(fenParts.join(' '));
+      safeLoadFen(chess, fenParts.join(' '));
       
       // Emit game update and turn skipped notification
       this.broadcastGameUpdate(gameState);
@@ -1098,7 +1185,7 @@ export class GameManager {
       gameState.status = 'finished';
       // Find the socket ID of the player who captured the king (the winner)
       const winnerColor = result.color;
-      const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+      const winnerSocketId = findPlayerIdByColor(gameState.playerColors, winnerColor);
       const outcome = { type: 'king-captured', winnerSocketId };
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
@@ -1465,7 +1552,7 @@ export class GameManager {
       const extraFenParts = extraFen.split(' ');
       extraFenParts[1] = moverColor === 'w' ? 'w' : 'b'; // Restore to mover's turn
       extraFenParts[3] = '-'; // Clear en passant to keep FEN valid
-      chess.load(extraFenParts.join(' '));
+      safeLoadFen(chess, extraFenParts.join(' '));
       
       // Don't change turn - same player can move again
       for (const pid of gameState.playerIds) {
@@ -1567,14 +1654,14 @@ export class GameManager {
           // No empty square available - Divine Intervention fails
           gameState.status = 'finished';
           const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
-          const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+          const winnerSocketId = findPlayerIdByColor(gameState.playerColors, winnerColor);
           outcome = { type: 'checkmate', winnerSocketId };
         }
       } else {
         // No Divine Intervention - checkmate occurs
         gameState.status = 'finished';
         const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
-        const winnerSocketId = Object.entries(gameState.playerColors || {}).find(([, color]) => color === winnerColor)?.[0];
+        const winnerSocketId = findPlayerIdByColor(gameState.playerColors, winnerColor);
         outcome = { type: 'checkmate', winnerSocketId };
       }
     } else if (chess.isStalemate() || chess.isDraw()) {
@@ -1615,7 +1702,7 @@ export class GameManager {
     } catch (postMoveErr) {
       // Roll back chess state to prevent server/client desync
       logger.error('Post-move processing error, rolling back:', postMoveErr);
-      try { chess.load(preMovefen); } catch (_) { /* best-effort */ }
+      try { safeLoadFen(chess, preMovefen); } catch (_) { /* best-effort */ }
       throw postMoveErr;
     }
     } finally {
@@ -1771,7 +1858,7 @@ export class GameManager {
         const fenParts = fen.split(' ');
         fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
         fenParts[3] = '-'; // Clear en passant to keep FEN valid
-        chess.load(fenParts.join(' '));
+        safeLoadFen(chess, fenParts.join(' '));
         gameState.plyCount++; // Increment ply so cooldowns track correctly
         return; // AI drew a card, end turn
       }
@@ -1878,7 +1965,7 @@ export class GameManager {
             const fen = chess.fen();
             const fenParts = fen.split(' ');
             fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
-            chess.load(fenParts.join(' '));
+            safeLoadFen(chess, fenParts.join(' '));
             return;
           }
         }
@@ -2091,14 +2178,14 @@ export class GameManager {
           const opponentAttackers = [];
           
           // Get all opponent moves to identify attacked squares
-          const tempChess = new Chess(chess.fen());
+          const tempChess = new Chess(sanitizeEdgeRankPawnsInFen(chess.fen()));
           const opponentTurn = moverColor === 'w' ? 'b' : 'w';
           const originalTurn = tempChess.fen().split(' ')[1];
           const tempFen = chess.fen();
           const tempFenParts = tempFen.split(' ');
           tempFenParts[1] = opponentTurn;
           try {
-            tempChess.load(tempFenParts.join(' '));
+            safeLoadFen(tempChess, tempFenParts.join(' '));
             const opponentMoves = tempChess.moves({ verbose: true });
             opponentMoves.forEach(m => {
               if (m.captured) opponentAttackers.push(m.to);

@@ -24,6 +24,7 @@ export function App() {
   const [quickMatchStatus, setQuickMatchStatus] = useState('');
   const [quickMatchLoading, setQuickMatchLoading] = useState(false);
   const [quickJoinedLobby, setQuickJoinedLobby] = useState(null);
+  const [pendingReplayPayload, setPendingReplayPayload] = useState(null);
   const [menuFadeIn, setMenuFadeIn] = useState(false);
   const [globalSettings, setGlobalSettings] = useState(() => {
     try {
@@ -105,6 +106,7 @@ export function App() {
     const handleGameStarted = (state) => {
       // New game starting: clear any previous end-outcome and show game
       setGameEndOutcome(null);
+      setPendingReplayPayload(null);
       setGameState(state);
       setAscendedInfo(state.ascended ? { gameId: state.id, reason: state.ascensionTrigger } : null);
       setScreen('game');
@@ -120,9 +122,12 @@ export function App() {
 
     const handleGameEnded = (outcome) => {
       console.log('Game ended:', outcome);
+      const normalizedOutcome = (outcome && typeof outcome === 'object' && outcome.outcome && typeof outcome.outcome === 'object')
+        ? { ...outcome.outcome, rematchVotes: outcome.rematchVotes, rematchTotalPlayers: outcome.rematchTotalPlayers }
+        : (outcome && typeof outcome === 'object' ? outcome : { type: String(outcome || 'finished') });
       // Show outcome overlay and let the player decide when to return to menu.
       // No automatic return to menu — user must click the Return button.
-      setGameEndOutcome(outcome);
+      setGameEndOutcome(normalizedOutcome);
     };
 
     const handleAscended = (payload) => {
@@ -362,6 +367,14 @@ export function App() {
       {screen === 'host-game' && (
         <MainMenu
           mode="host"
+          onOpenReplay={(replayPayload) => {
+            setPendingReplayPayload(replayPayload || null);
+            setGameState(null);
+            setGameEndOutcome(null);
+            setAscendedInfo(null);
+            setLastArcanaEvent(null);
+            setScreen('game');
+          }}
           onBack={() => setScreen('main-menu')}
         />
       )}
@@ -391,6 +404,7 @@ export function App() {
       {screen === 'game' && (
         <GameScene
           gameState={gameState}
+          initialReplayPayload={pendingReplayPayload}
           settings={globalSettings}
           ascendedInfo={ascendedInfo}
           lastArcanaEvent={lastArcanaEvent}

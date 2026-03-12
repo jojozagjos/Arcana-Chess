@@ -11,6 +11,7 @@ import {
   cardDrawPreset,
   cardUsePreset,
   energyRingPreset,
+  fogOfWarPreset,
   dissolvePreset,
   confettiPreset,
   rarityColors,
@@ -36,7 +37,7 @@ export async function initParticleEngine(engine) {
  * 2D Particle Overlay for card animations
  */
 export function ParticleOverlay({
-  type = 'draw', // 'draw', 'use', 'ring', 'dissolve', 'confetti'
+  type = 'draw', // 'draw', 'use', 'ring', 'fog', 'dissolve', 'confetti'
   rarity = 'common',
   active = true,
   style = {},
@@ -58,6 +59,8 @@ export function ParticleOverlay({
         return cardUsePreset(color);
       case 'ring':
         return energyRingPreset(color);
+      case 'fog':
+        return fogOfWarPreset(color);
       case 'dissolve':
         return dissolvePreset(color);
       case 'confetti':

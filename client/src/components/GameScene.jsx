@@ -5,7 +5,9 @@ import { Chess } from 'chess.js';
 import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
 import { effectResourcePool } from '../game/effectResourcePool.js';
+import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
+import { ReplayOverlay } from './ReplayOverlay.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
 import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares, canUseCard } from '../game/arcana/arcanaSimulation.js';
@@ -19,7 +21,7 @@ import { getCutsceneConfig } from '../game/arcana/cutsceneDefinitions.js';
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
 // ArcanaVisualHost renders all effects using the shared arcanaVisuals module
 
-export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
+export function GameScene({ gameState, initialReplayPayload, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const [showMenu, setShowMenu] = useState(false);
   // Panels are always visible in the in-game menu (no collapse)
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -46,6 +48,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const [peekCardDialog, setPeekCardDialog] = useState(null); // { cardCount, opponentId } when selecting card to peek
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
   const [filteredCycleDialog, setFilteredCycleDialog] = useState(null); // { arcanaId }
+  const [filteredCycleHover, setFilteredCycleHover] = useState(null);
   // Hover threat sources: set of squares (e.g. new Set(['e5','d4'])) that attack a simulated destination
   const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
   // Fog of war effect tracking - persist particles while fog is active
@@ -53,7 +56,14 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   // Time control - client-side countdown display
   const [clientSideTimes, setClientSideTimes] = useState({}); // { socketId: remainingSeconds }
   const [combatLog, setCombatLog] = useState([]);
-  const [showCombatLog, setShowCombatLog] = useState(true);
+  const [isReplayMode, setIsReplayMode] = useState(false);
+  const [replayFrames, setReplayFrames] = useState([]);
+  const [replayEvents, setReplayEvents] = useState([]);
+  const [replayMeta, setReplayMeta] = useState(null);
+  const [replayPayload, setReplayPayload] = useState(null);
+  const [replayPanelTab, setReplayPanelTab] = useState('events');
+  const [replayIndex, setReplayIndex] = useState(0);
+  const [isReplayPlaying, setIsReplayPlaying] = useState(false);
   // WebGL context loss state - prevents flashing during recovery
   const [isContextLost, setIsContextLost] = useState(false);
   const contextLossCountRef = useRef(0); // Track consecutive context losses
@@ -64,6 +74,8 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const overlayRef = useRef(null);
   // Store GL instance reference for context management
   const glRef = useRef(null);
+  const replayFenHistoryRef = useRef([]);
+  const prevReplayIndexRef = useRef(0);
 
   // Monitor context loss and aggressively cap effects to prevent cascading failures
   useEffect(() => {
@@ -121,13 +133,13 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const lastActiveVisualKeyRef = useRef(null);
   const USE_CARD_ANIM_MS = 2500;
   const FILTERED_CYCLE_CATEGORIES = [
-    { key: 'offense', label: 'Offense' },
-    { key: 'defense', label: 'Defense' },
-    { key: 'movement', label: 'Movement' },
-    { key: 'utility', label: 'Utility' },
-    { key: 'resurrection', label: 'Resurrection' },
-    { key: 'transformation', label: 'Transformation' },
-    { key: 'special', label: 'Special' },
+    { key: 'offense', label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
+    { key: 'defense', label: 'Defense', hint: 'Protection and survival', glyph: 'O' },
+    { key: 'movement', label: 'Movement', hint: 'Reposition and mobility', glyph: '>' },
+    { key: 'utility', label: 'Utility', hint: 'Support and disruption', glyph: '+' },
+    { key: 'resurrection', label: 'Resurrection', hint: 'Recover fallen pieces', glyph: '*' },
+    { key: 'transformation', label: 'Transformation', hint: 'Alter piece forms', glyph: '~' },
+    { key: 'special', label: 'Special', hint: 'Rare wildcard effects', glyph: '!' },
   ];
 
   const appendCombatLog = (entry) => {
@@ -180,6 +192,236 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     return { moves, captures, arcanaUsed, cardsDrawn, statusEvents };
   }, [combatLog]);
 
+  useEffect(() => {
+    const liveFen = gameState?.displayFen || gameState?.fen;
+    if (!liveFen) return;
+    const history = replayFenHistoryRef.current;
+    const lastFrame = history[history.length - 1];
+    if (lastFrame?.fen === liveFen) return;
+
+    history.push({
+      fen: liveFen,
+      at: Date.now(),
+      turn: gameState?.turn || null,
+      move: gameState?.lastMove
+        ? {
+            from: gameState.lastMove.from,
+            to: gameState.lastMove.to,
+            captured: gameState.lastMove.captured || null,
+            promotion: gameState.lastMove.promotion || null,
+            san: gameState.lastMove.san || null,
+          }
+        : null,
+    });
+
+    if (history.length > 800) {
+      replayFenHistoryRef.current = history.slice(history.length - 800);
+    }
+  }, [
+    gameState?.displayFen,
+    gameState?.fen,
+    gameState?.turn,
+    gameState?.lastMove?.from,
+    gameState?.lastMove?.to,
+    gameState?.lastMove?.captured,
+    gameState?.lastMove?.promotion,
+    gameState?.lastMove?.san,
+  ]);
+
+  const normalizeReplayFrames = (replayData) => {
+    const source =
+      (Array.isArray(replayData?.timeline?.frames) && replayData.timeline.frames) ||
+      (Array.isArray(replayData?.fenHistory) && replayData.fenHistory) ||
+      [];
+
+    const frames = source
+      .map((frame, idx) => {
+        const fen = frame?.fen || frame?.displayFen || null;
+        if (!fen) return null;
+        return {
+          fen,
+          at: frame?.at || null,
+          turn: frame?.turn || null,
+          move: frame?.move || null,
+          index: idx,
+        };
+      })
+      .filter(Boolean);
+
+    if (frames.length > 0) return frames;
+
+    const finalFen = replayData?.finalState?.displayFen || replayData?.finalState?.fen || null;
+    if (!finalFen) return [];
+    return [{ fen: finalFen, at: null, turn: replayData?.finalState?.turn || null, move: null, index: 0 }];
+  };
+
+  const exitReplayMode = () => {
+    setIsReplayPlaying(false);
+    setIsReplayMode(false);
+    setReplayFrames([]);
+    setReplayEvents([]);
+    setReplayMeta(null);
+    setReplayPayload(null);
+    setReplayPanelTab('events');
+    setReplayIndex(0);
+    setPendingMoveError('');
+    if (typeof onBackToMenu === 'function') {
+      onBackToMenu();
+      return;
+    }
+    const liveFen = gameState?.displayFen || gameState?.fen || null;
+    if (liveFen) setRenderFen(liveFen);
+  };
+
+  const startReplayFromPayload = (replayData) => {
+    const frames = normalizeReplayFrames(replayData);
+    if (!frames.length) {
+      setPendingMoveError('Replay file does not contain board states to display');
+      return;
+    }
+
+    const events =
+      (Array.isArray(replayData?.combatLog) && replayData.combatLog) ||
+      (Array.isArray(replayData?.events) && replayData.events) ||
+      (Array.isArray(replayData?.timeline?.events) && replayData.timeline.events) ||
+      [];
+    setReplayFrames(frames);
+    setReplayEvents(events);
+    setReplayPayload(replayData || null);
+    setReplayMeta({
+      gameId: replayData?.gameId || null,
+      exportedAt: replayData?.exportedAt || null,
+      outcome: replayData?.outcome || null,
+      stats: replayData?.stats || null,
+    });
+    setReplayIndex(0);
+    prevReplayIndexRef.current = 0;
+    setIsReplayPlaying(false);
+    setReplayPanelTab('events');
+    setIsReplayMode(true);
+    setSelectedSquare(null);
+    setLegalTargets([]);
+    setTargetingMode(null);
+    setShowMenu(false);
+    setRenderFen(frames[0].fen);
+    setPendingMoveError('');
+  };
+
+  useEffect(() => {
+    if (!initialReplayPayload) return;
+    startReplayFromPayload(initialReplayPayload);
+  }, [initialReplayPayload]);
+
+  const replayCardsByPlayer = useMemo(() => {
+    const arcanaLookup = new Map((ARCANA_DEFINITIONS || []).map((a) => [a.id, a]));
+    const arcanaLookupByName = new Map((ARCANA_DEFINITIONS || []).map((a) => [a.name?.toLowerCase(), a]));
+
+    const normalizeCard = (card) => {
+      if (!card) return null;
+      if (card?.hidden) return { id: `hidden_${Math.random()}`, name: 'Hidden', description: '', rarity: 'common', hidden: true };
+      if (typeof card === 'string' && card.trim()) {
+        const d = arcanaLookup.get(card.trim()) || arcanaLookupByName.get(card.trim().toLowerCase());
+        return d ? { ...d } : { id: card.trim(), name: card.trim().replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()), description: '', rarity: 'common' };
+      }
+      if (card && typeof card === 'object') {
+        const id = typeof card.id === 'string' ? card.id : (typeof card.arcanaId === 'string' ? card.arcanaId : '');
+        const d = id ? arcanaLookup.get(id) : (card.name ? arcanaLookupByName.get(card.name?.toLowerCase()) : null);
+        return {
+          ...(d || {}), ...card,
+          id: id || d?.id || 'unknown_arcana',
+          name: card.name || d?.name || 'Unknown Arcana',
+          description: card.description || d?.description || '',
+          rarity: card.rarity || d?.rarity || 'common',
+        };
+      }
+      return null;
+    };
+
+    // Extract the card from an event — prefer stored arcana field, fall back to parsing text
+    const getEventCard = (event) => {
+      const raw = event?.arcana || event?.card;
+      if (raw && !raw.hidden) {
+        const n = normalizeCard(raw);
+        if (n && n.id !== 'unknown_arcana') return n;
+      }
+      // Parse card name from event text e.g. "You drew Antidote" / "Opponent used Quiet Thought"
+      const txt = event?.text || '';
+      const match = txt.match(/(?:drew|used)\s+(.+)$/i);
+      if (match?.[1] && match[1] !== 'a card') {
+        const name = match[1].trim();
+        const d = arcanaLookupByName.get(name.toLowerCase());
+        if (d) return { ...d };
+        return { id: name.toLowerCase().replace(/\s+/g, '_'), name, description: '', rarity: 'common' };
+      }
+      // Can't determine card — return a hidden placeholder
+      return { id: `hidden_${Math.random()}`, name: 'Hidden', description: '', rarity: 'common', hidden: true };
+    };
+
+    const events = replayEvents || [];
+    const finalState = replayPayload?.finalState || {};
+    const byPlayer = finalState?.arcanaByPlayer || {};
+    const playerIds = finalState?.playerIds || Object.keys(byPlayer);
+
+    // Infer player ID from event or text
+    const opponentId = playerIds.find((id) => id !== mySocketId) || null;
+    const getEventPid = (event) => {
+      if (event?.playerId) return event.playerId;
+      const txt = event?.text || '';
+      if (txt.startsWith('You ')) return mySocketId;
+      if (txt.startsWith('Opponent ')) return opponentId;
+      return null;
+    };
+
+    // Assign each event a board-frame index.
+    // Events with explicit frameIndex fields use those; otherwise we count "move" events —
+    // each move event advances the board one frame, so arcana events inherit the current count.
+    let moveCount = 0;
+    const eventFrames = events.map((event) => {
+      if (event?.type === 'move') moveCount++;
+      if (Number.isInteger(event?.frameIndex)) return event.frameIndex;
+      if (Number.isInteger(event?.replayIndex)) return event.replayIndex;
+      if (Number.isInteger(event?.timelineIndex)) return event.timelineIndex;
+      if (Number.isInteger(event?.index)) return event.index;
+      return moveCount;
+    });
+
+    // FORWARD reconstruction: start from empty hands, apply events up to replayIndex.
+    // This avoids the backward-rewind problem where draw+use pairs in the future cancel incorrectly.
+    const workingHands = {};
+    playerIds.forEach((pid) => { workingHands[pid] = []; });
+
+    events.forEach((event, idx) => {
+      if (eventFrames[idx] > replayIndex) return; // event hasn't happened yet
+      const pid = getEventPid(event);
+      if (!pid) return;
+      if (!workingHands[pid]) workingHands[pid] = [];
+
+      if (event?.type === 'arcana_drawn') {
+        const card = getEventCard(event);
+        workingHands[pid].push({ ...card, _drawIdx: idx });
+      }
+
+      if (event?.type === 'arcana_used') {
+        const card = getEventCard(event);
+        // Remove the first matching card by id; if unknown, remove the earliest drawn hidden card
+        const removeIdx = card.hidden
+          ? workingHands[pid].findIndex((c) => c.hidden)
+          : workingHands[pid].findIndex((c) => c.id === card.id);
+        if (removeIdx !== -1) workingHands[pid].splice(removeIdx, 1);
+      }
+    });
+
+    return playerIds.map((pid, i) => {
+      const color = finalState?.playerColors?.[pid] || null;
+      const label = color ? `${color[0].toUpperCase()}${color.slice(1)}` : `Player ${pid?.slice?.(0, 6) || i}`;
+      return { playerId: pid || `unknown-${i}`, label, cards: workingHands[pid] || [] };
+    });
+  }, [replayPayload, replayEvents, replayIndex, mySocketId]);
+
+  const replayArcanaEvents = useMemo(() => {
+    return (replayEvents || []).filter((e) => e?.type === 'arcana_used' || e?.type === 'arcana_drawn');
+  }, [replayEvents]);
+
   const exportReplay = () => {
     const replay = {
       exportedAt: new Date().toISOString(),
@@ -189,6 +431,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       stats: postGameStats,
       finalState: gameState,
       combatLog,
+      fenHistory: replayFenHistoryRef.current,
     };
     const blob = new Blob([JSON.stringify(replay, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -207,6 +450,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   const opponentColor = myColor === 'white' ? 'black' : 'white';
   const opponentColorChar = toColorCode(opponentColor);
   const hasVision = gameState?.activeEffects?.vision?.[myColorCode];
+  const mirrorImageSquares = useMemo(() => {
+    const list = gameState?.activeEffects?.mirrorImages || [];
+    return new Set(list.map((m) => m.square).filter(Boolean));
+  }, [gameState?.activeEffects?.mirrorImages]);
 
   // In-game music: start on mount (cleanup handled by App.jsx routing)
   useEffect(() => {
@@ -297,8 +544,16 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       return;
     }
 
-    // Initialize client times from server
-    setClientSideTimes(gameState.timePerPlayer);
+    // Initialize client times from server only on turn change, not every gameState update
+    setClientSideTimes(prev => {
+      // Only sync if the times have changed significantly (server correction)
+      const hasChanged = Object.keys(gameState.timePerPlayer).some(id => {
+        const serverTime = gameState.timePerPlayer[id];
+        const clientTime = prev[id];
+        return clientTime === undefined || Math.abs(serverTime - clientTime) > 2;
+      });
+      return hasChanged ? { ...gameState.timePerPlayer } : prev;
+    });
 
     // Update countdown every 100ms
     const timerInterval = setInterval(() => {
@@ -606,7 +861,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
       soundManager.play('cardDraw');
-      appendCombatLog({ type: 'arcana_drawn', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} drew ${data.arcana?.name || 'a card'}` });
+      appendCombatLog({ type: 'arcana_drawn', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} drew ${data.arcana?.name || 'a card'}`, playerId: data.playerId, arcana: data.arcana ? { id: data.arcana.id, name: data.arcana.name, rarity: data.arcana.rarity } : null });
       // If this draw was triggered by Focus Fire (bonus on capture), play its arcana sound
       try {
         if (data && data.reason && typeof data.reason === 'string' && data.reason.toLowerCase().includes('focus fire')) {
@@ -632,7 +887,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
     const handleArcanaUsed = (data) => {
       console.log('[CLIENT] Received arcanaUsed event:', data);
       soundManager.play('cardUse');
-      appendCombatLog({ type: 'arcana_used', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} used ${data.arcana?.name || data.arcana?.id || 'Arcana'}` });
+      appendCombatLog({ type: 'arcana_used', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} used ${data.arcana?.name || data.arcana?.id || 'Arcana'}`, playerId: data.playerId, arcana: data.arcana ? { id: data.arcana.id, name: data.arcana.name, rarity: data.arcana.rarity } : null });
       const isMyUse = data.playerId === socket?.id;
 
       // Phase A: Record the pending visual event
@@ -924,6 +1179,10 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   }, []);
 
   const handleTileClick = (fileIndex, rankIndex) => {
+    if (isReplayMode) {
+      setPendingMoveError('Replay mode is read-only. Exit replay to resume playing.');
+      return;
+    }
     if (!chess || !gameState || gameState.status !== 'ongoing') return;
 
     // Check if it's the player's turn
@@ -1175,9 +1434,124 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
   useEffect(() => {
     const nextRenderFen = gameState?.displayFen || gameState?.fen || null;
     if (!nextRenderFen) return;
+    if (isReplayMode) return;
     if (isCardAnimationPlaying) return;
     setRenderFen(nextRenderFen);
-  }, [gameState?.displayFen, gameState?.fen, isCardAnimationPlaying]);
+  }, [gameState?.displayFen, gameState?.fen, isCardAnimationPlaying, isReplayMode]);
+
+  useEffect(() => {
+    if (!isReplayMode) return;
+    const frame = replayFrames[replayIndex];
+    if (!frame?.fen) return;
+    setRenderFen(frame.fen);
+    setSelectedSquare(null);
+    setLegalTargets([]);
+  }, [isReplayMode, replayFrames, replayIndex]);
+
+  useEffect(() => {
+    if (!isReplayMode || replayFrames.length === 0) return;
+
+    const prevIndex = prevReplayIndexRef.current;
+    const nextIndex = replayIndex;
+    prevReplayIndexRef.current = nextIndex;
+
+    // Ignore first frame render and reverse scrub for transient playback.
+    if (nextIndex <= 0 || nextIndex <= prevIndex) return;
+
+    const frame = replayFrames[nextIndex] || null;
+    const eventsInRange = (replayEvents || []).filter((event, idx) => {
+      const taggedFrameIndex =
+        Number.isInteger(event?.frameIndex) ? event.frameIndex :
+        Number.isInteger(event?.replayIndex) ? event.replayIndex :
+        Number.isInteger(event?.timelineIndex) ? event.timelineIndex :
+        Number.isInteger(event?.index) ? event.index :
+        null;
+
+      if (taggedFrameIndex !== null) {
+        return taggedFrameIndex > prevIndex && taggedFrameIndex <= nextIndex;
+      }
+
+      // Legacy fallback: assume event index loosely tracks frame index.
+      return idx > prevIndex && idx <= nextIndex;
+    });
+
+    // Move/capture sound from frame move metadata.
+    if (frame?.move) {
+      try {
+        if (frame.move.captured) soundManager.play('capture');
+        else soundManager.play('move');
+      } catch {}
+    }
+
+    // Arcana events from replay log.
+    eventsInRange.forEach((event) => {
+      if (event?.type === 'arcana_drawn') {
+        try { soundManager.play('cardDraw'); } catch {}
+
+        if (event.arcana) {
+          const revealTimeoutMs = 1300;
+          setCardReveal({
+            arcana: event.arcana,
+            playerId: event.playerId || null,
+            type: 'draw',
+            stayUntilClick: false,
+            isHidden: false,
+          });
+          const t = setTimeout(() => setCardReveal((prev) => (prev?.type === 'draw' ? null : prev)), revealTimeoutMs);
+          timeoutsRef.current.push(t);
+        }
+      }
+
+      if (event?.type === 'arcana_used') {
+        try { soundManager.play('cardUse'); } catch {}
+
+        const arcanaId = event.arcana?.id || event.arcanaId || event.cardId || null;
+        const actorColor =
+          event.actorColor ||
+          event.color ||
+          (event.playerId && replayPayload?.finalState?.playerColors
+            ? replayPayload.finalState.playerColors[event.playerId]
+            : null) ||
+          null;
+
+        if (arcanaId) {
+          setActiveVisualArcana({
+            arcanaId,
+            actorColor,
+            owner: event.playerId || null,
+            params: event.params || {},
+            at: event.at || Date.now(),
+          });
+          try { soundManager.play(event.soundKey || `arcana:${arcanaId}`); } catch {}
+        }
+
+        if (event.arcana) {
+          setCardReveal({
+            arcana: event.arcana,
+            playerId: event.playerId || null,
+            type: 'use',
+            stayUntilClick: false,
+          });
+        }
+      }
+    });
+  }, [isReplayMode, replayFrames, replayEvents, replayIndex, replayPayload]);
+
+  useEffect(() => {
+    if (!isReplayMode || !isReplayPlaying || replayFrames.length <= 1) return undefined;
+
+    const interval = setInterval(() => {
+      setReplayIndex((prev) => {
+        if (prev >= replayFrames.length - 1) {
+          setIsReplayPlaying(false);
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, 900);
+
+    return () => clearInterval(interval);
+  }, [isReplayMode, isReplayPlaying, replayFrames.length]);
 
   // Maintain piecesState so pieces keep stable ids and can animate between squares
   const [piecesState, setPiecesState] = useState(() => {
@@ -1501,6 +1875,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                 isWhite={p.isWhite}
                 targetPosition={p.targetPosition}
                 square={p.square}
+                isMirrorDuplicate={mirrorImageSquares.has(p.square)}
                 onClickSquare={(sq) => {
                   const fileIndex = 'abcdefgh'.indexOf(sq[0]);
                   const rankIndex = 8 - parseInt(sq[1], 10);
@@ -1531,73 +1906,45 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       </Canvas>
 
       {gameState?.timePerPlayer && (
-        <div style={styles.topTimerBar}>
-          {gameState.playerIds.map((playerId) => {
-            const timeRemaining = clientSideTimes[playerId] ?? gameState.timePerPlayer[playerId] ?? 0;
-            const minutes = Math.floor(Math.max(0, timeRemaining) / 60);
-            const seconds = Math.floor(Math.max(0, timeRemaining) % 60);
-            const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            const isMyTime = playerId === mySocketId;
-            const isLowTime = timeRemaining < 60;
-            const playerTurnChar = gameState?.playerColors?.[playerId] === 'white' ? 'w' : 'b';
-            const isActive = playerTurnChar === gameState?.turn;
-            return (
-              <div key={playerId} style={{ ...styles.topTimerPill, ...(isActive ? styles.topTimerPillActive : {}) }}>
-                <div style={{ fontSize: 11, opacity: 0.75 }}>{isMyTime ? 'You' : 'Opponent'}</div>
-                <div style={{ fontWeight: 700, color: isLowTime ? '#ff6b6b' : '#e5e9f0' }}>{timeStr}</div>
-              </div>
-            );
-          })}
+        <div style={{ ...styles.topTimerBar, background: 'rgba(0, 0, 0, 0.7)', padding: '10px 20px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)' }}>
+          <div style={{ display: 'flex', gap: 32, alignItems: 'center' }}>
+            {Object.keys(clientSideTimes).length > 0
+              ? Object.keys(clientSideTimes).map((playerId) => {
+                  const timeRemaining = clientSideTimes[playerId] ?? 0;
+                  const minutes = Math.floor(Math.max(0, timeRemaining) / 60);
+                  const seconds = Math.floor(Math.max(0, timeRemaining) % 60);
+                  const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                  const isMyTime = playerId === mySocketId;
+                  const isLowTime = timeRemaining < 60;
+                  return (
+                    <div key={playerId} style={{ fontSize: 26, fontWeight: 800, color: isLowTime ? '#ff6b6b' : '#ffffff', textAlign: 'center', fontFamily: 'monospace', textShadow: '0 0 10px rgba(0,0,0,0.8)' }}>
+                      <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.75, display: 'block', fontFamily: 'system-ui' }}>{isMyTime ? 'You' : 'Opponent'}</span>
+                      {timeStr}
+                    </div>
+                  );
+                })
+              : Object.keys(gameState.timePerPlayer).map((playerId) => {
+                  const timeRemaining = gameState.timePerPlayer[playerId] ?? 0;
+                  const minutes = Math.floor(Math.max(0, timeRemaining) / 60);
+                  const seconds = Math.floor(Math.max(0, timeRemaining) % 60);
+                  const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                  const isMyTime = playerId === mySocketId;
+                  const isLowTime = timeRemaining < 60;
+                  return (
+                    <div key={playerId} style={{ fontSize: 26, fontWeight: 800, color: isLowTime ? '#ff6b6b' : '#ffffff', textAlign: 'center', fontFamily: 'monospace', textShadow: '0 0 10px rgba(0,0,0,0.8)' }}>
+                      <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.75, display: 'block', fontFamily: 'system-ui' }}>{isMyTime ? 'You' : 'Opponent'}</span>
+                      {timeStr}
+                    </div>
+                  );
+                })
+            }
+          </div>
         </div>
       )}
 
-      <div style={styles.hud}>
-        <div>Turn: {gameState?.turn === 'w' ? 'White' : 'Black'}</div>
-        <div>Status: {gameState?.status || 'unknown'}</div>
-        <div>Color: {myColor}</div>
-        
-        {/* Time control display */}
-        {gameState?.timePerPlayer && (
-          <div style={{ marginTop: 12, padding: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
-            <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>Time Control</div>
-            {gameState.playerIds.map(playerId => {
-              const timeRemaining = clientSideTimes[playerId] ?? gameState.timePerPlayer[playerId] ?? 0;
-              const minutes = Math.floor(Math.max(0, timeRemaining) / 60);
-              const seconds = Math.floor(Math.max(0, timeRemaining) % 60);
-              const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-              const isMyTime = playerId === mySocketId;
-              const isLowTime = timeRemaining < 60;
-              const color = isLowTime ? '#ff6b6b' : '#a3be8c';
-              const playerLabel = isMyTime ? 'You' : 'Opponent';
-              
-              return (
-                <div key={playerId} style={{ 
-                  color: color,
-                  fontWeight: isMyTime ? 'bold' : 'normal',
-                  fontSize: isMyTime ? 16 : 14,
-                }}>
-                  {playerLabel}: {timeStr}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        
-        <button style={styles.button} onClick={() => setShowCombatLog((v) => !v)}>{showCombatLog ? 'Hide Log' : 'Show Log'}</button>
+      <div style={styles.topRightControls}>
         <button style={styles.button} onClick={() => setShowMenu(true)}>Menu</button>
       </div>
-
-      {showCombatLog && (
-        <div style={styles.combatLogPanel}>
-          <div style={styles.combatLogHeader}>Combat Log</div>
-          <div style={styles.combatLogList}>
-            {combatLog.slice(-40).map((e, idx) => (
-              <div key={`${e.at}-${idx}`} style={styles.combatLogItem}>{e.text}</div>
-            ))}
-            {combatLog.length === 0 && <div style={styles.combatLogEmpty}>No events yet.</div>}
-          </div>
-        </div>
-      )}
 
       {pendingMoveError && (
         <div style={styles.errorBanner}>
@@ -1605,6 +1952,25 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
         </div>
       )}
 
+      {isReplayMode && (
+        <ReplayOverlay
+          styles={styles}
+          replayMeta={replayMeta}
+          replayFrames={replayFrames}
+          replayIndex={replayIndex}
+          setReplayIndex={setReplayIndex}
+          isReplayPlaying={isReplayPlaying}
+          setIsReplayPlaying={setIsReplayPlaying}
+          replayPanelTab={replayPanelTab}
+          setReplayPanelTab={setReplayPanelTab}
+          replayEvents={replayEvents}
+          replayCardsByPlayer={replayCardsByPlayer}
+          replayArcanaEvents={replayArcanaEvents}
+          exitReplayMode={exitReplayMode}
+        />
+      )}
+
+      {!isReplayMode && (
         <ArcanaSidebar
           myArcana={myArcana}
           usedArcanaIds={usedArcanaIds}
@@ -1740,6 +2106,7 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
           currentTurn={chess?.turn()}
           myColor={myColor}
         />
+      )}
 
       {showMenu && (
         <div style={styles.menuOverlay}>
@@ -2042,14 +2409,31 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
 
       {filteredCycleDialog && (
         <div style={styles.peekOverlay} onClick={() => setFilteredCycleDialog(null)}>
-          <div style={styles.peekPanel} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0 }}>Filtered Cycle</h3>
-            <div style={{ opacity: 0.85, marginBottom: 12 }}>Choose a category to draw a common Arcana from:</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={styles.filteredCyclePanel} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.filteredCycleHeaderRow}>
+              <div>
+                <h3 style={styles.filteredCycleTitle}>Filtered Cycle</h3>
+                <div style={styles.filteredCycleSubtitle}>Pick one category to draw a common Arcana.</div>
+              </div>
+              <button
+                style={styles.filteredCycleCloseButton}
+                onClick={() => setFilteredCycleDialog(null)}
+                aria-label="Close Filtered Cycle"
+              >
+                Close
+              </button>
+            </div>
+
+            <div style={styles.filteredCycleGrid}>
               {FILTERED_CYCLE_CATEGORIES.map((category) => (
                 <button
                   key={category.key}
-                  style={styles.button}
+                  style={{
+                    ...styles.filteredCycleOption,
+                    ...(filteredCycleHover === category.key ? styles.filteredCycleOptionHover : {}),
+                  }}
+                  onMouseEnter={() => setFilteredCycleHover(category.key)}
+                  onMouseLeave={() => setFilteredCycleHover(null)}
                   onClick={() => {
                     if (pendingActionRef.current) return;
                     pendingActionRef.current = true;
@@ -2066,14 +2450,21 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
                       }
                     });
                     setFilteredCycleDialog(null);
+                    setFilteredCycleHover(null);
                     setSelectedArcanaId(null);
                     setTargetingMode(null);
                   }}
                 >
-                  {category.label}
+                  <div style={styles.filteredCycleGlyph}>{category.glyph}</div>
+                  <div style={styles.filteredCycleOptionTextWrap}>
+                    <div style={styles.filteredCycleOptionLabel}>{category.label}</div>
+                    <div style={styles.filteredCycleOptionHint}>{category.hint}</div>
+                  </div>
                 </button>
               ))}
             </div>
+
+            <div style={styles.filteredCycleFooterNote}>Tip: this consumes your arcana action for the turn.</div>
           </div>
         </div>
       )}
@@ -2105,10 +2496,11 @@ export function GameScene({ gameState, settings, ascendedInfo, lastArcanaEvent, 
       {(activeFogEffects.w || activeFogEffects.b) && (
         <Suspense fallback={null}>
           <ParticleOverlay
-            type="ring"
+            key={`fog-${activeFogEffects.w ? 'w' : ''}${activeFogEffects.b ? 'b' : ''}`}
+            type="fog"
             rarity="rare"
             active={true}
-            style={{ opacity: 0.6 }}
+            style={{ opacity: 0.58 }}
             density={0.8}
           />
         </Suspense>
@@ -2451,37 +2843,25 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
 
 function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClick, isHidden, onDismiss }) {
   // Hooks must always be called in the same order — declare them before any early returns
-  const [useProgress, setUseProgress] = React.useState(0);
+
+  const onDismissRef = React.useRef(onDismiss);
+  React.useEffect(() => { onDismissRef.current = onDismiss; });
 
   React.useEffect(() => {
     if (type === 'use') {
-      const startTime = Date.now();
-      const duration = 2500;
-      // Track progress for particle switching
-      const progressInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(1, elapsed / duration);
-        setUseProgress(progress);
-        if (progress >= 1) clearInterval(progressInterval);
-      }, 100);
-      return () => clearInterval(progressInterval);
-    } else if (type === 'draw' && onDismiss) {
-      // Auto-dismiss all draw animations after a short delay
-      // Player can still click to dismiss early if stayUntilClick is true
-      const AUTO_DISMISS_DRAW_MS = 1500; // Reduced from requiring manual click
-      const autoDismissTimer = setTimeout(() => onDismiss(), AUTO_DISMISS_DRAW_MS);
-      return () => clearTimeout(autoDismissTimer);
-    }
-  }, [type, isHidden, stayUntilClick, onDismiss]);
-
-  React.useEffect(() => {
-    if (type === 'use' && !stayUntilClick && onDismiss) {
-      const AUTO_DISMISS_MS = 2500;
-      const auto = setTimeout(() => onDismiss(), AUTO_DISMISS_MS);
+      const AUTO_DISMISS_MS = 4200;
+      const auto = setTimeout(() => onDismissRef.current?.(), AUTO_DISMISS_MS);
       return () => clearTimeout(auto);
     }
-    return undefined;
-  }, [type, stayUntilClick, onDismiss]);
+    // 'draw' type: no auto-close — player must click to dismiss their own draw
+    // Opponent hidden draws are auto-closed elsewhere via isHidden logic
+    if (type === 'draw' && isHidden) {
+      const AUTO_DISMISS_DRAW_MS = 3600;
+      const auto = setTimeout(() => onDismissRef.current?.(), AUTO_DISMISS_DRAW_MS);
+      return () => clearTimeout(auto);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, isHidden]);
 
   // Early return only if there's nothing to show (no arcana AND not a hidden draw)
   if (!arcana && !isHidden) return null;
@@ -2506,7 +2886,9 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
   };
 
   const handleClick = () => {
-    if (stayUntilClick && onDismiss) onDismiss();
+    // Only allow click-dismiss for your own draw animation
+    if (type !== 'draw' || isHidden) return;
+    if (onDismissRef.current) onDismissRef.current();
   };
 
   return (
@@ -2530,38 +2912,50 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           }
         }
         
-        /* Use animation - single continuous animation to avoid restarts on phase changes */
-        @keyframes useCardSequence {
-          0% { 
-            transform: scale(0.8) rotateX(10deg);
+        @keyframes overlayShowThenFade {
+          0%   { opacity: 0; }
+          10%  { opacity: 1; }
+          65%  { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        
+        @keyframes overlayFadeOutSlow {
+          0%   { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        
+        @keyframes useCardEnter {
+          0% {
+            transform: translateY(60px) scale(0.85);
             opacity: 0;
           }
-          30% {
-            transform: scale(1) rotateX(0deg);
+          100% {
+            transform: translateY(0) scale(1);
             opacity: 1;
           }
+        }
+        
+        @keyframes useCardExit {
+          0% {
+            transform: scale(1);
+            opacity: 1;
+            filter: drop-shadow(0 0 20px ${colors.glow});
+          }
           40% {
-            transform: scale(1.03);
-            filter: brightness(1.1);
+            transform: scale(1.12);
+            opacity: 1;
+            filter: drop-shadow(0 0 60px ${colors.glow}) drop-shadow(0 0 30px white);
           }
-          50% { 
-            transform: scale(1.05);
-            filter: brightness(1);
-          }
-          60% {
-            transform: scale(1.08);
-            filter: brightness(0.95);
-          }
-          80% {
-            opacity: 0.4;
-            transform: scale(1.25);
-            filter: brightness(0.9);
-          }
-          100% { 
+          100% {
+            transform: scale(0.3);
             opacity: 0;
-            transform: scale(1.35);
-            filter: brightness(0.8);
+            filter: drop-shadow(0 0 100px ${colors.glow}) brightness(2);
           }
+        }
+        
+        @keyframes overlayFadeIn {
+          0%   { opacity: 0; }
+          100% { opacity: 1; }
         }
         
         @keyframes textFadeOut {
@@ -2583,28 +2977,27 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         //   }
         // }
         
-        @keyframes energyWave {
-          0% { 
-            transform: translate(-50%, -50%) scale(1);
-            opacity: 0;
-            border-width: 3px;
+        @keyframes energyRingPulse {
+          0%   { transform: scale(0.55); opacity: 0; border-width: 3px; }
+          12%  { opacity: 0.8; }
+          55%  { transform: scale(2.1); opacity: 0.4; border-width: 2px; }
+          100% { transform: scale(3.2); opacity: 0; border-width: 1px; }
+        }
+
+        @keyframes glowAppear {
+          0% {
+            opacity: 0.78;
+            filter: drop-shadow(0 0 4px ${colors.inner}) drop-shadow(0 0 8px ${colors.glow});
           }
-          20% {
-            opacity: 0.8;
-          }
-          70% {
-            opacity: 0.6;
-          }
-          100% { 
-            transform: translate(-50%, -50%) scale(5);
+          100% {
             opacity: 1;
-            border-width: 1px;
+            filter: drop-shadow(0 0 15px ${colors.inner}) drop-shadow(0 0 30px ${colors.glow});
           }
         }
         
         @keyframes overlayFadeOut {
-          0% { background: rgba(0, 0, 0, 0.85); }
-          100% { background: rgba(0, 0, 0, 0); }
+          0% { opacity: 1; }
+          100% { opacity: 0; }
         }
         
         @keyframes sparkFloat {
@@ -2655,8 +3048,10 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
       <div 
         style={{
           ...styles.cardRevealOverlay,
-          willChange: type === 'use' ? 'background' : 'auto',
-          animation: type === 'use' ? 'overlayFadeOut 2.5s ease-out forwards' : 'none'
+          pointerEvents: 'auto',
+          animation: type === 'use'
+            ? 'overlayShowThenFade 4.2s ease-in-out forwards'
+            : (isHidden ? 'overlayFadeOutSlow 0.35s ease-out 3.05s forwards' : 'overlayFadeIn 0.3s ease forwards')
         }}
         onClick={handleClick}
       >
@@ -2669,9 +3064,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           display: 'flex',
           justifyContent: 'center',
           willChange: 'transform, opacity',
-          animation: type === 'use'
-            ? 'textFadeOut 1.2s ease-out 1.3s forwards'
-            : 'textReveal 0.5s ease-out forwards',
+          animation: 'textReveal 0.5s ease-out forwards',
         }}>
           <div style={{
             fontSize: 'clamp(1.4rem, 4vw, 2rem)',
@@ -2686,23 +3079,24 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           </div>
         </div>
         
-        {/* Card container with single continuous animation (no phase restarts) */}
+        {/* Card container */}
         <div style={{ 
           display: 'flex', 
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
           willChange: 'transform, opacity',
-          animation: type === 'draw' 
-            ? 'cardDrawIn 1s ease-out forwards' 
-            : 'useCardSequence 2.5s ease-out forwards',
+          animation: type === 'draw'
+            ? 'cardDrawIn 1s ease-out forwards'
+            : 'useCardEnter 0.6s ease-out forwards',
           transformStyle: 'preserve-3d',
         }}>
           <div style={{
             position: 'relative',
-            willChange: type === 'use' ? 'filter' : 'auto',
-            animation: type === 'draw' ? 'innerGlow 2s ease-in-out infinite, floatCard 3s ease-in-out infinite' : 'none',
-            filter: type === 'use' ? `drop-shadow(0 0 30px ${colors.glow})` : 'none',
+            willChange: 'filter, transform, opacity',
+            animation: type === 'use'
+              ? 'useCardExit 1.8s ease-in 2.2s forwards'
+              : 'glowAppear 0.75s cubic-bezier(0.22, 0.8, 0.24, 1) forwards, innerGlow 2.2s ease-in-out 0.75s infinite, floatCard 3s ease-in-out infinite',
           }}>
             {isHidden ? (
               // Show a card back or placeholder for hidden opponent draws
@@ -2737,9 +3131,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            animation: type === 'use'
-              ? 'textFadeOut 1.2s ease-out 1.3s forwards'
-              : 'textReveal 0.6s ease-out 0.5s forwards',
+            animation: 'textReveal 0.6s ease-out 0.5s forwards',
             opacity: 0,
           }}>
             <div style={{
@@ -2756,19 +3148,24 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           </div>
         )}
         
-        {/* Use animation effects - GPU-accelerated particles */}
-        {type === 'use' && useProgress > 0.1 && (
-          <Suspense fallback={null}>
-            <ParticleOverlay
-              type={useProgress < 0.7 ? 'ring' : 'dissolve'}
-              rarity={arcana ? arcana.rarity : 'common'}
-              active={true}
-            />
-          </Suspense>
+        {/* Use animation ring - scales outward while fading out */}
+        {type === 'use' && (
+          <div style={{
+            position: 'absolute',
+            top: '50%', left: '50%',
+            marginTop: -170, marginLeft: -170,
+            width: 340, height: 340,
+            borderRadius: '50%',
+            border: `2px solid ${colors.glow}`,
+            boxShadow: `0 0 40px ${colors.glow}, inset 0 0 40px ${colors.glow}`,
+            animation: 'energyRingPulse 1.35s linear 0.25s forwards',
+            opacity: 0,
+            pointerEvents: 'none',
+          }} />
         )}
         
-        {/* Draw animation particles */}
-        {type === 'draw' && (
+        {/* Draw animation particles (only for visible/self draws) */}
+        {type === 'draw' && !isHidden && (
           <Suspense fallback={null}>
             <ParticleOverlay
               type="draw"
@@ -2783,16 +3180,21 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
 }
 
 function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, rematchTotalPlayers, opponentLeft, stats, onExportReplay, onRematchVote, onReturnToMenu }) {
-  const isDraw = !outcome.winnerSocketId || outcome.type === 'draw';
-  const isWinner = !isDraw && outcome.winnerSocketId === mySocketId;
+  const outcomeType = typeof outcome?.type === 'string' ? outcome.type : 'finished';
+  const winnerSocketId = typeof outcome?.winnerSocketId === 'string' ? outcome.winnerSocketId : null;
+  const explicitDraw = outcomeType === 'draw' || outcomeType === 'stalemate';
+  const isDraw = explicitDraw;
+  const isWinner = !isDraw && winnerSocketId === mySocketId;
   const title = isDraw ? '🤝 DRAW' : (isWinner ? '🏆 VICTORY!' : '💀 DEFEAT');
-  const message = outcome.type === 'disconnect' 
+  const message = outcomeType === 'disconnect' 
     ? (isWinner ? 'Opponent disconnected' : 'You disconnected')
-    : outcome.type === 'forfeit'
+    : outcomeType === 'forfeit'
     ? (isWinner ? 'Opponent forfeited' : 'You forfeited')
-    : outcome.type === 'draw'
+    : outcomeType === 'time-expired'
+    ? (isWinner ? 'Opponent ran out of time' : 'You ran out of time')
+    : explicitDraw
     ? 'Game ended in a draw'
-    : 'Game ended';
+    : (outcomeType === 'checkmate' ? (isWinner ? 'Checkmate' : 'Checkmated') : 'Game ended');
   const color = isDraw ? '#88c0d0' : (isWinner ? '#a3be8c' : '#bf616a');
   const voteCountText = `${rematchVoteCount}/${rematchTotalPlayers}`;
   const rematchButtonText = opponentLeft 
@@ -2869,6 +3271,14 @@ const styles = {
     boxShadow: '0 0 14px rgba(136,192,208,0.45)',
     border: '1px solid rgba(136,192,208,0.65)',
   },
+  topRightControls: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    display: 'flex',
+    gap: 8,
+    zIndex: 30,
+  },
   hud: {
     position: 'absolute',
     top: 12,
@@ -2900,6 +3310,168 @@ const styles = {
     borderRadius: 6,
     fontSize: '0.8rem',
     fontFamily: 'system-ui, sans-serif',
+  },
+  replayOverlay: {
+    position: 'absolute',
+    left: '50%',
+    bottom: 14,
+    transform: 'translateX(-50%)',
+    width: 'min(94vw, 720px)',
+    background: 'rgba(3, 8, 16, 0.92)',
+    border: '1px solid rgba(136, 192, 208, 0.35)',
+    borderRadius: 12,
+    padding: '10px 12px',
+    zIndex: 50,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    boxShadow: '0 12px 26px rgba(0,0,0,0.45)',
+  },
+  replayTopRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  replayTitle: {
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    color: '#e8f4ff',
+    letterSpacing: '0.03em',
+  },
+  replayMetaText: {
+    fontSize: '0.76rem',
+    color: 'rgba(216, 230, 244, 0.8)',
+  },
+  replayExitButton: {
+    border: '1px solid rgba(191, 97, 106, 0.6)',
+    background: 'rgba(191, 97, 106, 0.16)',
+    color: '#f2c2c7',
+    padding: '6px 10px',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontSize: '0.8rem',
+    fontWeight: 600,
+  },
+  replayControlsRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  replayTabRow: {
+    display: 'flex',
+    gap: 8,
+  },
+  replayTabButton: {
+    border: '1px solid rgba(136, 192, 208, 0.35)',
+    background: 'rgba(136, 192, 208, 0.1)',
+    color: '#cfe4f4',
+    padding: '5px 10px',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontSize: '0.78rem',
+    fontWeight: 600,
+  },
+  replayTabButtonActive: {
+    background: 'rgba(136, 192, 208, 0.22)',
+    border: '1px solid rgba(136, 192, 208, 0.65)',
+  },
+  replayControlButton: {
+    border: '1px solid rgba(136, 192, 208, 0.45)',
+    background: 'rgba(136, 192, 208, 0.12)',
+    color: '#dbedf8',
+    padding: '6px 10px',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontSize: '0.8rem',
+    fontWeight: 600,
+  },
+  replayStepText: {
+    marginLeft: 'auto',
+    fontSize: '0.8rem',
+    color: '#c5deee',
+    fontFamily: 'monospace',
+  },
+  replaySlider: {
+    width: '100%',
+    accentColor: '#88c0d0',
+    cursor: 'pointer',
+  },
+  replayEventBox: {
+    fontSize: '0.78rem',
+    color: '#d6e8f7',
+    border: '1px solid rgba(136, 192, 208, 0.25)',
+    borderRadius: 8,
+    padding: '6px 8px',
+    background: 'rgba(10, 20, 36, 0.5)',
+    minHeight: 18,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  replayListBox: {
+    border: '1px solid rgba(136, 192, 208, 0.2)',
+    borderRadius: 8,
+    background: 'rgba(10, 20, 36, 0.35)',
+    maxHeight: 140,
+    overflowY: 'auto',
+    padding: 8,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  replayListItem: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    fontSize: '0.77rem',
+    color: '#dbe9f6',
+    lineHeight: 1.25,
+  },
+  replayListType: {
+    fontFamily: 'monospace',
+    fontSize: '0.72rem',
+    color: '#9fc9e2',
+    border: '1px solid rgba(136, 192, 208, 0.32)',
+    borderRadius: 6,
+    padding: '1px 5px',
+    flexShrink: 0,
+  },
+  replayCardsBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  replayCardsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+    gap: 8,
+  },
+  replayCardsPanel: {
+    border: '1px solid rgba(136, 192, 208, 0.2)',
+    borderRadius: 8,
+    background: 'rgba(10, 20, 36, 0.32)',
+    padding: 8,
+  },
+  replayCardsHeader: {
+    fontSize: '0.76rem',
+    fontWeight: 700,
+    color: '#c8dfef',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  },
+  replayCardsRow: {
+    display: 'flex',
+    gap: 8,
+    overflowX: 'auto',
+    overflowY: 'visible',
+    paddingBottom: 2,
+  },
+  replayEmptyText: {
+    fontSize: '0.76rem',
+    color: '#b4cad9',
+    opacity: 0.85,
   },
   menuOverlay: {
     position: 'absolute',
@@ -2969,6 +3541,102 @@ const styles = {
     border: '1px solid rgba(136, 192, 208, 0.12)',
     color: '#e6eef6',
     minWidth: 360,
+  },
+  filteredCyclePanel: {
+    background: 'linear-gradient(180deg, rgba(19,25,36,0.98), rgba(9,13,20,0.98))',
+    padding: 20,
+    borderRadius: 14,
+    border: '1px solid rgba(136, 192, 208, 0.22)',
+    color: '#e6eef6',
+    minWidth: 'min(92vw, 640px)',
+    maxWidth: 640,
+    boxShadow: '0 16px 42px rgba(0,0,0,0.48), 0 0 28px rgba(136,192,208,0.14)',
+  },
+  filteredCycleHeaderRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 14,
+  },
+  filteredCycleTitle: {
+    marginTop: 0,
+    marginBottom: 4,
+    fontSize: '1.35rem',
+    letterSpacing: '0.02em',
+  },
+  filteredCycleSubtitle: {
+    opacity: 0.88,
+    fontSize: '0.95rem',
+  },
+  filteredCycleCloseButton: {
+    padding: '7px 10px',
+    borderRadius: 8,
+    border: '1px solid rgba(188,216,239,0.28)',
+    background: 'rgba(10, 16, 24, 0.65)',
+    color: '#d8e7f6',
+    cursor: 'pointer',
+    fontSize: '0.82rem',
+  },
+  filteredCycleGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 10,
+  },
+  filteredCycleOption: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+    textAlign: 'left',
+    padding: '12px 13px',
+    borderRadius: 10,
+    border: '1px solid rgba(136, 192, 208, 0.22)',
+    background: 'linear-gradient(180deg, rgba(22,34,49,0.84), rgba(14,20,30,0.84))',
+    color: '#eff7ff',
+    cursor: 'pointer',
+    transition: 'transform 0.14s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease',
+  },
+  filteredCycleOptionHover: {
+    transform: 'translateY(-1px)',
+    border: '1px solid rgba(136, 192, 208, 0.6)',
+    boxShadow: '0 8px 20px rgba(0,0,0,0.35), 0 0 14px rgba(136,192,208,0.22)',
+    background: 'linear-gradient(180deg, rgba(28,42,60,0.95), rgba(16,24,36,0.95))',
+  },
+  filteredCycleGlyph: {
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    border: '1px solid rgba(156, 214, 230, 0.5)',
+    background: 'rgba(136, 192, 208, 0.12)',
+    color: '#bde8f0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 700,
+    fontSize: '0.86rem',
+    flexShrink: 0,
+  },
+  filteredCycleOptionTextWrap: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+  },
+  filteredCycleOptionLabel: {
+    fontSize: '0.97rem',
+    fontWeight: 700,
+    color: '#eef6ff',
+  },
+  filteredCycleOptionHint: {
+    fontSize: '0.8rem',
+    opacity: 0.82,
+    color: '#c6d7e8',
+  },
+  filteredCycleFooterNote: {
+    marginTop: 12,
+    fontSize: '0.8rem',
+    opacity: 0.72,
+    color: '#bfd2e4',
   },
   peekGrid: {
     display: 'flex',
@@ -3172,11 +3840,11 @@ const styles = {
   arcanaCardRow: {
     display: 'flex',
     gap: 12,
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     paddingBottom: 4,
     alignItems: 'flex-end',
     overflowX: 'auto',
-    overflowY: 'hidden',
+    overflowY: 'visible',
     whiteSpace: 'nowrap',
     scrollbarWidth: 'thin',
   },
@@ -3317,7 +3985,6 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    animation: 'fadeIn 0.3s ease',
     zIndex: 1000,
     overflow: 'hidden',
   },

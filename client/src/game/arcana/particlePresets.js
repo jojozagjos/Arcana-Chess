@@ -190,6 +190,67 @@ export const energyRingPreset = (color = '#88c0d0') => ({
 });
 
 /**
+ * Fog of War effect - continuous drifting mist until deactivated
+ */
+export const fogOfWarPreset = (color = '#8aa4b8') => ({
+  fullScreen: false,
+  background: { color: { value: 'transparent' } },
+  fpsLimit: 60,
+  particles: {
+    number: { value: 0 },
+    color: { value: [color, '#a9bfd1', '#6f8497'] },
+    shape: { type: 'circle' },
+    opacity: {
+      value: { min: 0.08, max: 0.35 },
+      animation: {
+        enable: true,
+        speed: 0.35,
+        minimumValue: 0.04,
+        sync: false,
+      },
+    },
+    size: {
+      value: { min: 10, max: 34 },
+      animation: {
+        enable: true,
+        speed: 0.8,
+        minimumValue: 8,
+        sync: false,
+      },
+    },
+    move: {
+      enable: true,
+      speed: { min: 0.25, max: 1.1 },
+      direction: 'none',
+      random: true,
+      straight: false,
+      outModes: { default: 'bounce' },
+      attract: {
+        enable: false,
+      },
+    },
+    life: {
+      duration: { value: 0 },
+      count: 0,
+    },
+  },
+  emitters: [
+    {
+      direction: 'none',
+      position: { x: 50, y: 52 },
+      rate: { quantity: 7, delay: 0.28 },
+      life: { duration: -1, count: 0 },
+      size: { width: 100, height: 90 },
+      particles: {
+        move: {
+          speed: { min: 0.2, max: 0.9 },
+        },
+      },
+    },
+  ],
+});
+
+/**
  * Sparkle confetti - celebratory effect
  */
 export const confettiPreset = (colors = ['#88c0d0', '#ffd54f', '#ce93d8', '#a3be8c']) => ({

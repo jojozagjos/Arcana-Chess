@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 
-export function ChessPiece({ type, isWhite, targetPosition, square, onClickSquare }) {
+export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDuplicate = false, onClickSquare }) {
   const color = isWhite ? '#eceff4' : '#2e3440';
   const emissive = isWhite ? '#d8dee9' : '#1a1d28';
   const groupRef = useRef();
@@ -37,6 +37,31 @@ export function ChessPiece({ type, isWhite, targetPosition, square, onClickSquar
       {type === 'b' && <BishopGeometry color={color} emissive={emissive} />}
       {type === 'q' && <QueenGeometry color={color} emissive={emissive} />}
       {type === 'k' && <KingGeometry color={color} emissive={emissive} />}
+
+      {isMirrorDuplicate && (
+        <group position={[0, 1.02, 0]}>
+          <mesh>
+            <torusGeometry args={[0.14, 0.028, 10, 24]} />
+            <meshStandardMaterial
+              color="#d7a7ff"
+              emissive="#8f3cff"
+              emissiveIntensity={1.1}
+              metalness={0.25}
+              roughness={0.35}
+            />
+          </mesh>
+          <mesh position={[0, 0.11, 0]}>
+            <sphereGeometry args={[0.04, 12, 10]} />
+            <meshStandardMaterial
+              color="#f0d6ff"
+              emissive="#b566ff"
+              emissiveIntensity={1.2}
+              metalness={0.2}
+              roughness={0.25}
+            />
+          </mesh>
+        </group>
+      )}
     </group>
   );
 }

@@ -655,11 +655,20 @@ function applyRoyalSwap({ chess, moverColor, params }) {
     const targetPiece = chess.get(params.targetSquare);
     // Royal Swap: king can only swap with a pawn (per card description)
     if (kingSquare && targetPiece && targetPiece.type === 'p' && targetPiece.color === moverColor) {
+      const pawnToBackRank = kingSquare[1] === '1' || kingSquare[1] === '8';
+      const swappedPieceType = pawnToBackRank ? 'q' : targetPiece.type;
       chess.remove(kingSquare);
       chess.remove(params.targetSquare);
       chess.put({ type: 'k', color: moverColor }, params.targetSquare);
-      chess.put(targetPiece, kingSquare);
-      return { params: { kingFrom: kingSquare, kingTo: params.targetSquare } };
+      chess.put({ type: swappedPieceType, color: moverColor }, kingSquare);
+      return {
+        params: {
+          kingFrom: kingSquare,
+          kingTo: params.targetSquare,
+          swappedPieceType,
+          promotedFromPawn: pawnToBackRank,
+        },
+      };
     }
   }
   return null;
@@ -901,9 +910,15 @@ function applyMirrorImage({ chess, gameState, moverColor, params }) {
   // Cannot use on king
   if (piece.type === 'k') return null;
   
-  // Find an adjacent free square for the duplicate
+  // Find an adjacent free square for the duplicate.
+  // Pawns cannot be placed on back ranks (1/8) because that creates invalid chess.js FEN.
   const adjacentSquares = getAdjacentSquares(targetSquare);
-  const freeSquare = adjacentSquares.find(sq => !chess.get(sq));
+  const freeSquare = adjacentSquares.find((sq) => {
+    if (chess.get(sq)) return false;
+    if (piece.type !== 'p') return true;
+    const rank = sq[1];
+    return rank !== '1' && rank !== '8';
+  });
   
   if (!freeSquare) {
     // No free adjacent square available

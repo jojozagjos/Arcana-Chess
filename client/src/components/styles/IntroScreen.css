@@ -83,7 +83,7 @@
 }
 
 .continue-pulse {
-  animation: continueEnter 1.05s cubic-bezier(0.18, 0.82, 0.22, 1) forwards, continuePulse 2.2s ease-in-out 1.05s infinite;
+  animation: continueEnter 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards, continuePulse 2.2s ease-in-out 1.8s infinite;
 }
 
 .fade-in {
@@ -183,12 +183,16 @@
 @keyframes continueEnter {
   0% {
     opacity: 0;
-    transform: translateY(12px) scale(0.985);
-    letter-spacing: 0.18em;
+    transform: translateY(18px) scale(0.97);
+    letter-spacing: 0.22em;
   }
-  60% {
-    opacity: 0.9;
-    transform: translateY(2px) scale(0.997);
+  40% {
+    opacity: 0.5;
+    transform: translateY(5px) scale(0.99);
+  }
+  80% {
+    opacity: 0.95;
+    transform: translateY(-1px) scale(1.003);
   }
   100% {
     opacity: 1;

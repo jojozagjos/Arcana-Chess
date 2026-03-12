@@ -140,4 +140,46 @@ npm run test:server
 - Verify visual feedback is displayed
 - Confirm extra move UI message is shown
 
-**Client-side simulation** may need updates to match server changes (especially for `ironFortressShields`).
+---
+
+## Date: March 11, 2026
+
+## Issues Fixed:
+
+### 1. **Replay Viewer: Card Hand Tracking & Hidden Opponent Cards**
+**Problem**: In replays, player card hands were not updating as the replay was scrubbed; opponent hands showed only duplicates of "Unknown Arcana"; cards appeared statically frozen at final state.
+
+**Root Causes**:
+- Used backward-rewind approach (start from final state, undo future events), which broke when a card was both drawn AND used after current frame
+- No proper frame indexing — fell back to combat log array index instead of actual board frames
+- Server redacts opponent hands as `{ hidden: true }` objects, not handled by UI
+
+**Fixes**:
+- **[GameScene.jsx](client/src/components/GameScene.jsx#L315-L428)**: Completely rewrote `replayCardsByPlayer` useMemo:
+  - Switched to **forward reconstruction** (start from empty, apply events chronologically up to current frame)
+  - Estimates frame index by counting `move` events (each move = +1 frame)
+  - Handles hidden opponent cards (shows "+N hidden" instead of "Unknown Arcana" duplicates)
+  - Text-based card parsing from event logs for backward compatibility
+  - Infers player ID from event text ("You drew X" vs "Opponent drew X")
+  - Enrich combatLog entries with `playerId` and arcana object in `handleArcanaDrawn` and `handleArcanaUsed`
+
+- **[ReplayOverlay.jsx](client/src/components/ReplayOverlay.jsx#L20-L21, L103-L155)**: 
+  - Added collapsible sections: `eventsExpanded` and `handsExpanded` state
+  - Events tab now has a Collapse/Expand toggle; when collapsed, hide the event list but keep title visible
+  - Hands tab now has a Collapse/Expand toggle; filters out `hidden: true` cards from display and shows "+N hidden" indicator
+
+**Example (before vs after)**:
+```
+Before:
+  White Hand (1): Antidote
+  Black Hand (6): Unknown Arcana, Unknown Arcana, Unknown Arcana, Unknown Arcana, Unknown Arcana, Unknown Arcana
+
+After (correctly updated as replay scrubbed):
+  White Hand (2): Antidote, Filtered Cycle
+  Black Hand (4): +2 hidden
+```
+
+---
+
+## Build Status:
+✅ `npm run build` — built in 10.80s, no errors

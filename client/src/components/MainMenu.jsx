@@ -16,6 +16,7 @@ const getTimeControlLabel = (value) => TIME_CONTROL_LABELS[value] || String(valu
 export function MainMenu({
   mode = 'root',
   initialLobby = null,
+  onOpenReplay,
   onPlayOnlineHost,
   onPlayOnlineJoin,
   onTutorial,
@@ -100,7 +101,7 @@ export function MainMenu({
   }
 
   if (mode === 'host') {
-    return <HostLobbyScreen onBack={onBack} />;
+    return <HostLobbyScreen onBack={onBack} onOpenReplay={onOpenReplay} />;
   }
 
   if (mode === 'join') {
@@ -110,8 +111,8 @@ export function MainMenu({
   return null;
 }
 
-function HostLobbyScreen({ onBack, initialLobby = null }) {
-  const [tab, setTab] = useState('online'); // 'online' | 'ai'
+function HostLobbyScreen({ onBack, initialLobby = null, onOpenReplay }) {
+  const [tab, setTab] = useState('online'); // 'online' | 'ai' | 'replay'
   const [currentLobby, setCurrentLobby] = useState(initialLobby);
 
   return (
@@ -151,9 +152,22 @@ function HostLobbyScreen({ onBack, initialLobby = null }) {
           >
             Versus AI (WIP)
           </button>
+          <button
+            style={{
+              ...styles.tabButton,
+              ...(tab === 'replay' ? styles.tabButtonActive : {}),
+              ...(currentLobby ? styles.disabledButton : {}),
+            }}
+            onClick={() => !currentLobby && setTab('replay')}
+            disabled={!!currentLobby}
+          >
+            Replay Viewer
+          </button>
         </div>
 
-        {tab === 'online' ? <OnlineHostForm initialLobby={initialLobby} onLobbyChange={setCurrentLobby} /> : <AIGameForm />}
+        {tab === 'online' && <OnlineHostForm initialLobby={initialLobby} onLobbyChange={setCurrentLobby} />}
+        {tab === 'ai' && <AIGameForm />}
+        {tab === 'replay' && <ReplayImportForm onOpenReplay={onOpenReplay} />}
       </div>
     </div>
   );
@@ -206,7 +220,7 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
           setStatus(`Error: ${res?.error || 'Unknown error'}`);
         } else {
           updateLobby(res.lobby);
-          setStatus(`Lobby created. Share code: ${res.lobby.code}`);
+          setStatus('');
         }
       },
     );
@@ -415,7 +429,7 @@ function AIGameForm() {
   const [gameMode, setGameMode] = useState('Ascendant');
   const [difficulty, setDifficulty] = useState('Scholar');
   const [playerColor, setPlayerColor] = useState('white');
-  const [timeControl, setTimeControl] = useState(30); // 30 minutes default
+  const [timeControl, setTimeControl] = useState('unlimited'); // unlimited default
   const [status, setStatus] = useState('');
 
   const handleStartAI = () => {
@@ -514,6 +528,66 @@ function AIGameForm() {
             </button>
             {status && <div style={styles.statusCard}>{status}</div>}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReplayImportForm({ onOpenReplay }) {
+  const [status, setStatus] = useState('');
+
+  const handleFileChosen = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const replay = JSON.parse(text);
+      if (typeof onOpenReplay === 'function') {
+        onOpenReplay(replay);
+      }
+      setStatus('Opening replay viewer...');
+    } catch (err) {
+      setStatus('Invalid replay JSON file.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  return (
+    <div style={styles.form}>
+      <div style={styles.setupGrid}>
+        <div style={styles.formSectionCard}>
+          <div style={styles.sectionEyebrow}>Replay Tools</div>
+          <h3 style={styles.sectionTitle}>Import a replay</h3>
+          <div style={styles.helperText}>Load an exported replay JSON and open the board replay viewer.</div>
+
+          <label style={styles.label}>
+            Replay file
+            <input
+              style={styles.input}
+              type="file"
+              accept="application/json,.json"
+              onChange={handleFileChosen}
+            />
+          </label>
+        </div>
+
+        <div style={styles.previewCard}>
+          <div style={styles.sectionEyebrow}>Supported formats</div>
+          <h3 style={styles.sectionTitle}>Replay data</h3>
+          <div style={styles.previewList}>
+            <div style={styles.previewRow}><span>Preferred</span><strong>timeline.frames</strong></div>
+            <div style={styles.previewRow}><span>Fallback</span><strong>fenHistory</strong></div>
+            <div style={styles.previewRow}><span>Legacy</span><strong>finalState.fen</strong></div>
+          </div>
+
+          <div style={styles.calloutBox}>
+            Replays open in read-only viewer mode.
+          </div>
+
+          {status && <div style={styles.statusCard}>{status}</div>}
         </div>
       </div>
     </div>

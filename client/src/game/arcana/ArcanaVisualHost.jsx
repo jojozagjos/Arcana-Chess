@@ -84,10 +84,7 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
     };
   }, [activeVisualArcana]);
 
-  // Deferred disposal on each frame to avoid frame stalls
-  useFrame(() => {
-    effectResourcePool.performDeferredDisposal();
-  });
+  // Deferred disposal disabled here to avoid cross-context WebGL delete errors.
 
   return (
     <group>
@@ -244,31 +241,24 @@ function EffectWrapper({ Effect, params, fading }) {
   }, [fading]);
 
   useEffect(() => {
-    // cleanup on unmount: restore materials and defer disposal to avoid frame stalls
+    // cleanup on unmount: restore material properties only.
+    // Let R3F/Three own disposal to ensure it happens on the correct WebGL context.
     return () => {
       if (ref.current) {
         ref.current.traverse((obj) => {
-          // Restore material properties
-          if (obj.material) {
-            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-            for (const m of mats) {
-              const orig = materialOriginals.current.get(m);
-              if (orig) {
-                try { m.transparent = orig.transparent; } catch (e) {}
-                try { m.opacity = orig.opacity; } catch (e) {}
-                try { m.depthWrite = orig.depthWrite; } catch (e) {}
-                if (orig.uniforms && m.uniforms) {
-                  if ('uOpacity' in m.uniforms && 'uOpacity' in orig.uniforms) try { m.uniforms.uOpacity.value = orig.uniforms.uOpacity.value; } catch (e) {}
-                  if ('opacity' in m.uniforms && 'opacity' in orig.uniforms) try { m.uniforms.opacity.value = orig.uniforms.opacity.value; } catch (e) {}
-                }
+          if (!obj.material) return;
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          for (const m of mats) {
+            const orig = materialOriginals.current.get(m);
+            if (orig) {
+              try { m.transparent = orig.transparent; } catch (e) {}
+              try { m.opacity = orig.opacity; } catch (e) {}
+              try { m.depthWrite = orig.depthWrite; } catch (e) {}
+              if (orig.uniforms && m.uniforms) {
+                if ('uOpacity' in m.uniforms && 'uOpacity' in orig.uniforms) try { m.uniforms.uOpacity.value = orig.uniforms.uOpacity.value; } catch (e) {}
+                if ('opacity' in m.uniforms && 'opacity' in orig.uniforms) try { m.uniforms.opacity.value = orig.uniforms.opacity.value; } catch (e) {}
               }
-              // Queue material for deferred disposal
-              effectResourcePool.queueDisposal(m, null);
             }
-          }
-          // Queue geometry for deferred disposal
-          if (obj.geometry) {
-            effectResourcePool.queueDisposal(null, obj.geometry);
           }
         });
       }
