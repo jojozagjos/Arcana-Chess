@@ -1,0 +1,27 @@
+/* Global mobile-first base styles */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  /* Prevent iOS font size inflation in landscape */
+  -webkit-text-size-adjust: 100%;
+  /* Single-tap without 300ms delay */
+  touch-action: manipulation;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  /* dvh = dynamic viewport height (accounts for mobile browser chrome) */
+  height: 100dvh;
+}
+
+/* Thin scrollbars on webkit */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(136,192,208,0.35); border-radius: 2px; }

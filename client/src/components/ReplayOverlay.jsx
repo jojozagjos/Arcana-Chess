@@ -144,20 +144,36 @@ export function ReplayOverlay({
                 <div style={styles.replayCardsHeader}>{entry.label} Hand ({entry.cards.length})</div>
                 <div style={styles.replayCardsRow}>
                   {entry.cards.length === 0 && <div style={styles.replayEmptyText}>Empty.</div>}
-                  {entry.cards.filter((c) => !c.hidden).map((card, idx) => (
-                    <ArcanaCard
-                      key={`replay-card-${entry.playerId}-${card?.instanceId || card?.id || idx}`}
-                      arcana={card}
-                      size="small"
-                      hoverInfo={card?.description || ''}
-                      onClick={() => setShowArcanaTimeline(false)}
-                    />
-                  ))}
-                  {entry.cards.filter((c) => c.hidden).length > 0 && (
-                    <div style={{ fontSize: '0.72rem', color: '#88c0d0', opacity: 0.6, fontStyle: 'italic', padding: '2px 4px' }}>
-                      +{entry.cards.filter((c) => c.hidden).length} hidden
-                    </div>
-                  )}
+                  {entry.cards.map((card, idx) => {
+                    const isHidden = card?.hidden;
+                    return (
+                      <div key={`replay-card-${entry.playerId}-${card?.instanceId || card?.id || idx}`} style={{ position: 'relative', display: 'inline-block' }}>
+                        <div style={isHidden ? { opacity: 0.5, position: 'relative' } : {}}>
+                        <ArcanaCard
+                            arcana={card}
+                            size="small"
+                            hoverInfo={card?.description || card?.name || 'Card'}
+                            onClick={() => setShowArcanaTimeline(false)}
+                          />
+                          {isHidden && (
+                            <div style={{
+                              position: 'absolute',
+                              top: '50%',
+                              left: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              fontSize: '1.2rem',
+                              fontWeight: 'bold',
+                              color: '#d8c59e',
+                              pointerEvents: 'none',
+                              textShadow: '0 0 4px rgba(0,0,0,0.8)',
+                            }}>
+                              ?
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}

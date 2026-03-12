@@ -346,15 +346,17 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       }
       // Parse card name from event text e.g. "You drew Antidote" / "Opponent used Quiet Thought"
       const txt = event?.text || '';
-      const match = txt.match(/(?:drew|used)\s+(.+)$/i);
+      const match = txt.match(/(?:drew|used)\s+(.+)$/);
       if (match?.[1] && match[1] !== 'a card') {
         const name = match[1].trim();
         const d = arcanaLookupByName.get(name.toLowerCase());
-        if (d) return { ...d };
-        return { id: name.toLowerCase().replace(/\s+/g, '_'), name, description: '', rarity: 'common' };
+        if (d) return { ...d, description: d.description || `${name}` };
+        // Create a card object with the parsed name as description
+        const id = name.toLowerCase().replace(/\s+/g, '_');
+        return { id, name, description: txt.length < 100 ? txt : name, rarity: 'common' };
       }
       // Can't determine card — return a hidden placeholder
-      return { id: `hidden_${Math.random()}`, name: 'Hidden', description: '', rarity: 'common', hidden: true };
+      return { id: `hidden_${Math.random()}`, name: 'Hidden Card', description: txt.length > 0 && txt.length < 100 ? txt : 'Hidden opponent card', rarity: 'common', hidden: true };
     };
 
     const events = replayEvents || [];
@@ -363,12 +365,23 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     const playerIds = finalState?.playerIds || Object.keys(byPlayer);
 
     // Infer player ID from event or text
-    const opponentId = playerIds.find((id) => id !== mySocketId) || null;
+    // IMPORTANT: opponentId must be computed after we have playerIds
+    let opponentId = playerIds.find((id) => id && id !== mySocketId);
+    if (!opponentId && playerIds.length > 1) {
+      // If mySocketId is not set, just pick the first different player
+      opponentId = playerIds[playerIds.length > 1 ? 1 : 0];
+    }
+
     const getEventPid = (event) => {
-      if (event?.playerId) return event.playerId;
+      if (event?.playerId && playerIds.includes(event.playerId)) return event.playerId;
       const txt = event?.text || '';
-      if (txt.startsWith('You ')) return mySocketId;
-      if (txt.startsWith('Opponent ')) return opponentId;
+      // Check text patterns - be more flexible with the detection
+      if (txt.includes('You ') || txt.startsWith('You')) return mySocketId;
+      if (txt.includes('Opponent ') || txt.startsWith('Opponent')) return opponentId;
+      // If we have exactly 2 players and can't determine, return the one that's not mySocketId
+      if (playerIds.length === 2) {
+        return playerIds.find((id) => id !== mySocketId) || playerIds[0];
+      }
       return null;
     };
 
@@ -1946,6 +1959,22 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         <button style={styles.button} onClick={() => setShowMenu(true)}>Menu</button>
       </div>
 
+      {!isReplayMode && gameState?.status === 'ongoing' && (
+        <div style={styles.hud}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ fontSize: '0.75rem', opacity: 0.65 }}>Playing as</div>
+            <div style={{ fontWeight: 700, color: myColor === 'white' ? '#eceff4' : '#88c0d0', textTransform: 'capitalize' }}>{myColor}</div>
+          </div>
+          <div style={{ width: 1, height: 32, background: 'rgba(255,255,255,0.15)' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ fontSize: '0.75rem', opacity: 0.65 }}>Turn</div>
+            <div style={{ fontWeight: 700, color: chess?.turn?.() === myColorCode ? '#a3d977' : '#88c0d0' }}>
+              {chess?.turn?.() === myColorCode ? 'Your move' : "Opponent's move"}
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingMoveError && (
         <div style={styles.errorBanner}>
           {pendingMoveError}
@@ -2738,8 +2767,6 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
     if (!a.instanceId && usedArcanaIds.has(a.id)) return false;
     return true;
   });
-  const [hoveredId, setHoveredId] = React.useState(null);
-  
   const toColorCode = (color) => color === 'white' ? 'w' : 'b';
   const isMyTurn = currentTurn === toColorCode(myColor);
 
@@ -2793,15 +2820,12 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
         )}
         {groupedCards.map(({ card, indices }) => {
           const isSelected = selectedArcanaId === card.id;
-          const isHovered = hoveredId === card.id;
           const count = indices.length;
           
           return (
             <div
               key={card.id}
               style={{ position: 'relative' }}
-              onMouseEnter={() => setHoveredId(card.id)}
-              onMouseLeave={() => setHoveredId(null)}
             >
               <ArcanaCard
                 arcana={card}
@@ -2812,15 +2836,6 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
               />
               {count > 1 && (
                 <div style={styles.cardCountBadge}>×{count}</div>
-              )}
-              {isHovered && (
-                <div style={styles.arcanaTooltip}>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                    {card.name} {count > 1 && `(×${count})`}
-                    {card.endsTurn && <span style={{ color: '#ebcb8b', marginLeft: 8, fontSize: '0.7rem' }}>⚠️ ENDS TURN</span>}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>{card.description}</div>
-                </div>
               )}
             </div>
           );
@@ -3116,7 +3131,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
                 🂠
               </div>
             ) : (
-              <ArcanaCard arcana={arcana} size="large" />
+              <ArcanaCard arcana={arcana} size="large" disableHover />
             )}
           </div>
         </div>
@@ -3820,7 +3835,7 @@ const styles = {
     right: 12,
     background: 'rgba(5, 6, 10, 0.92)',
     borderRadius: 10,
-    padding: 12,
+    padding: '12px 12px calc(12px + env(safe-area-inset-bottom))',
     display: 'flex',
     flexDirection: 'column',
     gap: 8,

@@ -283,7 +283,7 @@ export function App() {
   // Using external IntroScreen component (from ./components/IntroScreen.jsx)
 
   return (
-    <div style={{ width: '100vw', height: '100vh', backgroundColor: '#05060a', color: 'white' }}>
+    <div style={{ width: '100%', height: '100%', backgroundColor: '#05060a', color: 'white' }}>
       {screen === 'intro' && (
         <IntroScreen
           onContinue={() => {
