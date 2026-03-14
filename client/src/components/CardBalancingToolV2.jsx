@@ -14,6 +14,7 @@ import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from 
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
 import CutsceneOverlay from './CutsceneOverlay.jsx';
 import { orchestrateCutscene } from '../game/arcana/cutsceneOrchestrator.js';
+import { getCutsceneConfig } from '../game/arcana/cutsceneDefinitions.js';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor, getLogColor } from '../game/arcanaHelpers.js';
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
@@ -178,6 +179,39 @@ export function CardBalancingToolV2({ onBack }) {
 
   // Show when a card/interaction ends the turn (Badge in UI)
   const [turnEndInfo, setTurnEndInfo] = useState(null);
+
+  const cinematicMotionBySquare = useMemo(() => {
+    if (!activeVisualArcana?.arcanaId) return new Map();
+    const params = activeVisualArcana.params || {};
+    const squares = new Map();
+    const addSquare = (sq, profile, intensity = 0.16) => {
+      if (!sq || typeof sq !== 'string') return;
+      if (!squares.has(sq)) {
+        squares.set(sq, {
+          active: true,
+          profile,
+          intensity,
+          phase: (sq.charCodeAt(0) * 11 + parseInt(sq[1] || '1', 10) * 19) % 31,
+        });
+      }
+    };
+
+    if (activeVisualArcana.arcanaId === 'edgerunner_overdrive') {
+      addSquare(params.targetSquare || params.square, 'overdrive', 0.24);
+      if (Array.isArray(params.dashPath)) {
+        params.dashPath.forEach((sq, i) => addSquare(sq, 'overdrive', Math.max(0.12, 0.2 - i * 0.02)));
+      }
+    } else if (activeVisualArcana.arcanaId === 'breaking_point') {
+      addSquare(params.targetSquare || params.square || params.shatteredSquare, 'fracture', 0.22);
+      if (Array.isArray(params.displaced)) {
+        params.displaced.forEach((d) => {
+          addSquare(d?.from, 'fracture', 0.14);
+          addSquare(d?.to, 'fracture', 0.16);
+        });
+      }
+    }
+    return squares;
+  }, [activeVisualArcana]);
 
   const selectedCard = useMemo(() => {
     return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
@@ -582,7 +616,9 @@ export function CardBalancingToolV2({ onBack }) {
 
         setActiveVisualArcana({ arcanaId: card.id, params: visualParams });
         const duration = getArcanaEffectDuration(card.id);
-        setTimeout(() => setActiveVisualArcana(null), duration || 3000);
+        const cutsceneDuration = card.visual?.cutscene ? (getCutsceneConfig(card.id)?.duration || 0) : 0;
+        const clearMs = Math.max(duration || 3000, cutsceneDuration || 0);
+        setTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
       };
 
       if (!effectsModule || Object.keys(effectsModule).length === 0) {
@@ -602,7 +638,7 @@ export function CardBalancingToolV2({ onBack }) {
       if (card.visual?.cutscene) {
         setValidationChecklist(prev => ({ ...prev, cutscene: true }));
         try {
-          triggerCardCutscene(card.id, params.targetSquare || params.square);
+          triggerCardCutscene(card.id, params.targetSquare || params.square, params);
         } catch (e) {
           addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
         }
@@ -683,7 +719,9 @@ export function CardBalancingToolV2({ onBack }) {
         setActiveVisualArcana({ arcanaId: card.id, params: visualParams });
         // Clear visual after animation duration (use shared timing)
         const duration = getArcanaEffectDuration(card.id);
-        setTimeout(() => setActiveVisualArcana(null), duration || 3000);
+        const cutsceneDuration = card?.visual?.cutscene ? (getCutsceneConfig(card.id)?.duration || 0) : 0;
+        const clearMs = Math.max(duration || 3000, cutsceneDuration || 0);
+        setTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
       };
 
       // Ensure effects module is loaded before triggering visuals (Balancing tool may lazy-load)
@@ -705,7 +743,7 @@ export function CardBalancingToolV2({ onBack }) {
         setValidationChecklist(prev => ({ ...prev, cutscene: true }));
         // Trigger full orchestrated cutscene when available
         try {
-          triggerCardCutscene(card.id, visualParams.square);
+          triggerCardCutscene(card.id, visualParams.square, visualParams);
         } catch (e) {
           addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
         }
@@ -804,7 +842,7 @@ export function CardBalancingToolV2({ onBack }) {
   };
 
   // Trigger an orchestrated cutscene wired to the local CameraCutscene and CutsceneOverlay
-  const triggerCardCutscene = (arcanaId, targetSquare) => {
+  const triggerCardCutscene = (arcanaId, targetSquare, eventParams = null) => {
     setCutsceneActive(true);
     // Create a cameraRef object that exposes triggerCutscene (from useCameraCutscene)
     const cameraRef = { current: { triggerCutscene: _localTriggerCutscene } };
@@ -814,6 +852,7 @@ export function CardBalancingToolV2({ onBack }) {
       overlayRef,
       soundManager,
       targetSquare,
+      eventParams,
       onVFXTrigger: handleVFXTrigger,
       onComplete: () => {
         setCutsceneActive(false);
@@ -1545,6 +1584,7 @@ export function CardBalancingToolV2({ onBack }) {
                   isWhite={p.isWhite}
                   targetPosition={p.targetPosition}
                   square={p.square}
+                  cutsceneMotion={cinematicMotionBySquare.get(p.square) || null}
                   onClickSquare={(sq) => {
                     const file = 'abcdefgh'.indexOf(sq[0]);
                     const rank = 8 - parseInt(sq[1], 10);
@@ -1562,7 +1602,7 @@ export function CardBalancingToolV2({ onBack }) {
               />
 
               {/* CameraCutscene (uses three.js camera) - keep inside canvas */}
-              <CameraCutscene cutsceneTarget={cutsceneTarget} onCutsceneEnd={() => setCutsceneActive(false)} myColor={playerColor} controlsRef={controlsRef} />
+              <CameraCutscene cutsceneTarget={cutsceneTarget} onCutsceneEnd={() => { setCutsceneActive(false); clearCutscene(); }} myColor={playerColor} controlsRef={controlsRef} />
 
               {/* Legacy Visual Effects (kept for backward compatibility) */}
               {visualEffects.map(effect => {

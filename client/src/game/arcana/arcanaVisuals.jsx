@@ -7,6 +7,8 @@ import { squareToPosition } from './sharedHelpers.jsx';
 import {
   ParticleShield,
   ParticlePoison,
+  ParticleBurst,
+  ParticleRing,
 } from './particleSystem.jsx';
 
 // ============================================================================
@@ -997,7 +999,53 @@ export function PoisonTouchEffect({ onComplete }) {
 // ADDITIONAL CARD EFFECTS
 // ============================================================================
 
-export function BreakingPointEffect({ square, shatteredSquare, displaced = [], fadeOpacity = 1 }) {
+function CutsceneBeatPulse({
+  ageRef,
+  startMs = 0,
+  durationMs = 480,
+  color = '#ffffff',
+  emissiveIntensity = 3.6,
+  innerRadius = 0.22,
+  outerRadius = 0.5,
+  maxScale = 2.4,
+  y = 0.1,
+  fadeOpacity = 1,
+}) {
+  const ref = useRef();
+
+  useFrame(() => {
+    if (!ref.current) return;
+    const elapsedMs = (ageRef.current || 0) * 1000;
+    const localMs = elapsedMs - startMs;
+
+    if (localMs < 0 || localMs > durationMs) {
+      ref.current.visible = false;
+      return;
+    }
+
+    ref.current.visible = true;
+    const t = localMs / durationMs;
+    const scale = 0.72 + t * maxScale;
+    ref.current.scale.set(scale, scale, 1);
+    ref.current.material.opacity = Math.max(0.01, Math.pow(1 - t, 1.35) * 0.64 * fadeOpacity);
+  });
+
+  return (
+    <mesh ref={ref} visible={false} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[innerRadius, outerRadius, 40]} />
+      <meshStandardMaterial
+        emissive={color}
+        emissiveIntensity={emissiveIntensity}
+        color={color}
+        transparent
+        depthWrite={false}
+        opacity={0.58 * fadeOpacity}
+      />
+    </mesh>
+  );
+}
+
+export function BreakingPointEffect({ square, shatteredSquare, displaced = [], beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
   const epicenter = shatteredSquare || square;
   if (!epicenter) return null;
 
@@ -1006,9 +1054,9 @@ export function BreakingPointEffect({ square, shatteredSquare, displaced = [], f
   const ringRef = useRef();
 
   const fragments = useMemo(() => {
-    return [...Array(28)].map((_, i) => ({
+    return [...Array(42)].map((_, i) => ({
       key: i,
-      angle: (i / 28) * Math.PI * 2,
+      angle: (i / 42) * Math.PI * 2,
       radius: 0.18 + Math.random() * 0.3,
       speed: 1.1 + Math.random() * 1.5,
       rise: 0.15 + Math.random() * 0.35,
@@ -1035,7 +1083,8 @@ export function BreakingPointEffect({ square, shatteredSquare, displaced = [], f
   useFrame((state) => {
     ageRef.current += state.clock.getDelta();
     const t = state.clock.elapsedTime;
-    const lifeT = Math.min(ageRef.current / 1.2, 1);
+    const lifeSeconds = Math.max(1.2, (syncDurationMs || 0) / 1000);
+    const lifeT = Math.min(ageRef.current / lifeSeconds, 1);
 
     if (ringRef.current) {
       const s = 0.6 + lifeT * 1.9;
@@ -1054,6 +1103,39 @@ export function BreakingPointEffect({ square, shatteredSquare, displaced = [], f
 
   return (
     <group position={[x, 0, z]}>
+      <ParticleBurst
+        position={[0, 0.28, 0]}
+        count={64}
+        color="#ff4d4d"
+        size={0.07}
+        speed={3.8}
+        lifetime={0.55}
+      />
+      <ParticleBurst
+        position={[0, 0.3, 0]}
+        count={42}
+        color="#8de3ff"
+        size={0.05}
+        speed={3.2}
+        lifetime={0.62}
+      />
+
+      {(Array.isArray(beatTimingsMs) && beatTimingsMs.length ? beatTimingsMs : [0, 340, 760]).slice(0, 6).map((beat, idx) => (
+        <CutsceneBeatPulse
+          key={`breaking-beat-${idx}`}
+          ageRef={ageRef}
+          startMs={Math.max(0, beat)}
+          durationMs={460}
+          color={idx % 2 === 0 ? '#ff4d4d' : '#8de3ff'}
+          emissiveIntensity={idx % 2 === 0 ? 4.2 : 3.4}
+          innerRadius={0.2 + idx * 0.02}
+          outerRadius={0.46 + idx * 0.02}
+          maxScale={2.2}
+          y={0.11 + idx * 0.005}
+          fadeOpacity={fadeOpacity}
+        />
+      ))}
+
       <mesh ref={ringRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.25, 0.48, 36]} />
         <meshStandardMaterial
@@ -1063,6 +1145,18 @@ export function BreakingPointEffect({ square, shatteredSquare, displaced = [], f
           transparent
           depthWrite={false}
           opacity={0.88 * fadeOpacity}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.11, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.52, 0.82, 40]} />
+        <meshStandardMaterial
+          emissive="#8de3ff"
+          emissiveIntensity={3.2}
+          color="#8de3ff"
+          transparent
+          depthWrite={false}
+          opacity={0.32 * fadeOpacity}
         />
       </mesh>
 
@@ -1125,12 +1219,13 @@ function BreakingPointTrail({ from, to, fadeOpacity = 1 }) {
   );
 }
 
-export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [], pieceType = 'n', pieceColor = 'w', fadeOpacity = 1 }) {
+export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [], pieceType = 'n', pieceColor = 'w', beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
   const anchorSquare = square || targetSquare;
   if (!anchorSquare) return null;
 
   const [anchorX, , anchorZ] = squareToPosition(anchorSquare);
   const overlayRef = useRef();
+  const ringRef = useRef();
   const ageRef = useRef(0);
   const [expired, setExpired] = useState(false);
 
@@ -1181,7 +1276,8 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
 
   useFrame((state) => {
     ageRef.current += state.clock.getDelta();
-    const lifeT = Math.min(ageRef.current / 0.95, 1);
+    const lifeSeconds = Math.max(1.05, (syncDurationMs || 0) / 1000);
+    const lifeT = Math.min(ageRef.current / lifeSeconds, 1);
     if (lifeT >= 1 && !expired) {
       setExpired(true);
     }
@@ -1189,12 +1285,42 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
     const t = state.clock.elapsedTime;
     const pulse = 0.64 + Math.sin(t * 10.5) * 0.16;
     overlayRef.current.material.opacity = Math.max(0.02, pulse * fadeOpacity * (1 - lifeT));
+    if (ringRef.current) {
+      const ringScale = 0.7 + lifeT * 2.4;
+      ringRef.current.scale.set(ringScale, ringScale, 1);
+      ringRef.current.material.opacity = Math.max(0.01, (0.48 - lifeT * 0.45) * fadeOpacity);
+    }
   });
 
   if (expired) return null;
 
   return (
     <group position={[anchorX, 0, anchorZ]}>
+      <ParticleRing
+        position={[0, 0.16, 0]}
+        count={56}
+        color="#39ff6d"
+        size={0.045}
+        expandSpeed={2.6}
+        lifetime={0.58}
+      />
+
+      {(Array.isArray(beatTimingsMs) && beatTimingsMs.length ? beatTimingsMs : [0, 320, 680, 1040]).slice(0, 8).map((beat, idx) => (
+        <CutsceneBeatPulse
+          key={`overdrive-beat-${idx}`}
+          ageRef={ageRef}
+          startMs={Math.max(0, beat)}
+          durationMs={420}
+          color={idx % 2 === 0 ? '#39ff6d' : '#26ffd9'}
+          emissiveIntensity={4.1}
+          innerRadius={0.24}
+          outerRadius={0.5}
+          maxScale={2.45}
+          y={0.09 + idx * 0.004}
+          fadeOpacity={fadeOpacity}
+        />
+      ))}
+
       <mesh ref={overlayRef} position={[0, 0.5, 0]}>
         <cylinderGeometry args={[0.56, 0.56, 1.15, 32, 1, true]} />
         <meshStandardMaterial
@@ -1216,6 +1342,18 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
           transparent
           depthWrite={false}
           opacity={0.28 * fadeOpacity}
+        />
+      </mesh>
+
+      <mesh ref={ringRef} position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.3, 0.52, 44]} />
+        <meshStandardMaterial
+          emissive="#39ff6d"
+          emissiveIntensity={3.8}
+          color="#86ff9b"
+          transparent
+          depthWrite={false}
+          opacity={0.45 * fadeOpacity}
         />
       </mesh>
 

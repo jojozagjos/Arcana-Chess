@@ -23,6 +23,7 @@ export function MainMenu({
   onViewArcana,
   onSettings,
   onCardBalancing,
+  onCutsceneStudio,
   onBack,
   devMode = false,
   onToggleDevMode,
@@ -86,7 +87,10 @@ export function MainMenu({
             <button className="menu-secondary" onClick={onViewArcana}>View Arcana</button>
             <button className="menu-secondary" onClick={onSettings}>Settings</button>
             {devMode && (
-              <button className="menu-secondary" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }} onClick={onCardBalancing}>🛠️ Card Balancing Tool 📊</button>
+              <>
+                <button className="menu-secondary" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }} onClick={onCardBalancing}>Card Balancing Tool</button>
+                <button className="menu-secondary" style={{ background: 'linear-gradient(135deg, #0ea5e9, #0369a1)' }} onClick={onCutsceneStudio}>Cutscene Studio</button>
+              </>
             )}
           </div>
 

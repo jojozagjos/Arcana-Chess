@@ -39,12 +39,13 @@ export function orchestrateCutscene(params) {
 
   const { config, duration } = cutsceneConfig;
   const { camera, overlay, vfx, sound, phases } = config;
+  const eventParams = params?.eventParams || params?.params || {};
   const focusSquare =
     targetSquare ||
-    params?.params?.targetSquare ||
-    params?.params?.square ||
-    params?.params?.kingTo ||
-    params?.params?.rebornSquare ||
+    eventParams?.targetSquare ||
+    eventParams?.square ||
+    eventParams?.kingTo ||
+    eventParams?.rebornSquare ||
     null;
 
   // Timeline trackers
@@ -70,14 +71,20 @@ export function orchestrateCutscene(params) {
 
         let shotDelay = 0;
         shots.forEach((shot) => {
+          const isFirst = shotDelay === 0;
+          const isLast = shot === shots[shots.length - 1];
+          const shotSquare = resolveShotSquare(shot, eventParams, focusSquare) || focusSquare;
           const timer = setTimeout(() => {
-            trigger(shot.square || focusSquare, {
+            trigger(shotSquare, {
               zoom: shot.zoom ?? camera.targetZoom ?? 1.0,
               holdDuration: shot.holdDuration ?? 1000,
               duration: shot.duration ?? camera.duration ?? 650,
               returnDuration: shot.returnDuration ?? shot.duration ?? camera.returnDuration ?? camera.duration ?? 650,
               offset: shot.offset || camera.offset || null,
               lookAtYOffset: shot.lookAtYOffset ?? camera.lookAtYOffset ?? 0,
+              sequenceStart: isFirst,
+              sequenceEnd: isLast,
+              holdPosition: !isLast,
             });
           }, shotDelay);
           effectTimers.push(timer);
@@ -107,7 +114,8 @@ export function orchestrateCutscene(params) {
       // Multiple overlay effects (e.g., time_travel)
       else if (Array.isArray(overlay)) {
         overlay.forEach((overlayConfig) => {
-          const delay = getPhaseDelay(overlayConfig.phase, phases);
+          const phaseDelay = getPhaseDelay(overlayConfig.phase, phases);
+          const delay = typeof overlayConfig.delay === 'number' ? overlayConfig.delay : phaseDelay;
           const timer = setTimeout(() => {
             overlayRef.current.playEffect({
               effect: overlayConfig.effect,
@@ -252,6 +260,7 @@ function executeAction(action, context) {
  * Calculate delay for a phase by name
  */
 function getPhaseDelay(phaseName, phases) {
+  if (!phaseName) return 0;
   let delay = 0;
   for (const phase of phases || []) {
     if (phase.name === phaseName) {
@@ -259,7 +268,37 @@ function getPhaseDelay(phaseName, phases) {
     }
     delay += phase.duration || 0;
   }
-  return delay;
+  // If phase label doesn't exist, default to immediate instead of end-of-cutscene.
+  return 0;
+}
+
+function resolveShotSquare(shot, eventParams, fallbackSquare) {
+  if (shot?.square) return shot.square;
+  const anchor = shot?.anchor;
+  if (!anchor) return fallbackSquare || null;
+
+  if (anchor === 'target') {
+    return eventParams?.targetSquare || eventParams?.square || fallbackSquare || null;
+  }
+
+  const dashMatch = /^dash(\d+)$/i.exec(anchor);
+  if (dashMatch) {
+    const idx = parseInt(dashMatch[1], 10) - 1;
+    if (Array.isArray(eventParams?.dashPath) && idx >= 0) {
+      return eventParams.dashPath[idx] || fallbackSquare || null;
+    }
+    return fallbackSquare || null;
+  }
+
+  const displacedMatch = /^displaced(\d+)$/i.exec(anchor);
+  if (displacedMatch) {
+    const idx = parseInt(displacedMatch[1], 10) - 1;
+    const displaced = Array.isArray(eventParams?.displaced) ? eventParams.displaced : [];
+    if (displaced[idx]?.to) return displaced[idx].to;
+    return fallbackSquare || null;
+  }
+
+  return fallbackSquare || null;
 }
 
 /**

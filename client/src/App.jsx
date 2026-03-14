@@ -5,6 +5,7 @@ import { Tutorial } from './components/Tutorial.jsx';
 import { Settings } from './components/Settings.jsx';
 import { ArcanaCompendium } from './components/ArcanaCompendium.jsx';
 import { CardBalancingToolV2 } from './components/CardBalancingToolV2.jsx';
+import { CutsceneStudio } from './components/CutsceneStudio.jsx';
 import { IntroScreen } from './components/IntroScreen.jsx';
 import { socket } from './game/socket.js';
 import { soundManager } from './game/soundManager.js';
@@ -13,7 +14,7 @@ export function App() {
   const SETTINGS_KEY = 'arcanaChess.settings';
   const DEV_MODE_PASSWORD = 'arcana dev';
 
-  const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing'];
+  const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing', 'cutscene-studio'];
 
   const [screen, setScreen] = useState('intro');
   const [audioReady, setAudioReady] = useState(false);
@@ -377,6 +378,7 @@ export function App() {
             onViewArcana={() => setScreen('arcana')}
             onSettings={() => setScreen('settings')}
             onCardBalancing={() => setScreen('card-balancing')}
+            onCutsceneStudio={() => setScreen('cutscene-studio')}
             devMode={devMode}
             onToggleDevMode={handleToggleDevMode}
           />
@@ -418,6 +420,9 @@ export function App() {
       )}
       {screen === 'card-balancing' && (
         <CardBalancingToolV2 onBack={() => setScreen('main-menu')} />
+      )}
+      {screen === 'cutscene-studio' && (
+        <CutsceneStudio onBack={() => setScreen('main-menu')} />
       )}
       {screen === 'game' && (
         <GameScene

@@ -742,11 +742,27 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }
     lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
     lastActiveVisualKeyRef.current = key;
-    setActiveVisualArcana(lastArcanaEvent);
 
-    const runCutsceneCamera = (cfg, square) => {
+    const runCutsceneCamera = (cfg, square, eventParams = {}) => {
       if (!cfg?.config?.camera || !square || typeof square !== 'string') return 0;
       const cam = cfg.config.camera;
+      const beatTimingsMs = [];
+      const resolveShotSquare = (shot) => {
+        if (shot?.square) return shot.square;
+        const anchor = shot?.anchor;
+        if (!anchor) return square;
+        if (anchor === 'target') return eventParams?.targetSquare || eventParams?.square || square;
+        const dashMatch = /^dash(\d+)$/i.exec(anchor);
+        if (dashMatch && Array.isArray(eventParams?.dashPath)) {
+          return eventParams.dashPath[Math.max(0, parseInt(dashMatch[1], 10) - 1)] || square;
+        }
+        const displacedMatch = /^displaced(\d+)$/i.exec(anchor);
+        if (displacedMatch && Array.isArray(eventParams?.displaced)) {
+          const idx = Math.max(0, parseInt(displacedMatch[1], 10) - 1);
+          return eventParams.displaced[idx]?.to || square;
+        }
+        return square;
+      };
       const shots = Array.isArray(cam.shots) && cam.shots.length
         ? cam.shots
         : [{
@@ -760,10 +776,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       let delayMs = 0;
       shots.forEach((shot) => {
+        beatTimingsMs.push(delayMs);
         const isFirst = delayMs === 0;
         const isLast = shot === shots[shots.length - 1];
+        const shotSquare = resolveShotSquare(shot);
         const timer = setTimeout(() => {
-          triggerCutscene(square, {
+          triggerCutscene(shotSquare, {
             zoom: shot.zoom || cam.targetZoom || 1.5,
             holdDuration: shot.holdDuration || cam.holdDuration || 1500,
             duration: shot.duration || cam.duration || 650,
@@ -782,13 +800,15 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           + (shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650);
       });
 
-      return delayMs;
+      return { durationMs: delayMs, beatTimingsMs };
     };
     
     // Check if this arcana has cutscene enabled and a target square
     // Note: divine_intervention is excluded because it only triggers when check actually happens, not when activated
     const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
     let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
+    let syncDurationMs = 0;
+    let beatTimingsMs = [];
     
     if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
       const config = getCutsceneConfig(lastArcanaEvent.arcanaId);
@@ -800,7 +820,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                           lastArcanaEvent.params?.rebornSquare;
       
       if (targetSquare && typeof targetSquare === 'string') {
-        const scriptDuration = runCutsceneCamera(config, targetSquare);
+        const script = runCutsceneCamera(config, targetSquare, lastArcanaEvent.params || {});
+        const scriptDuration = script?.durationMs || 0;
+        syncDurationMs = Math.ceil(scriptDuration);
+        beatTimingsMs = Array.isArray(script?.beatTimingsMs) ? script.beatTimingsMs : [];
         visualClearTimeout = Math.max(visualClearTimeout, Math.ceil(scriptDuration + 220));
       } else {
         console.warn('[GameScene] Cutscene card missing valid square param:', lastArcanaEvent);
@@ -838,6 +861,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         }
       }
     }
+
+    const syncedParams = { ...(lastArcanaEvent.params || {}) };
+    if (syncDurationMs > 0) syncedParams.syncDurationMs = syncDurationMs;
+    if (beatTimingsMs.length) syncedParams.beatTimingsMs = beatTimingsMs;
+    setActiveVisualArcana({ ...lastArcanaEvent, params: syncedParams });
     
     const t = setTimeout(() => {
       setActiveVisualArcana(null);
@@ -869,15 +897,33 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }
     lastProcessedArcanaAtRef.current = next.at || Date.now();
     lastActiveVisualKeyRef.current = nextKey;
-    setActiveVisualArcana(next);
 
     // Apply the same cutscene/overlay flow as the immediate path
     const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
     let visualClearTimeout = 1500;
+    let syncDurationMs = 0;
+    let beatTimingsMs = [];
 
-    const runCutsceneCamera = (cfg, square) => {
+    const runCutsceneCamera = (cfg, square, eventParams = {}) => {
       if (!cfg?.config?.camera || !square || typeof square !== 'string') return 0;
       const cam = cfg.config.camera;
+      const beatTimingsMs = [];
+      const resolveShotSquare = (shot) => {
+        if (shot?.square) return shot.square;
+        const anchor = shot?.anchor;
+        if (!anchor) return square;
+        if (anchor === 'target') return eventParams?.targetSquare || eventParams?.square || square;
+        const dashMatch = /^dash(\d+)$/i.exec(anchor);
+        if (dashMatch && Array.isArray(eventParams?.dashPath)) {
+          return eventParams.dashPath[Math.max(0, parseInt(dashMatch[1], 10) - 1)] || square;
+        }
+        const displacedMatch = /^displaced(\d+)$/i.exec(anchor);
+        if (displacedMatch && Array.isArray(eventParams?.displaced)) {
+          const idx = Math.max(0, parseInt(displacedMatch[1], 10) - 1);
+          return eventParams.displaced[idx]?.to || square;
+        }
+        return square;
+      };
       const shots = Array.isArray(cam.shots) && cam.shots.length
         ? cam.shots
         : [{
@@ -891,10 +937,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       let delayMs = 0;
       shots.forEach((shot) => {
+        beatTimingsMs.push(delayMs);
         const isFirst = delayMs === 0;
         const isLast = shot === shots[shots.length - 1];
+        const shotSquare = resolveShotSquare(shot);
         const timer = setTimeout(() => {
-          triggerCutscene(square, {
+          triggerCutscene(shotSquare, {
             zoom: shot.zoom || cam.targetZoom || 1.5,
             holdDuration: shot.holdDuration || cam.holdDuration || 1500,
             duration: shot.duration || cam.duration || 650,
@@ -913,7 +961,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           + (shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650);
       });
 
-      return delayMs;
+      return { durationMs: delayMs, beatTimingsMs };
     };
 
     if (cutsceneCards.includes(next.arcanaId)) {
@@ -924,7 +972,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                           next.params?.rebornSquare;
 
       if (targetSquare && typeof targetSquare === 'string') {
-        const scriptDuration = runCutsceneCamera(config, targetSquare);
+        const script = runCutsceneCamera(config, targetSquare, next.params || {});
+        const scriptDuration = script?.durationMs || 0;
+        syncDurationMs = Math.ceil(scriptDuration);
+        beatTimingsMs = Array.isArray(script?.beatTimingsMs) ? script.beatTimingsMs : [];
         visualClearTimeout = Math.max(visualClearTimeout, Math.ceil(scriptDuration + 220));
       }
 
@@ -955,6 +1006,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         }
       }
     }
+
+    const syncedParams = { ...(next.params || {}) };
+    if (syncDurationMs > 0) syncedParams.syncDurationMs = syncDurationMs;
+    if (beatTimingsMs.length) syncedParams.beatTimingsMs = beatTimingsMs;
+    setActiveVisualArcana({ ...next, params: syncedParams });
 
     const t = setTimeout(() => {
       setActiveVisualArcana(null);
@@ -1534,6 +1590,40 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   const lastMove = gameState?.lastMove || null;
 
+  const cinematicMotionBySquare = useMemo(() => {
+    if (!activeVisualArcana?.arcanaId) return new Map();
+    const params = activeVisualArcana.params || {};
+    const squares = new Map();
+    const addSquare = (sq, profile, intensity = 0.18) => {
+      if (!sq || typeof sq !== 'string') return;
+      if (!squares.has(sq)) {
+        squares.set(sq, {
+          active: true,
+          profile,
+          intensity,
+          phase: (sq.charCodeAt(0) * 13 + parseInt(sq[1] || '1', 10) * 17) % 31,
+        });
+      }
+    };
+
+    if (activeVisualArcana.arcanaId === 'edgerunner_overdrive') {
+      addSquare(params.targetSquare || params.square, 'overdrive', 0.24);
+      if (Array.isArray(params.dashPath)) {
+        params.dashPath.forEach((sq, i) => addSquare(sq, 'overdrive', Math.max(0.14, 0.2 - i * 0.02)));
+      }
+    } else if (activeVisualArcana.arcanaId === 'breaking_point') {
+      addSquare(params.targetSquare || params.square || params.shatteredSquare, 'fracture', 0.22);
+      if (Array.isArray(params.displaced)) {
+        params.displaced.forEach((d) => {
+          addSquare(d?.from, 'fracture', 0.14);
+          addSquare(d?.to, 'fracture', 0.16);
+        });
+      }
+    }
+
+    return squares;
+  }, [activeVisualArcana]);
+
   // Helper: parse FEN into pieces array (no uid yet)
   const parseFenPieces = (fen) => {
     if (!fen) return [];
@@ -2011,6 +2101,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                 targetPosition={p.targetPosition}
                 square={p.square}
                 isMirrorDuplicate={mirrorImageSquares.has(p.square)}
+                cutsceneMotion={cinematicMotionBySquare.get(p.square) || null}
                 onClickSquare={(sq) => {
                   const fileIndex = 'abcdefgh'.indexOf(sq[0]);
                   const rankIndex = 8 - parseInt(sq[1], 10);

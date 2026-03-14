@@ -495,6 +495,7 @@ export const breakingPointCutscene = {
       easing: 'easeInOutCubic',
       shots: [
         {
+          anchor: 'target',
           zoom: 2.2,
           duration: 520,
           holdDuration: 460,
@@ -503,6 +504,7 @@ export const breakingPointCutscene = {
           lookAtYOffset: 0.2,
         },
         {
+          anchor: 'displaced1',
           zoom: 1.95,
           duration: 560,
           holdDuration: 640,
@@ -511,6 +513,7 @@ export const breakingPointCutscene = {
           lookAtYOffset: 0.16,
         },
         {
+          anchor: 'displaced2',
           zoom: 2.35,
           duration: 420,
           holdDuration: 520,
@@ -528,7 +531,7 @@ export const breakingPointCutscene = {
         fadeIn: 420,
         hold: 1280,
         fadeOut: 500,
-        phase: 'emotional_suppression',
+        phase: 'pressure_rise',
       },
       {
         effect: 'flash',
@@ -538,7 +541,7 @@ export const breakingPointCutscene = {
         fadeIn: 260,
         hold: 640,
         fadeOut: 600,
-        phase: 'psychic_rupture',
+        phase: 'rupture',
       },
       {
         effect: 'color-fade',
@@ -548,7 +551,7 @@ export const breakingPointCutscene = {
         fadeIn: 120,
         hold: 220,
         fadeOut: 860,
-        phase: 'post_release',
+        phase: 'aftershock',
       },
     ],
     vfx: {
@@ -612,6 +615,7 @@ export const edgerunnerOverdriveCutscene = {
       easing: 'easeInOutCubic',
       shots: [
         {
+          anchor: 'target',
           zoom: 2.6,
           duration: 300,
           holdDuration: 260,
@@ -620,6 +624,7 @@ export const edgerunnerOverdriveCutscene = {
           lookAtYOffset: 0.36,
         },
         {
+          anchor: 'dash1',
           zoom: 2.1,
           duration: 340,
           holdDuration: 320,
@@ -628,12 +633,22 @@ export const edgerunnerOverdriveCutscene = {
           lookAtYOffset: 0.26,
         },
         {
+          anchor: 'dash2',
           zoom: 2.45,
           duration: 300,
           holdDuration: 280,
           returnDuration: 260,
           offset: [0.2, 3.4, 2.2],
           lookAtYOffset: 0.24,
+        },
+        {
+          anchor: 'dash3',
+          zoom: 2.75,
+          duration: 280,
+          holdDuration: 240,
+          returnDuration: 240,
+          offset: [-0.4, 3.2, -2.1],
+          lookAtYOffset: 0.22,
         },
       ],
     },
@@ -646,7 +661,7 @@ export const edgerunnerOverdriveCutscene = {
         fadeIn: 150,
         hold: 1800,
         fadeOut: 650,
-        phase: 'green_screen',
+        phase: 'overdrive',
       },
     ],
     vfx: {

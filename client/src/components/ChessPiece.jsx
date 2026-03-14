@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 
-export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDuplicate = false, onClickSquare }) {
+export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDuplicate = false, onClickSquare, cutsceneMotion = null }) {
   const color = isWhite ? '#eceff4' : '#2e3440';
   const emissive = isWhite ? '#d8dee9' : '#1a1d28';
   const groupRef = useRef();
@@ -10,14 +10,49 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
   const currentPos = useRef(safeTarget.slice());
 
   // Smooth lerp animation
-  useFrame(() => {
+  useFrame((state) => {
     if (groupRef.current) {
       const lerpFactor = 0.15; // Adjust for speed (0.1 = slower, 0.3 = faster)
       const tgt = Array.isArray(targetPosition) && targetPosition.length === 3 ? targetPosition : safeTarget;
       currentPos.current[0] += (tgt[0] - currentPos.current[0]) * lerpFactor;
       currentPos.current[1] += (tgt[1] - currentPos.current[1]) * lerpFactor;
       currentPos.current[2] += (tgt[2] - currentPos.current[2]) * lerpFactor;
-      groupRef.current.position.set(...currentPos.current);
+
+      let x = currentPos.current[0];
+      let y = currentPos.current[1];
+      let z = currentPos.current[2];
+
+      if (cutsceneMotion?.active) {
+        const t = state.clock.elapsedTime;
+        const intensity = Math.max(0.05, cutsceneMotion.intensity || 0.18);
+        const profile = cutsceneMotion.profile || 'pulse';
+        const phase = cutsceneMotion.phase || 0;
+
+        if (profile === 'overdrive') {
+          y += Math.sin(t * 20 + phase) * intensity * 0.22 + intensity * 0.16;
+          x += Math.cos(t * 16 + phase) * intensity * 0.05;
+          z += Math.sin(t * 14 + phase) * intensity * 0.05;
+          groupRef.current.rotation.x = Math.sin(t * 24 + phase) * 0.06;
+          groupRef.current.rotation.z = Math.cos(t * 20 + phase) * 0.05;
+          groupRef.current.rotation.y = Math.sin(t * 18 + phase) * 0.04;
+        } else if (profile === 'fracture') {
+          y += Math.abs(Math.sin(t * 14 + phase)) * intensity * 0.12;
+          x += Math.sin(t * 30 + phase) * intensity * 0.07;
+          z += Math.cos(t * 28 + phase) * intensity * 0.07;
+          groupRef.current.rotation.x = Math.sin(t * 22 + phase) * 0.05;
+          groupRef.current.rotation.z = Math.cos(t * 19 + phase) * 0.05;
+          groupRef.current.rotation.y = Math.sin(t * 12 + phase) * 0.03;
+        } else {
+          y += Math.sin(t * 8 + phase) * intensity * 0.16;
+          groupRef.current.rotation.x = Math.sin(t * 6 + phase) * 0.03;
+          groupRef.current.rotation.z = Math.cos(t * 6 + phase) * 0.03;
+          groupRef.current.rotation.y = 0;
+        }
+      } else {
+        groupRef.current.rotation.set(0, 0, 0);
+      }
+
+      groupRef.current.position.set(x, y, z);
     }
   });
 
