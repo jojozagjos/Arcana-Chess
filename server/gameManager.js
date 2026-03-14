@@ -630,15 +630,22 @@ export class GameManager {
         base.arcanaByPlayer = redacted;
       }
 
-      // Quiet Thought is private utility intel. Only expose remaining turns
-      // for the viewer's own color; hide opponent's remaining turns.
-      if (base.activeEffects?.quietThought) {
+      // Private utility intel should only be visible to the owning viewer.
+      if (base.activeEffects?.quietThought || base.activeEffects?.vision) {
         base.activeEffects = {
           ...base.activeEffects,
-          quietThought: {
-          w: viewerChar === 'w' ? (base.activeEffects.quietThought.w || 0) : 0,
-          b: viewerChar === 'b' ? (base.activeEffects.quietThought.b || 0) : 0,
-          },
+          ...(base.activeEffects.quietThought ? {
+            quietThought: {
+              w: viewerChar === 'w' ? (base.activeEffects.quietThought.w || 0) : 0,
+              b: viewerChar === 'b' ? (base.activeEffects.quietThought.b || 0) : 0,
+            },
+          } : {}),
+          ...(base.activeEffects.vision ? {
+            vision: {
+              w: viewerChar === 'w' ? Boolean(base.activeEffects.vision.w) : null,
+              b: viewerChar === 'b' ? Boolean(base.activeEffects.vision.b) : null,
+            },
+          } : {}),
         };
       }
     } catch (e) {
@@ -2158,7 +2165,7 @@ export class GameManager {
     
     const turnEndingCards = [
       'execution', 'astral_rebirth', 'necromancy',
-      'time_travel', 'chaos_theory', 'mind_control',
+      'time_travel', 'chaos_theory', 'mind_control', 'breaking_point', 'edgerunner_overdrive',
       'royal_swap', 'promotion_ritual', 'cursed_square'
     ];
     
@@ -2267,6 +2274,49 @@ export class GameManager {
             if (params.targetSquare) break;
           }
           break;
+
+        case 'breaking_point': {
+          // Prefer the highest value enemy non-king piece as the epicenter.
+          const pieceValues = { q: 9, r: 5, b: 3, n: 3, p: 1 };
+          let bestTarget = null;
+          let bestValue = -1;
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (!piece || piece.color !== opponentColor || piece.type === 'k') continue;
+              const value = pieceValues[piece.type] || 0;
+              if (value > bestValue) {
+                bestValue = value;
+                bestTarget = 'abcdefgh'[f] + (8 - r);
+              }
+            }
+          }
+          if (bestTarget) params.targetSquare = bestTarget;
+          break;
+        }
+
+        case 'edgerunner_overdrive': {
+          // Pick our own highest-value non-king piece that can legally move.
+          const pieceValues = { q: 9, r: 5, b: 3, n: 3, p: 1 };
+          let bestTarget = null;
+          let bestValue = -1;
+          for (let r = 0; r < 8; r++) {
+            for (let f = 0; f < 8; f++) {
+              const piece = board[r][f];
+              if (!piece || piece.color !== moverColor || piece.type === 'k') continue;
+              const square = 'abcdefgh'[f] + (8 - r);
+              const legalMoves = chess.moves({ square, verbose: true }) || [];
+              if (legalMoves.length === 0) continue;
+              const value = pieceValues[piece.type] || 0;
+              if (value > bestValue) {
+                bestValue = value;
+                bestTarget = square;
+              }
+            }
+          }
+          if (bestTarget) params.targetSquare = bestTarget;
+          break;
+        }
           
         case 'promotion_ritual':
           // Find a pawn to promote

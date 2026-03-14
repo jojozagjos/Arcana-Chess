@@ -183,9 +183,9 @@ export function CardBalancingToolV2({ onBack }) {
     return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
   }, [selectedCardId]);
 
-  // Sort cards by rarity (Common -> Legendary)
+  // Sort cards by rarity (Common -> Legendary -> ???)
   const sortedCards = useMemo(() => {
-    const rarityOrder = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5 };
+    const rarityOrder = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, '???': 6 };
     return [...ARCANA_DEFINITIONS].sort((a, b) => {
       const orderDiff = rarityOrder[a.rarity] - rarityOrder[b.rarity];
       if (orderDiff !== 0) return orderDiff;
@@ -665,6 +665,8 @@ export function CardBalancingToolV2({ onBack }) {
         visualParams.square = result.highlightSquares[0];
       }
       if (!visualParams.square && visualParams.targetSquare) visualParams.square = visualParams.targetSquare;
+      if (result.pieceType && !visualParams.pieceType) visualParams.pieceType = result.pieceType;
+      if (result.pieceColor && !visualParams.pieceColor) visualParams.pieceColor = result.pieceColor;
       // include actor color for effects that use it
       visualParams.actorColor = colorChar;
 
@@ -1403,7 +1405,7 @@ export function CardBalancingToolV2({ onBack }) {
       <div style={styles.mainContent}>
         {/* Left: Card Browser */}
         <div style={styles.leftPanel}>
-          <h3 style={styles.panelTitle}>Cards (Common → Legendary)</h3>
+          <h3 style={styles.panelTitle}>Cards (Common → Legendary → ???)</h3>
           <div style={styles.cardList}>
             {sortedCards.map(card => (
               <div
@@ -1684,7 +1686,7 @@ export function CardBalancingToolV2({ onBack }) {
           {selectedCard ? (
             <>
               <div style={styles.cardPreview}>
-                <ArcanaCard arcana={selectedCard} size="medium" />
+                <ArcanaCard arcana={selectedCard} size="medium" disableTooltip />
               </div>
 
               {/* Card Description */}
@@ -1795,7 +1797,7 @@ export function CardBalancingToolV2({ onBack }) {
             <div style={styles.placeholder}>
               <p>Select a card to begin testing</p>
               <p style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                Cards are sorted: Common → Legendary
+                Cards are sorted: Common → Legendary → ???
               </p>
             </div>
           )}

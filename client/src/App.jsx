@@ -11,6 +11,7 @@ import { soundManager } from './game/soundManager.js';
 
 export function App() {
   const SETTINGS_KEY = 'arcanaChess.settings';
+  const DEV_MODE_PASSWORD = 'arcana dev';
 
   const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing'];
 
@@ -40,6 +41,23 @@ export function App() {
       display: { fullscreen: false },
     };
   });
+
+  const handleToggleDevMode = () => {
+    if (devMode) {
+      setDevMode(false);
+      return;
+    }
+
+    const entered = window.prompt('Enter dev mode password');
+    if (entered === null) return;
+
+    if (entered === DEV_MODE_PASSWORD) {
+      setDevMode(true);
+      return;
+    }
+
+    window.alert('Incorrect password.');
+  };
 
   // Ensure audio defaults include mute flag if loaded settings are missing it
   useEffect(() => {
@@ -360,7 +378,7 @@ export function App() {
             onSettings={() => setScreen('settings')}
             onCardBalancing={() => setScreen('card-balancing')}
             devMode={devMode}
-            onToggleDevMode={() => setDevMode(!devMode)}
+            onToggleDevMode={handleToggleDevMode}
           />
         </div>
       )}

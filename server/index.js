@@ -111,7 +111,11 @@ app.post('/api/test-card', (req, res) => {
 
     // Apply the real arcana handler so dev tool reflects in-game behavior
     const arcanaUsed = [{ arcanaId: cardId, params: params || {} }];
-    const applied = applyArcana(devPlayerId, gameState, arcanaUsed, moveResult || clientLastMove || null, io);
+    const effectiveMoveResult = {
+      ...(moveResult || clientLastMove || {}),
+      color: colorChar,
+    };
+    const applied = applyArcana(devPlayerId, gameState, arcanaUsed, effectiveMoveResult, io);
 
     // Snapshot after
     const afterState = { 

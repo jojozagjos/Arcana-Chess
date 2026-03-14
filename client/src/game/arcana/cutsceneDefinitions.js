@@ -12,13 +12,18 @@
 
 export const executionCutscene = {
   id: 'execution',
-  duration: 2500,
+  duration: 3900,
   config: {
     camera: {
       targetZoom: 1.8,
       duration: 600,
       holdDuration: 1900,
       easing: 'easeInOutCubic',
+      shots: [
+        { zoom: 2.55, duration: 260, holdDuration: 220, returnDuration: 220, offset: [2.3, 2.2, 0.5], lookAtYOffset: 0.38 },
+        { zoom: 2.2, duration: 300, holdDuration: 260, returnDuration: 240, offset: [-2.2, 2.5, -0.7], lookAtYOffset: 0.25 },
+        { zoom: 2.75, duration: 220, holdDuration: 260, returnDuration: 220, offset: [0.0, 3.5, 0.0], lookAtYOffset: 0.15 },
+      ],
     },
     overlay: {
       // Red flash when blade falls
@@ -77,13 +82,18 @@ export const executionCutscene = {
 
 export const timeFrozenCutscene = {
   id: 'time_freeze',
-  duration: 2000,
+  duration: 4300,
   config: {
     camera: {
       targetZoom: 1.3,
       duration: 400,
       holdDuration: 1800,
       easing: 'easeInOutCubic',
+      shots: [
+        { zoom: 1.45, duration: 520, holdDuration: 620, returnDuration: 500, offset: [3.4, 5.0, 3.1], lookAtYOffset: 0.12 },
+        { zoom: 1.15, duration: 560, holdDuration: 760, returnDuration: 520, offset: [0.2, 6.1, 0.3], lookAtYOffset: 0.08 },
+        { zoom: 1.35, duration: 460, holdDuration: 520, returnDuration: 460, offset: [-3.0, 4.7, -2.7], lookAtYOffset: 0.12 },
+      ],
     },
     overlay: {
       // Monochrome effect for frozen state
@@ -130,7 +140,7 @@ export const timeFrozenCutscene = {
 
 export const timeTravelCutscene = {
   id: 'time_travel',
-  duration: 3200,
+  duration: 6100,
   config: {
     camera: {
       targetZoom: 0.8, // Pull way back and up for full board view
@@ -138,6 +148,12 @@ export const timeTravelCutscene = {
       holdDuration: 2000,
       easing: 'easeInOutCubic',
       cameraHeight: 25, // Elevated view of board from above
+      shots: [
+        { zoom: 1.18, duration: 420, holdDuration: 340, returnDuration: 380, offset: [5.0, 6.2, 3.9], lookAtYOffset: 0.1 },
+        { zoom: 0.98, duration: 520, holdDuration: 520, returnDuration: 420, offset: [-4.7, 6.0, -4.3], lookAtYOffset: 0.1 },
+        { zoom: 0.82, duration: 600, holdDuration: 860, returnDuration: 540, offset: [0.1, 8.6, 0.2], lookAtYOffset: 0.05 },
+        { zoom: 1.08, duration: 420, holdDuration: 420, returnDuration: 360, offset: [3.6, 6.0, -4.0], lookAtYOffset: 0.1 },
+      ],
     },
     overlay: [
       // Fade to monochrome as time stops
@@ -211,13 +227,19 @@ export const timeTravelCutscene = {
 
 export const divineInterventionCutscene = {
   id: 'divine_intervention',
-  duration: 2500,
+  duration: 5200,
   config: {
     camera: {
       targetZoom: 2.0,
       duration: 700,
       holdDuration: 1800,
       easing: 'easeOutCubic',
+      shots: [
+        { zoom: 2.2, duration: 360, holdDuration: 300, returnDuration: 320, offset: [2.3, 3.8, 2.2], lookAtYOffset: 0.42 },
+        { zoom: 2.0, duration: 420, holdDuration: 420, returnDuration: 360, offset: [-2.4, 3.7, -2.3], lookAtYOffset: 0.38 },
+        { zoom: 1.75, duration: 520, holdDuration: 620, returnDuration: 420, offset: [0.0, 6.4, 0.0], lookAtYOffset: 0.56 },
+        { zoom: 2.35, duration: 360, holdDuration: 380, returnDuration: 320, offset: [2.8, 4.0, -1.6], lookAtYOffset: 0.34 },
+      ],
     },
     overlay: {
       // Golden heavenly light burst
@@ -273,11 +295,18 @@ export const divineInterventionCutscene = {
 
 export const mindControlCutscene = {
   id: 'mind_control',
-  duration: 1200,
+  duration: 3400,
   config: {
     camera: {
-      // No camera movement for mind control - player controls piece on their side
-      doNotMove: true,
+      targetZoom: 2.2,
+      duration: 320,
+      holdDuration: 1200,
+      easing: 'easeInOutCubic',
+      shots: [
+        { zoom: 2.65, duration: 220, holdDuration: 200, returnDuration: 220, offset: [1.2, 2.2, 0.8], lookAtYOffset: 0.28 },
+        { zoom: 2.45, duration: 260, holdDuration: 260, returnDuration: 220, offset: [-1.1, 2.3, -0.7], lookAtYOffset: 0.28 },
+        { zoom: 2.7, duration: 220, holdDuration: 240, returnDuration: 220, offset: [0.2, 2.6, 0.0], lookAtYOffset: 0.32 },
+      ],
     },
     overlay: {
       // Purple vignette for opponent during control
@@ -320,13 +349,18 @@ export const mindControlCutscene = {
 
 export const astralRebirthCutscene = {
   id: 'astral_rebirth',
-  duration: 2200,
+  duration: 4700,
   config: {
     camera: {
       targetZoom: 1.6,
       duration: 600,
       holdDuration: 1600,
       easing: 'easeInOutCubic',
+      shots: [
+        { zoom: 1.95, duration: 380, holdDuration: 320, returnDuration: 320, offset: [2.5, 3.3, 1.9], lookAtYOffset: 0.34 },
+        { zoom: 1.7, duration: 460, holdDuration: 520, returnDuration: 380, offset: [-2.3, 3.5, -1.8], lookAtYOffset: 0.3 },
+        { zoom: 1.45, duration: 520, holdDuration: 680, returnDuration: 460, offset: [0.0, 5.2, 0.1], lookAtYOffset: 0.28 },
+      ],
     },
     overlay: {
       // Faint yellow flash for astral energy
@@ -379,13 +413,19 @@ export const astralRebirthCutscene = {
 
 export const promotionRitualCutscene = {
   id: 'promotion_ritual',
-  duration: 2200,
+  duration: 5000,
   config: {
     camera: {
       targetZoom: 1.5,
       duration: 600,
       holdDuration: 1600,
       easing: 'easeInOutCubic',
+      shots: [
+        { zoom: 2.05, duration: 340, holdDuration: 280, returnDuration: 300, offset: [2.0, 3.6, 1.0], lookAtYOffset: 0.38 },
+        { zoom: 1.65, duration: 520, holdDuration: 520, returnDuration: 420, offset: [0.0, 6.2, 0.0], lookAtYOffset: 0.3 },
+        { zoom: 1.9, duration: 420, holdDuration: 460, returnDuration: 360, offset: [-2.4, 3.8, -1.3], lookAtYOffset: 0.34 },
+        { zoom: 2.2, duration: 320, holdDuration: 300, returnDuration: 300, offset: [1.7, 4.2, -1.8], lookAtYOffset: 0.24 },
+      ],
     },
     overlay: {
       // "Za Warudo" effect - monochrome time stop
@@ -444,6 +484,202 @@ export const promotionRitualCutscene = {
   },
 };
 
+export const breakingPointCutscene = {
+  id: 'breaking_point',
+  duration: 6200,
+  config: {
+    camera: {
+      targetZoom: 2.05,
+      duration: 1000,
+      holdDuration: 3600,
+      easing: 'easeInOutCubic',
+      shots: [
+        {
+          zoom: 2.2,
+          duration: 520,
+          holdDuration: 460,
+          returnDuration: 420,
+          offset: [2.8, 3.1, 1.5],
+          lookAtYOffset: 0.2,
+        },
+        {
+          zoom: 1.95,
+          duration: 560,
+          holdDuration: 640,
+          returnDuration: 460,
+          offset: [-2.4, 2.9, -1.2],
+          lookAtYOffset: 0.16,
+        },
+        {
+          zoom: 2.35,
+          duration: 420,
+          holdDuration: 520,
+          returnDuration: 420,
+          offset: [0.4, 4.1, 0.1],
+          lookAtYOffset: 0.08,
+        },
+      ],
+    },
+    overlay: [
+      {
+        effect: 'monochrome',
+        duration: 2200,
+        intensity: 0.92,
+        fadeIn: 420,
+        hold: 1280,
+        fadeOut: 500,
+        phase: 'emotional_suppression',
+      },
+      {
+        effect: 'flash',
+        color: '#ff2a2a',
+        duration: 1500,
+        intensity: 1.0,
+        fadeIn: 260,
+        hold: 640,
+        fadeOut: 600,
+        phase: 'psychic_rupture',
+      },
+      {
+        effect: 'color-fade',
+        color: '#9be7ff',
+        duration: 1200,
+        intensity: 0.75,
+        fadeIn: 120,
+        hold: 220,
+        fadeOut: 860,
+        phase: 'post_release',
+      },
+    ],
+    vfx: {
+      psychicPressure: true,
+      pressureRings: 8,
+      pressureColor: '#ff4d4d',
+      fractureBolts: 44,
+      fractureColor: '#8de3ff',
+      shardBurst: 156,
+      ripplePasses: 4,
+      aftershockDuration: 1900,
+      mobStyleStressLines: true,
+    },
+    sound: {
+      buildup: 'arcana:breaking_point_buildup',
+      rupture: 'arcana:breaking_point_rupture',
+      collapse: 'arcana:breaking_point_collapse',
+      resolve: 'arcana:breaking_point_resolve',
+    },
+    phases: [
+      {
+        name: 'camera_lock',
+        duration: 1000,
+        actions: ['camera_move', 'sound_buildup'],
+      },
+      {
+        name: 'pressure_rise',
+        duration: 1500,
+        actions: ['overlay_monochrome', 'vfx_psychic_pressure'],
+        delay: 0,
+      },
+      {
+        name: 'rupture',
+        duration: 1100,
+        actions: ['vfx_fracture_bolts', 'vfx_shard_burst', 'overlay_flash', 'sound_rupture'],
+        delay: 100,
+      },
+      {
+        name: 'aftershock',
+        duration: 1400,
+        actions: ['vfx_aftershock_ripples', 'sound_collapse'],
+        delay: 0,
+      },
+      {
+        name: 'camera_return',
+        duration: 1000,
+        actions: ['overlay_color_restore', 'sound_resolve'],
+      },
+    ],
+  },
+};
+
+export const edgerunnerOverdriveCutscene = {
+  id: 'edgerunner_overdrive',
+  duration: 5200,
+  config: {
+    camera: {
+      targetZoom: 2.1,
+      duration: 700,
+      holdDuration: 2600,
+      easing: 'easeInOutCubic',
+      shots: [
+        {
+          zoom: 2.6,
+          duration: 300,
+          holdDuration: 260,
+          returnDuration: 250,
+          offset: [2.2, 2.1, 0.6],
+          lookAtYOffset: 0.36,
+        },
+        {
+          zoom: 2.1,
+          duration: 340,
+          holdDuration: 320,
+          returnDuration: 300,
+          offset: [-2.1, 2.4, -1.1],
+          lookAtYOffset: 0.26,
+        },
+        {
+          zoom: 2.45,
+          duration: 300,
+          holdDuration: 280,
+          returnDuration: 260,
+          offset: [0.2, 3.4, 2.2],
+          lookAtYOffset: 0.24,
+        },
+      ],
+    },
+    overlay: [
+      {
+        effect: 'color-fade',
+        color: '#30ff71',
+        duration: 2600,
+        intensity: 0.98,
+        fadeIn: 150,
+        hold: 1800,
+        fadeOut: 650,
+        phase: 'green_screen',
+      },
+    ],
+    vfx: {
+      greenOverlay: true,
+      afterimages: 14,
+    },
+    sound: {
+      activation: 'arcana:edgerunner_overdrive_activation',
+      rush: 'arcana:edgerunner_overdrive_rush',
+      hitstop: 'arcana:edgerunner_overdrive_hitstop',
+      release: 'arcana:edgerunner_overdrive_release',
+    },
+    phases: [
+      {
+        name: 'lock_on',
+        duration: 700,
+        actions: ['camera_move', 'sound_activation'],
+      },
+      {
+        name: 'overdrive',
+        duration: 2600,
+        actions: ['sound_rush'],
+        delay: 0,
+      },
+      {
+        name: 'snapback',
+        duration: 1100,
+        actions: ['overlay_color_restore', 'sound_release'],
+      },
+    ],
+  },
+};
+
 /**
  * Get cutscene config by card ID
  */
@@ -456,6 +692,8 @@ export function getCutsceneConfig(cardId) {
     mind_control: mindControlCutscene,
     astral_rebirth: astralRebirthCutscene,
     promotion_ritual: promotionRitualCutscene,
+    breaking_point: breakingPointCutscene,
+    edgerunner_overdrive: edgerunnerOverdriveCutscene,
   };
   return configs[cardId];
 }

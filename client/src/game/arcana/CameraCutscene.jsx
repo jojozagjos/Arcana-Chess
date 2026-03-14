@@ -26,6 +26,12 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
   const startLookAt = useRef(new THREE.Vector3());
   const targetLookAt = useRef(new THREE.Vector3());
   const holdTimer = useRef(0);
+  const moveDurationMs = useRef(650);
+  const returnDurationMs = useRef(650);
+  const sequenceBaseState = useRef(null);
+  const inSequence = useRef(false);
+  const holdPositionRef = useRef(false);
+  const sequenceEndRef = useRef(false);
   
   // Easing functions
   const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -49,7 +55,21 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       return;
     }
     
-    // Save current camera state before cutscene
+    const sequenceStart = !!cutsceneTarget.sequenceStart;
+    sequenceEndRef.current = !!cutsceneTarget.sequenceEnd;
+    holdPositionRef.current = !!cutsceneTarget.holdPosition;
+
+    if (sequenceStart || !inSequence.current || !sequenceBaseState.current) {
+      sequenceBaseState.current = {
+        position: camera.position.clone(),
+        lookAt: controls?.target?.clone() || new THREE.Vector3(0, 0, 0),
+      };
+    }
+    if (sequenceStart) {
+      inSequence.current = true;
+    }
+
+    // Save current camera state before this shot
     savedCameraState.current = {
       position: camera.position.clone(),
       lookAt: controls?.target?.clone() || new THREE.Vector3(0, 0, 0),
@@ -61,9 +81,15 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     
     // Camera will be positioned above and to the side of the target
     const zoom = cutsceneTarget.zoom || 1.2;
-    const cameraOffset = new THREE.Vector3(2 / zoom, 4 / zoom, 2 / zoom);
+    const offset = Array.isArray(cutsceneTarget.offset) && cutsceneTarget.offset.length === 3
+      ? cutsceneTarget.offset
+      : [2, 4, 2];
+    const cameraOffset = new THREE.Vector3(offset[0] / zoom, offset[1] / zoom, offset[2] / zoom);
     targetPosition.current.copy(effectCenter).add(cameraOffset);
     targetLookAt.current.copy(effectCenter);
+    if (typeof cutsceneTarget.lookAtYOffset === 'number') {
+      targetLookAt.current.y += cutsceneTarget.lookAtYOffset;
+    }
     
     startPosition.current.copy(camera.position);
     startLookAt.current.copy(controls?.target || new THREE.Vector3(0, 0, 0));
@@ -73,6 +99,8 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     animationProgress.current = 0;
     isAnimating.current = true;
     holdTimer.current = cutsceneTarget.holdDuration || 1500;
+    moveDurationMs.current = Math.max(220, cutsceneTarget.duration || 650);
+    returnDurationMs.current = Math.max(220, cutsceneTarget.returnDuration || moveDurationMs.current);
     
     // Disable orbit controls during cutscene
     if (controls) {
@@ -91,10 +119,8 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
   useFrame((_, delta) => {
     if (!isAnimating.current || phase.current === 'idle') return;
     
-    const speed = 1.8; // Animation speed multiplier
-    
     if (phase.current === 'moving_to') {
-      animationProgress.current += delta * speed;
+      animationProgress.current += (delta * 1000) / moveDurationMs.current;
       const t = easeOutCubic(Math.min(animationProgress.current, 1));
       
       // Interpolate camera position
@@ -117,6 +143,11 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     else if (phase.current === 'holding') {
       holdTimer.current -= delta * 1000;
       if (holdTimer.current <= 0) {
+        if (inSequence.current && holdPositionRef.current && !sequenceEndRef.current) {
+          phase.current = 'idle';
+          isAnimating.current = false;
+          return;
+        }
         phase.current = 'returning';
         animationProgress.current = 0;
         
@@ -127,9 +158,13 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
         }
         
         // Target is saved position or default
-        if (savedCameraState.current) {
-          targetPosition.current.copy(savedCameraState.current.position);
-          targetLookAt.current.copy(savedCameraState.current.lookAt);
+        const returnState = (inSequence.current && sequenceEndRef.current && sequenceBaseState.current)
+          ? sequenceBaseState.current
+          : savedCameraState.current;
+
+        if (returnState) {
+          targetPosition.current.copy(returnState.position);
+          targetLookAt.current.copy(returnState.lookAt);
         } else {
           targetPosition.current.copy(getDefaultCameraPosition());
           targetLookAt.current.set(0, 0, 0);
@@ -138,7 +173,7 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     }
     
     else if (phase.current === 'returning') {
-      animationProgress.current += delta * speed;
+      animationProgress.current += (delta * 1000) / returnDurationMs.current;
       const t = easeInOutCubic(Math.min(animationProgress.current, 1));
       
       // Interpolate back to original position
@@ -154,6 +189,11 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       if (animationProgress.current >= 1) {
         phase.current = 'idle';
         isAnimating.current = false;
+
+        if (inSequence.current && sequenceEndRef.current) {
+          inSequence.current = false;
+          sequenceBaseState.current = null;
+        }
         
         // Re-enable orbit controls
         if (controls) {
@@ -182,6 +222,13 @@ export function useCameraCutscene() {
       square,
       zoom: options.zoom || 1.2,
       holdDuration: options.holdDuration || 1500,
+      duration: options.duration || 650,
+      returnDuration: options.returnDuration || options.duration || 650,
+      offset: options.offset || null,
+      lookAtYOffset: options.lookAtYOffset || 0,
+      sequenceStart: !!options.sequenceStart,
+      sequenceEnd: !!options.sequenceEnd,
+      holdPosition: !!options.holdPosition,
     });
   }, []);
   

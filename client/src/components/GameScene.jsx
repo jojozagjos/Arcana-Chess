@@ -45,6 +45,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const [highlightedSquares, setHighlightedSquares] = useState([]); // For Line of Sight, Map Fragments, etc
   const [highlightColor, setHighlightColor] = useState('#88c0d0'); // Default cyan color for highlights
   const [highlightedArcana, setHighlightedArcana] = useState(null); // which arcana produced highlightedSquares
+  const [localTurnArcana, setLocalTurnArcana] = useState({ line_of_sight: false, map_fragments: false });
   const [peekCardDialog, setPeekCardDialog] = useState(null); // { cardCount, opponentId } when selecting card to peek
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
   const [filteredCycleDialog, setFilteredCycleDialog] = useState(null); // { arcanaId }
@@ -132,15 +133,48 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const lastProcessedArcanaAtRef = useRef(null);
   const lastActiveVisualKeyRef = useRef(null);
   const USE_CARD_ANIM_MS = 2500;
-  const FILTERED_CYCLE_CATEGORIES = [
-    { key: 'offense', label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
-    { key: 'defense', label: 'Defense', hint: 'Protection and survival', glyph: 'O' },
-    { key: 'movement', label: 'Movement', hint: 'Reposition and mobility', glyph: '>' },
-    { key: 'utility', label: 'Utility', hint: 'Support and disruption', glyph: '+' },
-    { key: 'resurrection', label: 'Resurrection', hint: 'Recover fallen pieces', glyph: '*' },
-    { key: 'transformation', label: 'Transformation', hint: 'Alter piece forms', glyph: '~' },
-    { key: 'special', label: 'Special', hint: 'Rare wildcard effects', glyph: '!' },
-  ];
+  const FILTERED_CYCLE_CATEGORY_META = {
+    offense: { label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
+    defense: { label: 'Defense', hint: 'Protection and survival', glyph: 'O' },
+    movement: { label: 'Movement', hint: 'Reposition and mobility', glyph: '>' },
+    utility: { label: 'Utility', hint: 'Support and disruption', glyph: '+' },
+    resurrection: { label: 'Resurrection', hint: 'Recover fallen pieces', glyph: '*' },
+    transformation: { label: 'Transformation', hint: 'Alter piece forms', glyph: '~' },
+    special: { label: 'Special', hint: 'Rare wildcard effects', glyph: '!' },
+  };
+  const FILTERED_CYCLE_RARITY_WEIGHTS = { common: 50, uncommon: 30 };
+  const filteredCycleOptions = useMemo(() => {
+    const byCategory = new Map();
+    for (const arcana of ARCANA_DEFINITIONS) {
+      if (!arcana || arcana.enabledInGame === false) continue;
+      if (arcana.rarity !== 'common' && arcana.rarity !== 'uncommon') continue;
+      if (!arcana.category) continue;
+      if (!byCategory.has(arcana.category)) {
+        byCategory.set(arcana.category, { common: 0, uncommon: 0, total: 0 });
+      }
+      const counts = byCategory.get(arcana.category);
+      counts[arcana.rarity] += 1;
+      counts.total += 1;
+    }
+
+    return Array.from(byCategory.entries())
+      .map(([key, counts]) => {
+        const meta = FILTERED_CYCLE_CATEGORY_META[key] || {};
+        const commonWeight = counts.common * FILTERED_CYCLE_RARITY_WEIGHTS.common;
+        const uncommonWeight = counts.uncommon * FILTERED_CYCLE_RARITY_WEIGHTS.uncommon;
+        const totalWeight = commonWeight + uncommonWeight;
+        const commonPct = totalWeight > 0 ? ((commonWeight / totalWeight) * 100).toFixed(1) : '0.0';
+        const uncommonPct = totalWeight > 0 ? ((uncommonWeight / totalWeight) * 100).toFixed(1) : '0.0';
+        return {
+          key,
+          label: meta.label || key.charAt(0).toUpperCase() + key.slice(1),
+          hint: `${meta.hint || 'Arcana category'} (${counts.total} card${counts.total === 1 ? '' : 's'})`,
+          glyph: meta.glyph || '#',
+          oddsText: `Common ${commonPct}% · Uncommon ${uncommonPct}%`,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, []);
 
   const appendCombatLog = (entry) => {
     setCombatLog((prev) => {
@@ -463,6 +497,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const opponentColor = myColor === 'white' ? 'black' : 'white';
   const opponentColorChar = toColorCode(opponentColor);
   const hasVision = gameState?.activeEffects?.vision?.[myColorCode];
+  const quietThoughtTurnsLeft = gameState?.activeEffects?.quietThought?.[myColorCode] || 0;
   const mirrorImageSquares = useMemo(() => {
     const list = gameState?.activeEffects?.mirrorImages || [];
     return new Set(list.map((m) => m.square).filter(Boolean));
@@ -512,8 +547,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   // Quiet Thought: persistent private highlights for 3 turns of the card user.
   useEffect(() => {
-    const turnsLeft = gameState?.activeEffects?.quietThought?.[myColorCode] || 0;
-    if (!turnsLeft) {
+    if (!quietThoughtTurnsLeft) {
       if (highlightedArcana === 'quiet_thought') {
         setHighlightedSquares([]);
         setHighlightedArcana(null);
@@ -549,7 +583,28 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     setHighlightedSquares(threats);
     setHighlightedArcana('quiet_thought');
     setHighlightColor('#ff4444');
-  }, [gameState?.activeEffects?.quietThought?.w, gameState?.activeEffects?.quietThought?.b, myColorCode, chess]);
+  }, [quietThoughtTurnsLeft, highlightedArcana, myColorCode, chess]);
+
+  const privateActiveCards = useMemo(() => {
+    const cards = [];
+    if (hasVision) {
+      cards.push({ id: 'vision', name: 'Vision', duration: 'Ends when your current turn ends' });
+    }
+    if (localTurnArcana.line_of_sight && highlightedArcana === 'line_of_sight') {
+      cards.push({ id: 'line_of_sight', name: 'Line of Sight', duration: 'Ends when your current turn ends' });
+    }
+    if (localTurnArcana.map_fragments && highlightedArcana === 'map_fragments') {
+      cards.push({ id: 'map_fragments', name: 'Map Fragments', duration: 'Ends when your current turn ends' });
+    }
+    if (quietThoughtTurnsLeft > 0) {
+      cards.push({
+        id: 'quiet_thought',
+        name: 'Quiet Thought',
+        duration: `${quietThoughtTurnsLeft} of your turn${quietThoughtTurnsLeft === 1 ? '' : 's'} left`,
+      });
+    }
+    return cards;
+  }, [hasVision, highlightedArcana, localTurnArcana, quietThoughtTurnsLeft]);
 
   // Time control countdown - update client-side display in real-time
   useEffect(() => {
@@ -604,7 +659,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     const currentTurnCode = (typeof chess?.turn === 'function' ? chess.turn() : null) || gameState?.turn;
     if (prevTurnRef.current !== null && currentTurnCode && currentTurnCode !== prevTurnRef.current) {
       setHighlightedSquares([]);
+      setHighlightedArcana(null);
       setVisionMoves([]);
+      setLocalTurnArcana({ line_of_sight: false, map_fragments: false });
+      setHoverThreatSources(new Set());
     }
     if (currentTurnCode) prevTurnRef.current = currentTurnCode;
   }, [gameState?.turn, chess?.fen()]);
@@ -685,10 +743,51 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
     lastActiveVisualKeyRef.current = key;
     setActiveVisualArcana(lastArcanaEvent);
+
+    const runCutsceneCamera = (cfg, square) => {
+      if (!cfg?.config?.camera || !square || typeof square !== 'string') return 0;
+      const cam = cfg.config.camera;
+      const shots = Array.isArray(cam.shots) && cam.shots.length
+        ? cam.shots
+        : [{
+            zoom: cam.targetZoom || 1.5,
+            duration: cam.duration || 650,
+            holdDuration: cam.holdDuration || 2000,
+            returnDuration: cam.returnDuration || cam.duration || 650,
+            offset: cam.offset || null,
+            lookAtYOffset: cam.lookAtYOffset || 0,
+          }];
+
+      let delayMs = 0;
+      shots.forEach((shot) => {
+        const isFirst = delayMs === 0;
+        const isLast = shot === shots[shots.length - 1];
+        const timer = setTimeout(() => {
+          triggerCutscene(square, {
+            zoom: shot.zoom || cam.targetZoom || 1.5,
+            holdDuration: shot.holdDuration || cam.holdDuration || 1500,
+            duration: shot.duration || cam.duration || 650,
+            returnDuration: shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650,
+            offset: shot.offset || cam.offset || null,
+            lookAtYOffset: shot.lookAtYOffset ?? cam.lookAtYOffset ?? 0,
+            sequenceStart: isFirst,
+            sequenceEnd: isLast,
+            holdPosition: !isLast,
+          });
+        }, delayMs);
+        timeoutsRef.current.push(timer);
+
+        delayMs += (shot.duration || cam.duration || 650)
+          + (shot.holdDuration || cam.holdDuration || 1500)
+          + (shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650);
+      });
+
+      return delayMs;
+    };
     
     // Check if this arcana has cutscene enabled and a target square
     // Note: divine_intervention is excluded because it only triggers when check actually happens, not when activated
-    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
+    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
     let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
     
     if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
@@ -701,17 +800,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                           lastArcanaEvent.params?.rebornSquare;
       
       if (targetSquare && typeof targetSquare === 'string') {
-        // Trigger camera cutscene to focus on the effect
-        triggerCutscene(targetSquare, {
-        zoom: config?.config?.camera?.targetZoom || 1.5,
-        holdDuration: config?.config?.camera?.holdDuration || 2000,
-      });
-      
-        // Calculate total cutscene duration
-        // Animation speed is 1.8, so moving/returning each take ~556ms
-        // Total: ~1112ms (moving + returning) + holdDuration
-        const holdDuration = config?.config?.camera?.holdDuration || 2000;
-        visualClearTimeout = Math.ceil(1112 + holdDuration + 200); // +200ms buffer for safety
+        const scriptDuration = runCutsceneCamera(config, targetSquare);
+        visualClearTimeout = Math.max(visualClearTimeout, Math.ceil(scriptDuration + 220));
       } else {
         console.warn('[GameScene] Cutscene card missing valid square param:', lastArcanaEvent);
       }
@@ -782,8 +872,49 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     setActiveVisualArcana(next);
 
     // Apply the same cutscene/overlay flow as the immediate path
-    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
+    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
     let visualClearTimeout = 1500;
+
+    const runCutsceneCamera = (cfg, square) => {
+      if (!cfg?.config?.camera || !square || typeof square !== 'string') return 0;
+      const cam = cfg.config.camera;
+      const shots = Array.isArray(cam.shots) && cam.shots.length
+        ? cam.shots
+        : [{
+            zoom: cam.targetZoom || 1.5,
+            duration: cam.duration || 650,
+            holdDuration: cam.holdDuration || 2000,
+            returnDuration: cam.returnDuration || cam.duration || 650,
+            offset: cam.offset || null,
+            lookAtYOffset: cam.lookAtYOffset || 0,
+          }];
+
+      let delayMs = 0;
+      shots.forEach((shot) => {
+        const isFirst = delayMs === 0;
+        const isLast = shot === shots[shots.length - 1];
+        const timer = setTimeout(() => {
+          triggerCutscene(square, {
+            zoom: shot.zoom || cam.targetZoom || 1.5,
+            holdDuration: shot.holdDuration || cam.holdDuration || 1500,
+            duration: shot.duration || cam.duration || 650,
+            returnDuration: shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650,
+            offset: shot.offset || cam.offset || null,
+            lookAtYOffset: shot.lookAtYOffset ?? cam.lookAtYOffset ?? 0,
+            sequenceStart: isFirst,
+            sequenceEnd: isLast,
+            holdPosition: !isLast,
+          });
+        }, delayMs);
+        timeoutsRef.current.push(timer);
+
+        delayMs += (shot.duration || cam.duration || 650)
+          + (shot.holdDuration || cam.holdDuration || 1500)
+          + (shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650);
+      });
+
+      return delayMs;
+    };
 
     if (cutsceneCards.includes(next.arcanaId)) {
       const config = getCutsceneConfig(next.arcanaId);
@@ -793,13 +924,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                           next.params?.rebornSquare;
 
       if (targetSquare && typeof targetSquare === 'string') {
-        triggerCutscene(targetSquare, {
-          zoom: config?.config?.camera?.targetZoom || 1.5,
-          holdDuration: config?.config?.camera?.holdDuration || 2000,
-        });
-
-        const holdDuration = config?.config?.camera?.holdDuration || 2000;
-        visualClearTimeout = Math.ceil(1112 + holdDuration + 200);
+        const scriptDuration = runCutsceneCamera(config, targetSquare);
+        visualClearTimeout = Math.max(visualClearTimeout, Math.ceil(scriptDuration + 220));
       }
 
       if (config?.config?.overlay && overlayRef.current) {
@@ -963,9 +1089,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
           setHighlightedArcana('line_of_sight');
           setHighlightColor('#88c0d0');
-          // Auto-clear as a safety after a short duration
-          const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
-          timeoutsRef.current.push(t);
+          setLocalTurnArcana({ line_of_sight: true, map_fragments: false });
           break;
         }
         case 'map_fragments': {
@@ -973,8 +1097,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
           setHighlightedArcana('map_fragments');
           setHighlightColor('#bf616a');
-          const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
-          timeoutsRef.current.push(t);
+          setLocalTurnArcana({ line_of_sight: false, map_fragments: true });
           break;
         }
         case 'quiet_thought': {
@@ -1824,9 +1947,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
               return;
             }
 
-            // Only compute hover threat sources when vision or a revealing arcana is active.
-            const revealArcanaIds = ['vision', 'line_of_sight', 'map_fragments', 'quiet_thought'];
-            const canShowHoverThreat = Boolean(hasVision) || (activeVisualArcana && revealArcanaIds.includes(activeVisualArcana.arcanaId));
+            // Only Line of Sight should show the hover risk preview.
+            const canShowHoverThreat = localTurnArcana.line_of_sight && highlightedArcana === 'line_of_sight';
             if (!canShowHoverThreat) {
               setHoverThreatSources(new Set());
               return;
@@ -1972,6 +2094,33 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
               {chess?.turn?.() === myColorCode ? 'Your move' : "Opponent's move"}
             </div>
           </div>
+          {privateActiveCards.length > 0 && (
+            <>
+              <div style={{ width: 1, height: 40, background: 'rgba(255,255,255,0.15)' }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 220 }}>
+                <div style={{ fontSize: '0.75rem', opacity: 0.65 }}>Active private cards</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {privateActiveCards.map((card) => (
+                    <div
+                      key={card.id}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        padding: '5px 8px',
+                        borderRadius: 6,
+                        background: 'rgba(136, 192, 208, 0.12)',
+                        border: '1px solid rgba(136, 192, 208, 0.22)',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#dbeeff' }}>{card.name}</div>
+                      <div style={{ fontSize: '0.68rem', opacity: 0.82 }}>{card.duration}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -2442,7 +2591,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             <div style={styles.filteredCycleHeaderRow}>
               <div>
                 <h3 style={styles.filteredCycleTitle}>Filtered Cycle</h3>
-                <div style={styles.filteredCycleSubtitle}>Pick one category to draw a common Arcana.</div>
+                <div style={styles.filteredCycleSubtitle}>Pick one category to draw a weighted common/uncommon Arcana.</div>
               </div>
               <button
                 style={styles.filteredCycleCloseButton}
@@ -2454,7 +2603,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             </div>
 
             <div style={styles.filteredCycleGrid}>
-              {FILTERED_CYCLE_CATEGORIES.map((category) => (
+              {filteredCycleOptions.map((category) => (
                 <button
                   key={category.key}
                   style={{
@@ -2488,12 +2637,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                   <div style={styles.filteredCycleOptionTextWrap}>
                     <div style={styles.filteredCycleOptionLabel}>{category.label}</div>
                     <div style={styles.filteredCycleOptionHint}>{category.hint}</div>
+                    <div style={styles.filteredCycleOdds}>{category.oddsText}</div>
                   </div>
                 </button>
               ))}
+              {filteredCycleOptions.length === 0 && (
+                <div style={styles.filteredCycleOptionHint}>No valid common/uncommon categories available.</div>
+              )}
             </div>
 
-            <div style={styles.filteredCycleFooterNote}>Tip: this consumes your arcana action for the turn.</div>
+            <div style={styles.filteredCycleFooterNote}>Tip: this consumes your arcana action for the turn. Per-card weights are Common 50, Uncommon 30.</div>
           </div>
         </div>
       )}
@@ -2891,6 +3044,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
     rare: { glow: 'rgba(33, 150, 243, 0.8)', inner: '#2196f3' },
     epic: { glow: 'rgba(156, 39, 176, 0.8)', inner: '#9c27b0' },
     legendary: { glow: 'rgba(255, 193, 7, 0.9)', inner: '#ffc107' },
+    '???': { glow: 'rgba(255, 94, 94, 0.9)', inner: '#ff5e5e' },
   };
   // For draw animations we don't want the rarity glow — use a neutral/transparent glow
   const baseColors = rarityColors[(arcana && arcana.rarity) || 'common'] || { glow: 'rgba(136, 192, 208, 0.8)', inner: '#88c0d0' };
@@ -3646,6 +3800,11 @@ const styles = {
     fontSize: '0.8rem',
     opacity: 0.82,
     color: '#c6d7e8',
+  },
+  filteredCycleOdds: {
+    fontSize: '0.76rem',
+    color: '#9ad9f0',
+    opacity: 0.9,
   },
   filteredCycleFooterNote: {
     marginTop: 12,

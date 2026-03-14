@@ -1,16 +1,63 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import './styles/ArcanaCompendium.css';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 
+const RARITY_ORDER = {
+  common: 1,
+  uncommon: 2,
+  rare: 3,
+  epic: 4,
+  legendary: 5,
+  '???': 6,
+};
+
+function getCompendiumDisplayArcana(arcana) {
+  if (arcana?.rarity !== '???') return arcana;
+  return {
+    ...arcana,
+    name: '???',
+    description: 'The only way to know what this Arcana does is to get it in-game.',
+    backgroundPath: arcana.backgroundPath || '/cards/backgrounds/Void.png',
+  };
+}
+
 export function ArcanaCompendium({ onBack }) {
   const [rarityFilter, setRarityFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
   const [selected, setSelected] = useState(null);
 
-  const filtered = ARCANA_DEFINITIONS.filter((a) => {
-    if (rarityFilter === 'all') return true;
-    return a.rarity.toLowerCase() === rarityFilter.toLowerCase();
-  });
+  const typeOptions = useMemo(() => {
+    const categories = Array.from(
+      new Set(
+        ARCANA_DEFINITIONS
+          .map((a) => a.category)
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+    return ['all', ...categories];
+  }, []);
+
+  const filtered = useMemo(() => {
+    const list = ARCANA_DEFINITIONS.filter((a) => {
+      const rarityMatch = rarityFilter === 'all' || a.rarity.toLowerCase() === rarityFilter.toLowerCase();
+      const typeMatch = typeFilter === 'all' || a.category?.toLowerCase() === typeFilter.toLowerCase();
+      return rarityMatch && typeMatch;
+    });
+    return list.sort((a, b) => {
+      const rarityDiff = (RARITY_ORDER[a.rarity] || 999) - (RARITY_ORDER[b.rarity] || 999);
+      if (rarityDiff !== 0) return rarityDiff;
+      return a.name.localeCompare(b.name);
+    });
+  }, [rarityFilter, typeFilter]);
+
+  useEffect(() => {
+    if (selected && !filtered.some((a) => a.id === selected.id)) {
+      setSelected(null);
+    }
+  }, [filtered, selected]);
+
+  const selectedDisplay = selected ? getCompendiumDisplayArcana(selected) : null;
 
   return (
     <div style={styles.container}>
@@ -25,7 +72,7 @@ export function ArcanaCompendium({ onBack }) {
           </button>
         </div>
 
-          <div style={styles.filterRow}>
+        <div style={styles.filterRow}>
           <label style={styles.filterLabel}>Rarity</label>
           <select
             style={styles.select}
@@ -38,27 +85,45 @@ export function ArcanaCompendium({ onBack }) {
             <option value="rare">Rare</option>
             <option value="epic">Epic</option>
             <option value="legendary">Legendary</option>
+            <option value="???">???</option>
+          </select>
+
+          <label style={styles.filterLabel}>Type</label>
+          <select
+            style={styles.select}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+          >
+            {typeOptions.map((type) => (
+              <option key={type} value={type}>
+                {type === 'all' ? 'All' : type[0].toUpperCase() + type.slice(1)}
+              </option>
+            ))}
           </select>
         </div>
 
           <div style={styles.content}>
           <div className="arcana-list" style={styles.list}>
-            {filtered.map((arcana) => (
-              <div key={arcana.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                <ArcanaCard
-                  arcana={arcana}
-                  size="medium"
-                  isSelected={selected?.id === arcana.id}
-                  onClick={() => setSelected(arcana)}
-                  deferLoad
-                />
-                <div style={{ fontSize: '0.85rem', textAlign: 'center', opacity: 0.9 }}>
-                  {arcana.rarity} · {arcana.category}
+            {filtered.map((arcana) => {
+              const displayArcana = getCompendiumDisplayArcana(arcana);
+              return (
+                <div key={arcana.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                  <ArcanaCard
+                    arcana={displayArcana}
+                    size="medium"
+                    isSelected={selected?.id === arcana.id}
+                    onClick={() => setSelected(arcana)}
+                    disableTooltip
+                    deferLoad
+                  />
+                  <div style={{ fontSize: '0.85rem', textAlign: 'center', opacity: 0.9 }}>
+                    {arcana.rarity} · {arcana.category}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {filtered.length === 0 && (
-              <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>No Arcana for this filter.</div>
+              <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>No Arcana for these filters.</div>
             )}
           </div>
 
@@ -68,17 +133,17 @@ export function ArcanaCompendium({ onBack }) {
                 Select an Arcana on the left to see its details, rules effect, and visuals.
               </div>
             )}
-            {selected && (
+            {selectedDisplay && (
               <>
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16}}>
-                  <ArcanaCard arcana={selected} size="large" />
+                  <ArcanaCard arcana={selectedDisplay} size="large" disableTooltip />
                 </div>
-                <h3 style={{ marginTop: 0, textAlign: 'center', fontSize: '1.5rem' }}>{selected.name}</h3>
+                <h3 style={{ marginTop: 0, textAlign: 'center', fontSize: '1.5rem' }}>{selectedDisplay.name}</h3>
                 <p style={styles.detailMeta}>
-                  <strong>Rarity:</strong> {selected.rarity}<br />
-                  <strong>Category:</strong> {selected.category}
+                  <strong>Rarity:</strong> {selectedDisplay.rarity}<br />
+                  <strong>Category:</strong> {selectedDisplay.category}
                 </p>
-                <p>{selected.description}</p>
+                <p>{selectedDisplay.description}</p>
                 <p style={{ marginTop: 16, fontSize: '0.85rem', opacity: 0.8, }}>
                   During an Arcana Chess match, Arcana remain dormant until the Ascension event is
                   triggered (for example, on the first capture). Once Ascended, each player can

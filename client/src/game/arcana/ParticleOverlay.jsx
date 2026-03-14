@@ -21,6 +21,28 @@ import {
 let engineInitialized = false;
 let initPromise = null;
 
+function applyCinematicParticleTweaks(options) {
+  if (!options || typeof options !== 'object') return options;
+  const next = JSON.parse(JSON.stringify(options));
+
+  next.fpsLimit = Math.max(90, next.fpsLimit || 90);
+  next.detectRetina = true;
+  next.smooth = true;
+
+  next.particles ||= {};
+  next.particles.move ||= {};
+  next.particles.move.trail ||= { enable: true, length: 3, fill: { color: { value: 'transparent' } } };
+  next.particles.move.decay = typeof next.particles.move.decay === 'number' ? next.particles.move.decay : 0.08;
+  next.particles.shadow ||= {
+    enable: true,
+    blur: 8,
+    color: { value: '#ffffff' },
+    offset: { x: 0, y: 0 },
+  };
+
+  return next;
+}
+
 // Debug: indicate module loaded (useful when lazy-imported)
 try { console.log('[ParticleOverlay] module loaded'); } catch (e) {}
 
@@ -72,7 +94,7 @@ export function ParticleOverlay({
 
   // Apply density scaling to emitter quantities (non-destructive copy)
   const options = useMemo(() => {
-    const opt = JSON.parse(JSON.stringify(baseOptions));
+    const opt = applyCinematicParticleTweaks(baseOptions);
     const f = Math.max(0.2, Math.min(3, Number(density) || 1));
     if (Array.isArray(opt.emitters)) {
       opt.emitters.forEach((em) => {

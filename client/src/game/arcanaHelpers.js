@@ -15,6 +15,7 @@ export function getRarityColor(rarity) {
     rare: '#60a5fa',
     epic: '#c084fc',
     legendary: '#fbbf24',
+    '???': '#ff5e5e',
   };
   return colors[rarity] || '#fff';
 }

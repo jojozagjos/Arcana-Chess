@@ -7,7 +7,10 @@ const RARITY_WEIGHTS = {
   rare: 15,
   epic: 4,
   legendary: 1,
+  '???': 0.05,
 };
+
+const FILTERED_CYCLE_RARITIES = new Set(['common', 'uncommon']);
 
 // Piece strength multipliers for sacrifice bonuses
 const PIECE_STRENGTH_MULTIPLIERS = {
@@ -25,22 +28,41 @@ const BOARD_SIZE = 8;
 const DEFAULT_DRAW_COOLDOWN = 3;
 const INITIAL_DRAW_PLY = -1;
 
+function getPlayableArcanaPool() {
+  return ARCANA_DEFINITIONS.filter((arcana) => arcana?.enabledInGame !== false);
+}
+
+function pickUniform(pool) {
+  if (!Array.isArray(pool) || pool.length === 0) return null;
+  const idx = Math.floor(Math.random() * pool.length);
+  return pool[idx];
+}
+
+function pickWeightedByRarity(pool, rarityWeights) {
+  if (!Array.isArray(pool) || pool.length === 0) return null;
+
+  let total = 0;
+  for (const arcana of pool) {
+    total += Math.max(0, rarityWeights[arcana.rarity] || 0);
+  }
+
+  if (total <= 0) return pickUniform(pool);
+
+  let roll = Math.random() * total;
+  for (const arcana of pool) {
+    roll -= Math.max(0, rarityWeights[arcana.rarity] || 0);
+    if (roll <= 0) return arcana;
+  }
+
+  return pool[pool.length - 1];
+}
+
 /**
  * Pick a random arcana card with weighted rarity distribution
  */
 export function pickWeightedArcana() {
-  // Build weighted pool
-  const weightedPool = [];
-  for (const arcana of ARCANA_DEFINITIONS) {
-    const weight = RARITY_WEIGHTS[arcana.rarity] || 1;
-    for (let i = 0; i < weight; i++) {
-      weightedPool.push(arcana);
-    }
-  }
-
-  // Pick random from weighted pool
-  const idx = Math.floor(Math.random() * weightedPool.length);
-  return weightedPool[idx];
+  const pool = getPlayableArcanaPool();
+  return pickWeightedByRarity(pool, RARITY_WEIGHTS) || pickUniform(ARCANA_DEFINITIONS);
 }
 
 /**
@@ -48,7 +70,7 @@ export function pickWeightedArcana() {
  * Used by Focus Fire and Arcane Cycle which explicitly grant "common" cards.
  */
 export function pickCommonArcana() {
-  const commonCards = ARCANA_DEFINITIONS.filter(a => a.rarity === 'common');
+  const commonCards = getPlayableArcanaPool().filter((a) => a.rarity === 'common');
   if (commonCards.length === 0) return pickWeightedArcana(); // fallback
   const idx = Math.floor(Math.random() * commonCards.length);
   return commonCards[idx];
@@ -59,13 +81,36 @@ export function pickCommonArcana() {
  * Falls back to any common card when the category has no common cards.
  */
 export function pickCommonArcanaByCategory(category) {
-  const commonCards = ARCANA_DEFINITIONS.filter(a => a.rarity === 'common');
+  const commonCards = getPlayableArcanaPool().filter((a) => a.rarity === 'common');
   if (commonCards.length === 0) return pickWeightedArcana();
 
   const filtered = commonCards.filter((a) => a.category === category);
   const pool = filtered.length > 0 ? filtered : commonCards;
   const idx = Math.floor(Math.random() * pool.length);
   return pool[idx];
+}
+
+/**
+ * Pick a weighted common/uncommon card.
+ * Common and uncommon keep their global rarity bias while restricting the pool.
+ */
+export function pickCommonOrUncommonArcana() {
+  const pool = getPlayableArcanaPool().filter((a) => FILTERED_CYCLE_RARITIES.has(a.rarity));
+  if (pool.length === 0) return pickWeightedArcana();
+  return pickWeightedByRarity(pool, RARITY_WEIGHTS);
+}
+
+/**
+ * Pick a weighted common/uncommon card from a category.
+ * Falls back to any common/uncommon when the category has no eligible cards.
+ */
+export function pickCommonOrUncommonArcanaByCategory(category) {
+  const pool = getPlayableArcanaPool().filter((a) => FILTERED_CYCLE_RARITIES.has(a.rarity));
+  if (pool.length === 0) return pickWeightedArcana();
+
+  const filtered = pool.filter((a) => a.category === category);
+  const targetPool = filtered.length > 0 ? filtered : pool;
+  return pickWeightedByRarity(targetPool, RARITY_WEIGHTS);
 }
 
 /**
@@ -83,20 +128,11 @@ export function pickWeightedArcanaForSacrifice(pieceType) {
     rare: Math.max(1, Math.round(RARITY_WEIGHTS.rare * Math.sqrt(mult))),
     epic: Math.max(1, Math.round(RARITY_WEIGHTS.epic * mult)),
     legendary: Math.max(1, Math.round(RARITY_WEIGHTS.legendary * mult)),
+    '???': Math.max(0.01, RARITY_WEIGHTS['???'] * Math.sqrt(mult)),
   };
 
-  // Build weighted pool
-  const weightedPool = [];
-  for (const arcana of ARCANA_DEFINITIONS) {
-    const weight = rarityWeights[arcana.rarity] || 1;
-    for (let i = 0; i < weight; i++) {
-      weightedPool.push(arcana);
-    }
-  }
-
-  // Pick random from weighted pool
-  const idx = Math.floor(Math.random() * weightedPool.length);
-  return weightedPool[idx];
+  const pool = getPlayableArcanaPool();
+  return pickWeightedByRarity(pool, rarityWeights) || pickWeightedArcana();
 }
 
 /**

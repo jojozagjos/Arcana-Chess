@@ -118,6 +118,60 @@ function getSoftPushDestination(square, piece, colorChar) {
   return `${String.fromCharCode(97 + targetFile)}${targetRank}`;
 }
 
+function findKingSquare(chess, colorChar) {
+  const board = chess.board();
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const piece = board[rank][file];
+      if (piece && piece.type === 'k' && piece.color === colorChar) {
+        return `${'abcdefgh'[file]}${8 - rank}`;
+      }
+    }
+  }
+  return null;
+}
+
+function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = false) {
+  const moves = chess.moves({ square: fromSquare, verbose: true }) || [];
+  if (!moves.length) return null;
+
+  const captureMoves = moves.filter((m) => !!m.captured);
+  const candidateMoves = preferCapture && captureMoves.length ? captureMoves : moves;
+
+  const enemyKingSquare = findKingSquare(chess, moverColor === 'w' ? 'b' : 'w');
+  const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+
+  let bestMove = null;
+  let bestScore = -Infinity;
+  for (const move of candidateMoves) {
+    let score = 0;
+    if (move.captured) score += 12 + (pieceValues[move.captured] || 0) * 11;
+    if (move.promotion) score += 7;
+    if (typeof move.san === 'string' && move.san.includes('+')) score += 4;
+
+    const file = move.to.charCodeAt(0) - 97;
+    const rank = parseInt(move.to[1], 10);
+    const centerDist = Math.abs(file - 3.5) + Math.abs(rank - 4.5);
+    score += (7 - centerDist) * 0.55;
+
+    if (moverColor === 'w') score += (rank - 1) * 0.25;
+    else score += (8 - rank) * 0.25;
+
+    if (enemyKingSquare) {
+      const kingFile = enemyKingSquare.charCodeAt(0) - 97;
+      const kingRank = parseInt(enemyKingSquare[1], 10);
+      const kingDist = Math.abs(file - kingFile) + Math.abs(rank - kingRank);
+      score += Math.max(0, 10 - kingDist) * 0.18;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMove = move;
+    }
+  }
+  return bestMove;
+}
+
 export function getTargetTypeForArcana(arcanaId) {
   // Returns 'pawn' | 'piece' | 'enemyPiece' | 'square' | 'knight' | 'bishop' | 'enemyRook' | 'poisoned' | null
   const map = {
@@ -148,6 +202,8 @@ export function getTargetTypeForArcana(arcanaId) {
     antidote: 'poisoned', // Only poisoned pieces
     cursed_square: 'emptySquare', // Only empty squares
     mind_control: 'enemyPiece',
+    breaking_point: 'enemyPiece',
+    edgerunner_overdrive: 'pieceNoKing',
     
     // Cards that don't need targeting
     pawn_rush: null,
@@ -1194,6 +1250,119 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
           }
         } else {
           result.message = 'Mind Control requires selecting an enemy piece';
+        }
+        break;
+
+      case 'breaking_point':
+        if (params.targetSquare) {
+          const target = chess.get(params.targetSquare);
+          const opponentColorBP = colorChar === 'w' ? 'b' : 'w';
+          if (target && target.color === opponentColorBP && target.type !== 'k') {
+            chess.remove(params.targetSquare);
+
+            const displaced = [];
+            const file = params.targetSquare.charCodeAt(0) - 97;
+            const rank = parseInt(params.targetSquare[1], 10);
+
+            for (let df = -1; df <= 1; df++) {
+              for (let dr = -1; dr <= 1; dr++) {
+                if (df === 0 && dr === 0) continue;
+                const srcFile = file + df;
+                const srcRank = rank + dr;
+                if (srcFile < 0 || srcFile > 7 || srcRank < 1 || srcRank > 8) continue;
+
+                const srcSquare = `${String.fromCharCode(97 + srcFile)}${srcRank}`;
+                const piece = chess.get(srcSquare);
+                if (!piece || piece.color !== opponentColorBP || piece.type === 'k') continue;
+
+                const dstFile = srcFile + df;
+                const dstRank = srcRank + dr;
+                if (dstFile < 0 || dstFile > 7 || dstRank < 1 || dstRank > 8) continue;
+
+                const dstSquare = `${String.fromCharCode(97 + dstFile)}${dstRank}`;
+                if (chess.get(dstSquare)) continue;
+
+                chess.remove(srcSquare);
+                chess.put(piece, dstSquare);
+                displaced.push({ from: srcSquare, to: dstSquare, piece: piece.type });
+              }
+            }
+
+            result.success = true;
+            result.message = `Breaking Point: shattered ${target.type} at ${params.targetSquare}`;
+            result.visualEffect = 'breaking_point';
+            result.soundEffect = 'arcana:breaking_point';
+            result.highlightSquares = [params.targetSquare, ...displaced.map(d => d.to)];
+            result.highlightColor = '#ff4d4d';
+          } else {
+            result.message = 'Breaking Point: Must target an enemy piece (not king)';
+          }
+        } else {
+          result.message = 'Breaking Point requires selecting an enemy piece';
+        }
+        break;
+
+      case 'edgerunner_overdrive':
+        if (params.targetSquare) {
+          const target = chess.get(params.targetSquare);
+          if (target && target.color === colorChar && target.type !== 'k') {
+            const dashPath = [];
+            let captureCount = 0;
+            let currentSquare = params.targetSquare;
+
+            for (let step = 0; step < 2; step++) {
+              const burstMove = pickBestOverdriveMove(chess, currentSquare, colorChar);
+              if (!burstMove) {
+                if (step === 0) {
+                  result.message = 'Edgerunner Overdrive: Target has no legal burst move';
+                  break;
+                }
+                break;
+              }
+
+              const burstResult = chess.move({ from: currentSquare, to: burstMove.to, promotion: 'q' });
+              if (!burstResult) {
+                if (step === 0) {
+                  result.message = 'Edgerunner Overdrive: Failed to execute burst move';
+                }
+                break;
+              }
+
+              dashPath.push(burstResult.to);
+              if (burstResult.captured) captureCount += 1;
+              currentSquare = burstResult.to;
+            }
+
+            if (!dashPath.length) {
+              break;
+            }
+
+            if (captureCount > 0) {
+              const thirdMove = pickBestOverdriveMove(chess, currentSquare, colorChar, true)
+                || pickBestOverdriveMove(chess, currentSquare, colorChar);
+
+              if (thirdMove) {
+                const thirdResult = chess.move({ from: currentSquare, to: thirdMove.to, promotion: 'q' });
+                if (thirdResult) {
+                  dashPath.push(thirdResult.to);
+                  if (thirdResult.captured) captureCount += 1;
+                }
+              }
+            }
+
+            result.success = true;
+            result.message = `Edgerunner Overdrive: ${target.type} burst through ${dashPath.length} move${dashPath.length === 1 ? '' : 's'} (${captureCount} capture${captureCount === 1 ? '' : 's'})`;
+            result.visualEffect = 'edgerunner_overdrive';
+            result.soundEffect = 'arcana:edgerunner_overdrive';
+            result.pieceType = target.type;
+            result.pieceColor = target.color;
+            result.highlightSquares = [params.targetSquare, ...dashPath];
+            result.highlightColor = '#44ff88';
+          } else {
+            result.message = 'Edgerunner Overdrive: Must target your own non-king piece';
+          }
+        } else {
+          result.message = 'Edgerunner Overdrive requires selecting your piece';
         }
         break;
 

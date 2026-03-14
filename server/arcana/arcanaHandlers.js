@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonArcana, pickCommonArcanaByCategory, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
+import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonOrUncommonArcana, pickCommonOrUncommonArcanaByCategory, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
 
 /**
  * Validates arcana targeting before applying effects
@@ -109,6 +109,34 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
     }
     return { ok: true };
   }
+
+  // Breaking Point: must target an enemy non-king piece
+  if (arcanaId === 'breaking_point') {
+    if (!piece) {
+      return { ok: false, reason: 'Breaking Point must target an enemy piece' };
+    }
+    if (piece.color === moverColor) {
+      return { ok: false, reason: 'Breaking Point cannot target your own piece' };
+    }
+    if (piece.type === 'k') {
+      return { ok: false, reason: 'Breaking Point cannot target a king' };
+    }
+    return { ok: true };
+  }
+
+  // Edgerunner Overdrive: must target your own non-king piece
+  if (arcanaId === 'edgerunner_overdrive') {
+    if (!piece) {
+      return { ok: false, reason: 'Edgerunner Overdrive must target one of your pieces' };
+    }
+    if (piece.color !== moverColor) {
+      return { ok: false, reason: 'Edgerunner Overdrive can only target your own piece' };
+    }
+    if (piece.type === 'k') {
+      return { ok: false, reason: 'Edgerunner Overdrive cannot target a king' };
+    }
+    return { ok: true };
+  }
   
   // Metamorphosis: must target own piece (not king/queen)
   if (arcanaId === 'metamorphosis') {
@@ -190,7 +218,6 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
 
     if (defIndex === -1) continue;
     const def = available[defIndex];
-    indicesToRemove.push(defIndex); // Mark for removal after this loop
 
     // Get mover color from moveResult if available, otherwise from current turn
     const moverColor = moveResult?.color || chess.turn();
@@ -228,6 +255,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     } else {
       gameState.usedArcanaIdsByPlayer[socketId].push(defIndex);
     }
+    indicesToRemove.push(defIndex); // Remove only after successful application
     appliedDefs.push({ def, params });
 
     // Notify players; send full params only to the owner to avoid leaking private info
@@ -243,14 +271,18 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       };
       
       // For cutscene cards, include the square info even in redacted payload
-      const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual'];
+      const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
       let redactedParams = null;
       if (cutsceneCards.includes(def.id) && params) {
         // Extract just the square info for cutscene camera focus
         redactedParams = {
-          square: params.square || params.targetSquare || null,
+          square: params.targetSquare || params.square || null,
+          targetSquare: params.targetSquare || null,
           kingTo: params.kingTo || null,
           rebornSquare: params.rebornSquare || null,
+          pieceType: params.pieceType || null,
+          pieceColor: params.pieceColor || null,
+          dashPath: Array.isArray(params.dashPath) ? params.dashPath : null,
         };
       }
       
@@ -418,6 +450,10 @@ function applyArcanaEffect(arcanaId, context) {
       return applyChaosTheory(context);
     case 'mind_control':
       return applyMindControl(context);
+    case 'breaking_point':
+      return applyBreakingPoint(context);
+    case 'edgerunner_overdrive':
+      return applyEdgerunnerOverdrive(context);
     case 'en_passant_master':
       return applyEnPassantMaster(context);
       
@@ -1035,11 +1071,11 @@ function applyArcaneCycle({ gameState, socketId, params }) {
     }
   }
 
-  // Filtered Cycle: draw a common card from a selected category when provided.
-  // Fallback order: explicit category -> discarded card category -> any common.
+  // Filtered Cycle: draw a weighted common/uncommon card from a selected category when provided.
+  // Fallback order: explicit category -> discarded card category -> any common/uncommon.
   const targetCategory = selectedCategory || derivedCategory;
   const newCard = makeArcanaInstance(
-    targetCategory ? pickCommonArcanaByCategory(targetCategory) : pickCommonArcana()
+    targetCategory ? pickCommonOrUncommonArcanaByCategory(targetCategory) : pickCommonOrUncommonArcana()
   );
   gameState.arcanaByPlayer[socketId].push(newCard);
   return { params: { drewCard: newCard.id, discardIndex, category: targetCategory || 'any' } };
@@ -1372,6 +1408,169 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   // Leave piece as-is on the board
 
   return { params: { square: targetSquare, targetSquare, color: moverColor, originalColor: targetPiece.color } };
+}
+
+function applyBreakingPoint({ chess, moverColor, params }) {
+  const epicenter = params?.targetSquare;
+  if (!epicenter) return null;
+
+  const targetPiece = chess.get(epicenter);
+  if (!targetPiece || targetPiece.color === moverColor || targetPiece.type === 'k') {
+    return null;
+  }
+
+  // 1) Shatter the primary target.
+  chess.remove(epicenter);
+
+  // 2) Shockwave: try to displace adjacent enemy non-king pieces one square away.
+  const displaced = [];
+  const file = epicenter.charCodeAt(0) - 97;
+  const rank = parseInt(epicenter[1], 10);
+
+  for (let df = -1; df <= 1; df++) {
+    for (let dr = -1; dr <= 1; dr++) {
+      if (df === 0 && dr === 0) continue;
+
+      const srcFile = file + df;
+      const srcRank = rank + dr;
+      if (srcFile < 0 || srcFile > 7 || srcRank < 1 || srcRank > 8) continue;
+
+      const srcSquare = `${String.fromCharCode(97 + srcFile)}${srcRank}`;
+      const piece = chess.get(srcSquare);
+      if (!piece || piece.color === moverColor || piece.type === 'k') continue;
+
+      const dstFile = srcFile + df;
+      const dstRank = srcRank + dr;
+      if (dstFile < 0 || dstFile > 7 || dstRank < 1 || dstRank > 8) continue;
+
+      const dstSquare = `${String.fromCharCode(97 + dstFile)}${dstRank}`;
+      if (chess.get(dstSquare)) continue;
+
+      chess.remove(srcSquare);
+      chess.put(piece, dstSquare);
+      displaced.push({ from: srcSquare, to: dstSquare, piece: piece.type });
+    }
+  }
+
+  return {
+    params: {
+      square: epicenter,
+      targetSquare: epicenter,
+      shatteredSquare: epicenter,
+      displaced,
+    },
+  };
+}
+
+function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
+  const startSquare = params?.targetSquare;
+  if (!startSquare) return null;
+
+  const startPiece = chess.get(startSquare);
+  if (!startPiece || startPiece.color !== moverColor || startPiece.type === 'k') {
+    return null;
+  }
+
+  const dashPath = [];
+  let captureCount = 0;
+  let currentSquare = startSquare;
+
+  // Always attempt two bursts.
+  for (let step = 0; step < 2; step++) {
+    const burstMove = pickBestOverdriveMove(chess, currentSquare, moverColor);
+    if (!burstMove) {
+      if (step === 0) return null;
+      break;
+    }
+
+    const burstResult = chess.move({ from: currentSquare, to: burstMove.to, promotion: 'q' });
+    if (!burstResult) {
+      if (step === 0) return null;
+      break;
+    }
+
+    dashPath.push(burstResult.to);
+    if (burstResult.captured) captureCount += 1;
+    currentSquare = burstResult.to;
+  }
+
+  if (!dashPath.length) return null;
+
+  // Gain a third burst only if one of the first two bursts captured.
+  if (captureCount > 0) {
+    const thirdMove = pickBestOverdriveMove(chess, currentSquare, moverColor, true)
+      || pickBestOverdriveMove(chess, currentSquare, moverColor);
+
+    if (thirdMove) {
+      const thirdResult = chess.move({ from: currentSquare, to: thirdMove.to, promotion: 'q' });
+      if (thirdResult) {
+        dashPath.push(thirdResult.to);
+        if (thirdResult.captured) captureCount += 1;
+        currentSquare = thirdResult.to;
+      }
+    }
+  }
+
+  const [firstTo, secondTo, thirdTo] = dashPath;
+  const finalSquare = dashPath[dashPath.length - 1];
+  return {
+    params: {
+      square: finalSquare,
+      targetSquare: startSquare,
+      pieceType: startPiece.type,
+      pieceColor: startPiece.color,
+      firstTo: firstTo || null,
+      secondTo,
+      thirdTo: thirdTo || null,
+      dashPath,
+      captureCount,
+    },
+  };
+}
+
+function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = false) {
+  const moves = chess.moves({ square: fromSquare, verbose: true }) || [];
+  if (!moves.length) return null;
+
+  const candidateMoves = preferCapture
+    ? (moves.filter((m) => !!m.captured).length ? moves.filter((m) => !!m.captured) : moves)
+    : moves;
+
+  const enemyKingSquare = findKing(chess, moverColor === 'w' ? 'b' : 'w');
+  const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+
+  let bestMove = null;
+  let bestScore = -Infinity;
+
+  for (const move of candidateMoves) {
+    let score = 0;
+
+    if (move.captured) score += 12 + (pieceValues[move.captured] || 0) * 11;
+    if (move.promotion) score += 7;
+    if (typeof move.san === 'string' && move.san.includes('+')) score += 4;
+
+    const file = move.to.charCodeAt(0) - 97;
+    const rank = parseInt(move.to[1], 10);
+    const centerDist = Math.abs(file - 3.5) + Math.abs(rank - 4.5);
+    score += (7 - centerDist) * 0.55;
+
+    if (moverColor === 'w') score += (rank - 1) * 0.25;
+    else score += (8 - rank) * 0.25;
+
+    if (enemyKingSquare) {
+      const kingFile = enemyKingSquare.charCodeAt(0) - 97;
+      const kingRank = parseInt(enemyKingSquare[1], 10);
+      const kingDist = Math.abs(file - kingFile) + Math.abs(rank - kingRank);
+      score += Math.max(0, 10 - kingDist) * 0.18;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMove = move;
+    }
+  }
+
+  return bestMove;
 }
 
 // ============ HELPER FUNCTIONS ============

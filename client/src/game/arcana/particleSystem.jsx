@@ -14,6 +14,28 @@ import * as THREE from 'three';
 const tempObject = new THREE.Object3D();
 const tempColor = new THREE.Color();
 
+function createSoftParticleTexture() {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.2, 'rgba(255,255,255,0.95)');
+  gradient.addColorStop(0.55, 'rgba(255,255,255,0.45)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 /**
  * High-performance instanced particle system
  * @param {Object} props
@@ -30,6 +52,10 @@ export function ParticleSystem({
   const meshRef = useRef();
   const particlesRef = useRef([]);
   const [isComplete, setIsComplete] = useState(false);
+  const startColor = useMemo(() => new THREE.Color(), []);
+  const endColor = useMemo(() => new THREE.Color(), []);
+  const rampColorsRef = useRef([]);
+  const spriteTexture = useMemo(() => createSoftParticleTexture(), []);
 
   const {
     // Emission
@@ -68,11 +94,32 @@ export function ParticleSystem({
     
     // Rotation
     rotationSpeed = 0,
+
+    // Advanced motion shaping
+    turbulence = 0,
+    turbulenceFrequency = 4,
+    stretchByVelocity = false,
+    stretchFactor = 0.18,
+
+    // Curves / gradients
+    sizeCurve = 'easeOut', // 'linear', 'easeIn', 'easeOut', 'smooth'
+    opacityCurve = 'easeOut',
+    colorOverLife = null,
     
     // Blending
     blending = THREE.AdditiveBlending,
     depthWrite = false,
   } = config;
+
+  useEffect(() => {
+    startColor.set(colorStart);
+    endColor.set(colorEnd);
+    if (Array.isArray(colorOverLife) && colorOverLife.length) {
+      rampColorsRef.current = colorOverLife.map((c) => new THREE.Color(c));
+    } else {
+      rampColorsRef.current = [];
+    }
+  }, [colorStart, colorEnd, colorOverLife, startColor, endColor]);
 
   // Initialize particles
   useEffect(() => {
@@ -98,8 +145,8 @@ export function ParticleSystem({
     particlesRef.current = particles;
   }, [count]);
 
-  // Geometry for particles (use sphere for soft particles)
-  const geometry = useMemo(() => new THREE.SphereGeometry(1, 8, 8), []);
+  // Billboard-ish quads with soft alpha texture feel more like modern game particles.
+  const geometry = useMemo(() => new THREE.PlaneGeometry(1, 1, 1, 1), []);
 
   // Let R3F/Three dispose geometry with the owning renderer context.
 
@@ -151,11 +198,22 @@ export function ParticleSystem({
 
       // Normalized age (0 to 1)
       const t = p.age / p.maxAge;
+      const curveT = applyCurve(t, sizeCurve);
+      const opacityT = applyCurve(t, opacityCurve);
 
       // Apply physics
       p.velocity.x += gravity[0] * delta;
       p.velocity.y += gravity[1] * delta;
       p.velocity.z += gravity[2] * delta;
+
+      if (turbulence > 0) {
+        const noiseX = Math.sin((p.age + i * 0.13) * turbulenceFrequency) * turbulence;
+        const noiseY = Math.cos((p.age + i * 0.17) * (turbulenceFrequency * 0.9)) * turbulence * 0.35;
+        const noiseZ = Math.sin((p.age + i * 0.11) * (turbulenceFrequency * 1.1)) * turbulence;
+        p.velocity.x += noiseX * delta;
+        p.velocity.y += noiseY * delta;
+        p.velocity.z += noiseZ * delta;
+      }
 
       if (drag > 0) {
         p.velocity.multiplyScalar(1 - drag * delta);
@@ -168,18 +226,29 @@ export function ParticleSystem({
       p.rotation += rotationSpeed * delta;
 
       // Interpolate size
-      const size = THREE.MathUtils.lerp(sizeStart, sizeEnd, easeOutCubic(t)) * p.size / sizeStart;
+      const size = THREE.MathUtils.lerp(sizeStart, sizeEnd, curveT) * p.size / Math.max(sizeStart, 0.0001);
+      const velocityMag = p.velocity.length();
+      const stretch = stretchByVelocity ? 1 + velocityMag * stretchFactor : 1;
 
       // Update instance matrix
       tempObject.position.copy(p.position);
-      tempObject.scale.set(size, size, size);
+      tempObject.scale.set(size, size * stretch, size);
       tempObject.rotation.z = p.rotation;
       tempObject.updateMatrix();
       meshRef.current.setMatrixAt(i, tempObject.matrix);
 
       // Update instance color with opacity
-      const opacity = THREE.MathUtils.lerp(opacityStart, opacityEnd, t);
-      tempColor.set(colorStart).lerp(tempColor.set(colorEnd), t);
+      const opacity = THREE.MathUtils.lerp(opacityStart, opacityEnd, opacityT);
+      if (rampColorsRef.current.length > 1) {
+        const ramp = rampColorsRef.current;
+        const segCount = ramp.length - 1;
+        const scaled = Math.min(segCount - 1e-6, t * segCount);
+        const segIdx = Math.max(0, Math.floor(scaled));
+        const localT = scaled - segIdx;
+        tempColor.copy(ramp[segIdx]).lerp(ramp[segIdx + 1], localT);
+      } else {
+        tempColor.copy(startColor).lerp(endColor, t);
+      }
       // Encode opacity in alpha-premultiplied color intensity
       tempColor.multiplyScalar(opacity);
       meshRef.current.setColorAt(i, tempColor);
@@ -210,11 +279,16 @@ export function ParticleSystem({
           emissive={emissive}
           emissiveIntensity={emissiveIntensity}
           color={colorStart}
+          map={spriteTexture}
+          alphaMap={spriteTexture}
           transparent
           opacity={1}
           blending={blending}
           depthWrite={depthWrite}
           toneMapped={false}
+          alphaTest={0.01}
+          roughness={0.8}
+          metalness={0}
         />
       </instancedMesh>
     </group>
@@ -284,6 +358,13 @@ const easeOutElastic = (t) => {
   return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
 };
 
+function applyCurve(t, curve) {
+  if (curve === 'linear') return t;
+  if (curve === 'easeIn') return t * t;
+  if (curve === 'smooth') return t * t * (3 - 2 * t);
+  return easeOutCubic(t);
+}
+
 // ============================================================================
 // PRESET PARTICLE EFFECTS
 // ============================================================================
@@ -313,10 +394,17 @@ export function ParticleBurst({
         velocitySpread: [1, 1, 1],
         radialVelocity: speed,
         gravity: [0, -1, 0],
+        turbulence: 0.25,
+        turbulenceFrequency: 5.5,
+        stretchByVelocity: true,
+        stretchFactor: 0.14,
+        sizeCurve: 'easeOut',
+        opacityCurve: 'smooth',
         sizeStart: size,
         sizeEnd: 0,
         colorStart: color,
         colorEnd: color,
+        colorOverLife: [color, '#ffffff', color],
         emissive: color,
         emissiveIntensity: 3,
         opacityStart: 1,
@@ -352,10 +440,15 @@ export function ParticleRing({
         velocitySpread: [0.2, 0.3, 0.2],
         radialVelocity: expandSpeed,
         gravity: [0, 0, 0],
+        turbulence: 0.12,
+        turbulenceFrequency: 4.2,
+        stretchByVelocity: true,
+        stretchFactor: 0.1,
         sizeStart: size,
         sizeEnd: size * 0.3,
         colorStart: color,
         colorEnd: color,
+        colorOverLife: ['#ffffff', color, '#d0f6ff'],
         emissive: color,
         emissiveIntensity: 2.5,
         opacityStart: 1,
@@ -392,11 +485,16 @@ export function ParticleSparkles({
         velocity: [0, height / duration, 0],
         velocitySpread: [0.3, 0.2, 0.3],
         gravity: [0, 0.2, 0],
+        turbulence: 0.1,
+        turbulenceFrequency: 3.8,
+        sizeCurve: 'smooth',
+        opacityCurve: 'smooth',
         sizeStart: size,
         sizeEnd: size * 0.5,
         sizeVariance: size * 0.3,
         colorStart: color,
         colorEnd: color,
+        colorOverLife: [color, '#ffffff', color],
         emissive: color,
         emissiveIntensity: 4,
         opacityStart: 0.9,
@@ -451,10 +549,15 @@ export function ParticleVortex({
           velocitySpread: [0.5, 0.3, 0.5],
           radialVelocity: -0.5, // inward
           gravity: [0, 0.5, 0],
+          turbulence: 0.2,
+          turbulenceFrequency: 6,
+          stretchByVelocity: true,
+          stretchFactor: 0.15,
           sizeStart: size,
           sizeEnd: 0,
           colorStart: color,
           colorEnd: color,
+          colorOverLife: [color, '#ffffff', '#ffffff'],
           emissive: color,
           emissiveIntensity: 3,
           opacityStart: 1 - progress * 0.5,
@@ -495,10 +598,14 @@ export function ParticleShield({
           velocity: [0, 0.5, 0],
           velocitySpread: [0.1, 0.1, 0.1],
           gravity: [0, 0, 0],
+          turbulence: 0.08,
+          turbulenceFrequency: 4.4,
+          sizeCurve: 'smooth',
           sizeStart: 0.03,
           sizeEnd: 0.01,
           colorStart: color,
           colorEnd: '#e1f5fe',
+          colorOverLife: [color, '#e8fbff', '#c8f3ff'],
           emissive: color,
           emissiveIntensity: 4,
           opacityStart: 0.9,
@@ -531,10 +638,15 @@ export function ParticlePoison({
         velocity: [0, -0.3, 0],
         velocitySpread: [0.2, 0.1, 0.2],
         gravity: [0, -1, 0],
+        turbulence: 0.16,
+        turbulenceFrequency: 5.2,
+        stretchByVelocity: true,
+        stretchFactor: 0.12,
         sizeStart: 0.04,
         sizeEnd: 0.06,
         colorStart: color,
         colorEnd: '#b2ff59',
+        colorOverLife: [color, '#b2ff59', '#e8ffb0'],
         emissive: color,
         emissiveIntensity: 2 * intensity,
         opacityStart: 0.7,

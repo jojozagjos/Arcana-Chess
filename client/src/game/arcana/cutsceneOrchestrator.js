@@ -39,22 +39,51 @@ export function orchestrateCutscene(params) {
 
   const { config, duration } = cutsceneConfig;
   const { camera, overlay, vfx, sound, phases } = config;
+  const focusSquare =
+    targetSquare ||
+    params?.params?.targetSquare ||
+    params?.params?.square ||
+    params?.params?.kingTo ||
+    params?.params?.rebornSquare ||
+    null;
 
   // Timeline trackers
   const effectTimers = [];
   let currentPhaseIndex = 0;
 
-  // Start camera movement
+  // Start camera movement or script
   if (cameraRef?.current && camera) {
     try {
-      cameraRef.current.triggerCutscene({
-        targetPosition: camera.targetPosition || [0, 3, 5],
-        targetLookAt: camera.targetLookAt || [0, 0, 0],
-        zoom: camera.targetZoom || 1.0,
-        duration: camera.duration || 1000,
-        holdDuration: camera.holdDuration || 1500,
-        easing: camera.easing || 'easeInOutCubic',
-      });
+      const trigger = cameraRef.current.triggerCutscene;
+      if (typeof trigger === 'function' && focusSquare) {
+        const shots = Array.isArray(camera.shots) && camera.shots.length
+          ? camera.shots
+          : [{
+              square: focusSquare,
+              zoom: camera.targetZoom || 1.0,
+              holdDuration: camera.holdDuration || 1500,
+              duration: camera.duration || 650,
+              returnDuration: camera.returnDuration || camera.duration || 650,
+              offset: camera.offset || null,
+              lookAtYOffset: camera.lookAtYOffset || 0,
+            }];
+
+        let shotDelay = 0;
+        shots.forEach((shot) => {
+          const timer = setTimeout(() => {
+            trigger(shot.square || focusSquare, {
+              zoom: shot.zoom ?? camera.targetZoom ?? 1.0,
+              holdDuration: shot.holdDuration ?? 1000,
+              duration: shot.duration ?? camera.duration ?? 650,
+              returnDuration: shot.returnDuration ?? shot.duration ?? camera.returnDuration ?? camera.duration ?? 650,
+              offset: shot.offset || camera.offset || null,
+              lookAtYOffset: shot.lookAtYOffset ?? camera.lookAtYOffset ?? 0,
+            });
+          }, shotDelay);
+          effectTimers.push(timer);
+          shotDelay += (shot.duration || 650) + (shot.holdDuration || 1000) + (shot.returnDuration || shot.duration || 650);
+        });
+      }
     } catch (err) {
       console.warn('Failed to trigger camera cutscene:', err);
     }
@@ -111,7 +140,7 @@ export function orchestrateCutscene(params) {
             soundManager,
             sound,
             onVFXTrigger,
-            targetSquare,
+            targetSquare: focusSquare,
           });
         }, phaseDelay);
         effectTimers.push(timer);

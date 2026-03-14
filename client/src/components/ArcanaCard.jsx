@@ -1,12 +1,15 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 
 // ArcanaCard component: displays card background, icon, and name
-export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo, deferLoad = false, style = {}, disableHover = false }) {
+export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo, deferLoad = false, style = {}, disableHover = false, disableTooltip = false }) {
+  const isHiddenCard = !!arcana?.hidden;
   const [hovered, setHovered] = useState(false);
   const [tooltipPos, setTooltipPos] = useState(null);
-  const [bgLoaded, setBgLoaded] = useState(false);
-  const [iconLoaded, setIconLoaded] = useState(false);
+  const [bgLoaded, setBgLoaded] = useState(() => isHiddenCard);
+  const [iconLoaded, setIconLoaded] = useState(() => isHiddenCard);
+  const [bgFailed, setBgFailed] = useState(false);
+  const [iconFailed, setIconFailed] = useState(false);
   const cardRef = useRef(null);
   const touchTimerRef = useRef(null);
   const arcanaId = typeof arcana?.id === 'string'
@@ -16,10 +19,27 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
     ? arcana.name
     : arcanaId.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   const rarity = typeof arcana?.rarity === 'string' ? arcana.rarity : 'common';
-  const rarityCapitalized = rarity.charAt(0).toUpperCase() + rarity.slice(1);
-  const backgroundPath = `/cards/backgrounds/${rarityCapitalized}.png`;
+  const rarityCapitalized = rarity === '???' ? '???' : rarity.charAt(0).toUpperCase() + rarity.slice(1);
+  const customBackgroundPath = typeof arcana?.backgroundPath === 'string' ? arcana.backgroundPath : null;
+  const customIconPath = typeof arcana?.iconPath === 'string' ? arcana.iconPath : null;
+  const backgroundByRarity = {
+    common: '/cards/backgrounds/Common.png',
+    uncommon: '/cards/backgrounds/Uncommon.png',
+    rare: '/cards/backgrounds/Rare.png',
+    epic: '/cards/backgrounds/Epic.png',
+    legendary: '/cards/backgrounds/Legendary.png',
+    '???': '/cards/backgrounds/Void.png',
+  };
+  const backgroundPath = customBackgroundPath || backgroundByRarity[rarity] || backgroundByRarity.common;
   const iconId = arcanaId.replace(/_/g, '-');
-  const iconPath = `/cards/icons/${iconId}.png`;
+  const iconPath = customIconPath || `/cards/icons/${iconId}.png`;
+  const [iconSrc, setIconSrc] = useState(iconPath);
+
+  useEffect(() => {
+    setIconFailed(false);
+    setIconLoaded(isHiddenCard);
+    setIconSrc(iconPath);
+  }, [iconPath, isHiddenCard]);
 
   const sizes = {
     small: { width: 80, height: 120, iconSize: 50, fontSize: '0.6rem' },
@@ -28,6 +48,9 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
   };
 
   const dims = sizes[size] || sizes.medium;
+  const iconOffsetY = arcanaId === 'breaking_point' || arcanaId === 'edgerunner_overdrive'
+    ? (size === 'small' ? -15 : size === 'large' ? -35 : -25)
+    : 0;
   const TOOLTIP_W = Math.max(dims.width + 80, 260);
   // Fixed description height keeps all tooltips the same visual height
   const DESC_H = 58;
@@ -51,7 +74,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
     ...style,
   };
 
-  const showTooltip = !disableHover && hovered && tooltipPos && (hoverInfo || arcanaName);
+  const showTooltip = !disableTooltip && hovered && tooltipPos && (hoverInfo || arcanaName);
 
   const calcPos = (rect) => {
     const vw = window.innerWidth || document.documentElement.clientWidth;
@@ -67,6 +90,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
   };
 
   const handleMouseEnter = (e) => {
+    if (disableHover) return;
     if (onClick) e.currentTarget.style.transform = 'scale(1.05)';
     setHovered(true);
     try { setTooltipPos(calcPos(cardRef.current.getBoundingClientRect())); }
@@ -74,6 +98,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
   };
 
   const handleMouseLeave = (e) => {
+    if (disableHover) return;
     if (onClick) e.currentTarget.style.transform = 'scale(1)';
     setHovered(false);
     setTooltipPos(null);
@@ -135,7 +160,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
           }}>
             {hoverInfo || ''}
           </div>
-          <div style={{ fontSize: '0.68rem', opacity: 0.65, color: rarity === 'uncommon' ? '#1eff00' : rarity === 'rare' ? '#0070dd' : rarity === 'epic' ? '#a335ee' : rarity === 'legendary' ? '#ff8000' : '#a0a0a0' }}>
+          <div style={{ fontSize: '0.68rem', opacity: 0.65, color: rarity === 'uncommon' ? '#1eff00' : rarity === 'rare' ? '#0070dd' : rarity === 'epic' ? '#a335ee' : rarity === 'legendary' ? '#ff8000' : rarity === '???' ? '#ff4d4d' : '#a0a0a0' }}>
             {rarityCapitalized}
           </div>
           {/* Speech-bubble arrow */}
@@ -167,54 +192,72 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
         onTouchStart={handleTouchStart}
       >
         {/* Background */}
-        <img
-          src={backgroundPath}
-          alt=""
-          onLoad={() => setBgLoaded(true)}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            zIndex: 0,
-            opacity: deferLoad ? (bgLoaded && iconLoaded ? 1 : 0) : 1,
-            transition: 'opacity 180ms ease',
-          }}
-        />
-
-        {/* Card Name (top third) */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: '33%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '8px',
-            zIndex: 2,
-          }}
-        >
+        {!bgFailed && (
+          <img
+            src={backgroundPath}
+            alt=""
+            onLoad={() => setBgLoaded(true)}
+            onError={() => {
+              setBgFailed(true);
+              setBgLoaded(true);
+            }}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              zIndex: 0,
+              opacity: deferLoad ? (bgLoaded && iconLoaded ? 1 : 0) : 1,
+              transition: 'opacity 180ms ease',
+            }}
+          />
+        )}
+        {bgFailed && (
           <div
             style={{
-              fontFamily: 'system-ui, sans-serif',
-              fontSize: dims.fontSize,
-              fontWeight: 700,
-              color: '#eceff4',
-              textAlign: 'center',
-              textShadow: '0 2px 6px rgba(0,0,0,0.8)',
-              lineHeight: 1.2,
-              wordWrap: 'break-word',
-              maxWidth: '100%',
+              position: 'absolute',
+              inset: 0,
+              background: 'linear-gradient(180deg, rgba(34, 38, 44, 0.95), rgba(12, 14, 18, 0.95))',
+              zIndex: 0,
+            }}
+          />
+        )}
+
+        {/* Card Name (top third) */}
+        {!isHiddenCard && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: '33%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '8px',
+              zIndex: 2,
             }}
           >
-            {arcanaName}
+            <div
+              style={{
+                fontFamily: 'system-ui, sans-serif',
+                fontSize: dims.fontSize,
+                fontWeight: 700,
+                color: '#eceff4',
+                textAlign: 'center',
+                textShadow: '0 2px 6px rgba(0,0,0,0.8)',
+                lineHeight: 1.2,
+                wordWrap: 'break-word',
+                maxWidth: '100%',
+              }}
+            >
+              {arcanaName}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Icon (lower half) */}
         <div
@@ -230,19 +273,26 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
             zIndex: 1,
           }}
         >
-          <img
-            src={iconPath}
-            alt={arcanaName}
-            onLoad={() => setIconLoaded(true)}
-            style={{
-              width: dims.iconSize,
-              height: dims.iconSize,
-              objectFit: 'contain',
-              filter: isUsed ? 'grayscale(0.6)' : 'none',
-              opacity: deferLoad ? (bgLoaded && iconLoaded ? 1 : 0) : 1,
-              transition: 'opacity 200ms ease',
-            }}
-          />
+          {!isHiddenCard && !iconFailed ? (
+            <img
+              src={iconSrc}
+              alt={arcanaName}
+              onLoad={() => setIconLoaded(true)}
+              onError={() => {
+                setIconFailed(true);
+                setIconLoaded(true);
+              }}
+              style={{
+                width: dims.iconSize,
+                height: dims.iconSize,
+                objectFit: 'contain',
+                transform: `translateY(${iconOffsetY}px)`,
+                filter: isUsed ? 'grayscale(0.6)' : 'none',
+                opacity: deferLoad ? (bgLoaded && iconLoaded ? 1 : 0) : 1,
+                transition: 'opacity 200ms ease',
+              }}
+            />
+          ) : null}
         </div>
 
         {/* Badge overlay */}
