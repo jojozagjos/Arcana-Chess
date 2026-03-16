@@ -1227,7 +1227,7 @@ export function CutsceneStudio({ onBack }) {
           </div>
 
           <div className="studio2-toolbar-status">
-            <span>Selected square: <strong>{selectedSquare}</strong></span>
+            <span>Selected square: <strong>{selectedSquare || '(none)'}</strong></span>
             <span>Drag the ruler to scrub time and drag markers to retime them.</span>
             {boardPickHint ? <span className="studio2-pick-hint">{boardPickHint}</span> : null}
           </div>
