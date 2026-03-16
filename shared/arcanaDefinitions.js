@@ -363,7 +363,7 @@ export const ARCANA_DEFINITIONS = [
     id: 'en_passant_master',
     name: 'En Passant Master',
     rarity: 'uncommon',
-    category: 'special',
+    category: 'utility',
     description: 'All your pawns can perform en passant on any adjacent enemy pawn.',
     visual: { particles: false, animation: false, cutscene: false },
     soundKey: 'arcana:en_passant_master',

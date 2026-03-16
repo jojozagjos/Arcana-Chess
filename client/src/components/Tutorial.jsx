@@ -105,7 +105,7 @@ const TUTORIAL_STEPS = [
     title: '⚡ Ascension!',
     description:
       'Your first capture triggers ASCENSION! This unlocks Arcana cards - magical abilities that add a new dimension to chess.',
-    instruction: 'You have ascended! Look at the bar that appeared below. Click Next to learn how it works.',
+    instruction: 'Ascension! Look at the bar that appeared below. Click Next to learn how it works.',
     setupFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
@@ -581,7 +581,7 @@ export function Tutorial({ onBack }) {
       <div style={styles.canvasContainer}>
         {hasAscended && (
           <div style={styles.ascensionOverlay}>
-            <div style={styles.ascensionText}>⚡ ASCENDED ⚡</div>
+            <div style={styles.ascensionText}>⚡ ASCENSION! ⚡</div>
           </div>
         )}
         <Canvas

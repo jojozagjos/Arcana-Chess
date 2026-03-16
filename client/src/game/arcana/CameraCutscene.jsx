@@ -28,6 +28,8 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
   const holdTimer = useRef(0);
   const moveDurationMs = useRef(650);
   const returnDurationMs = useRef(650);
+  const moveEasingName = useRef('easeOutCubic');
+  const returnEasingName = useRef('easeInOutCubic');
   const sequenceBaseState = useRef(null);
   const inSequence = useRef(false);
   const holdPositionRef = useRef(false);
@@ -36,6 +38,29 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
   // Easing functions
   const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
   const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+  const easeInSine = (t) => 1 - Math.cos((t * Math.PI) / 2);
+  const easeOutSine = (t) => Math.sin((t * Math.PI) / 2);
+  const easeInOutSine = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
+  const easeInCubic = (t) => t * t * t;
+  const easeOutBack = (t) => {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  };
+  const applyEasing = (name, t) => {
+    const x = Math.max(0, Math.min(1, t));
+    switch (name) {
+      case 'linear': return x;
+      case 'easeInSine': return easeInSine(x);
+      case 'easeOutSine': return easeOutSine(x);
+      case 'easeInOutSine': return easeInOutSine(x);
+      case 'easeInCubic': return easeInCubic(x);
+      case 'easeOutCubic': return easeOutCubic(x);
+      case 'easeInOutCubic': return easeInOutCubic(x);
+      case 'easeOutBack': return easeOutBack(x);
+      default: return easeOutCubic(x);
+    }
+  };
   
   // Default camera position based on player color
   const getDefaultCameraPosition = useCallback(() => {
@@ -101,6 +126,8 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     holdTimer.current = cutsceneTarget.holdDuration || 1500;
     moveDurationMs.current = Math.max(220, cutsceneTarget.duration || 650);
     returnDurationMs.current = Math.max(220, cutsceneTarget.returnDuration || moveDurationMs.current);
+    moveEasingName.current = cutsceneTarget.easing || 'easeOutCubic';
+    returnEasingName.current = cutsceneTarget.returnEasing || 'easeInOutCubic';
     
     // Disable orbit controls during cutscene
     if (controls) {
@@ -121,7 +148,7 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     
     if (phase.current === 'moving_to') {
       animationProgress.current += (delta * 1000) / moveDurationMs.current;
-      const t = easeOutCubic(Math.min(animationProgress.current, 1));
+      const t = applyEasing(moveEasingName.current, Math.min(animationProgress.current, 1));
       
       // Interpolate camera position
       camera.position.lerpVectors(startPosition.current, targetPosition.current, t);
@@ -174,7 +201,7 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     
     else if (phase.current === 'returning') {
       animationProgress.current += (delta * 1000) / returnDurationMs.current;
-      const t = easeInOutCubic(Math.min(animationProgress.current, 1));
+      const t = applyEasing(returnEasingName.current, Math.min(animationProgress.current, 1));
       
       // Interpolate back to original position
       camera.position.lerpVectors(startPosition.current, targetPosition.current, t);
@@ -224,6 +251,8 @@ export function useCameraCutscene() {
       holdDuration: options.holdDuration || 1500,
       duration: options.duration || 650,
       returnDuration: options.returnDuration || options.duration || 650,
+      easing: options.easing || 'easeOutCubic',
+      returnEasing: options.returnEasing || 'easeInOutCubic',
       offset: options.offset || null,
       lookAtYOffset: options.lookAtYOffset || 0,
       sequenceStart: !!options.sequenceStart,

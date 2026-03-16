@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import { Chess } from 'chess.js';
@@ -65,9 +65,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const [replayPanelTab, setReplayPanelTab] = useState('events');
   const [replayIndex, setReplayIndex] = useState(0);
   const [isReplayPlaying, setIsReplayPlaying] = useState(false);
+  const [ascensionFxToken, setAscensionFxToken] = useState(0);
   // WebGL context loss state - prevents flashing during recovery
   const [isContextLost, setIsContextLost] = useState(false);
   const contextLossCountRef = useRef(0); // Track consecutive context losses
+  const lastAscensionFxAtRef = useRef(0);
   
   // Camera cutscene system for card effects
   const { cutsceneTarget, triggerCutscene, clearCutscene } = useCameraCutscene();
@@ -182,6 +184,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       return next.length > 300 ? next.slice(next.length - 300) : next;
     });
   };
+
+  const triggerAscensionScreenFx = useCallback(() => {
+    const now = Date.now();
+    // Avoid duplicate flashes when both ascended socket event and ascendedInfo arrive together.
+    if (now - lastAscensionFxAtRef.current < 1100) return;
+    lastAscensionFxAtRef.current = now;
+    setAscensionFxToken((v) => v + 1);
+  }, []);
 
   const mySocketId = socket.id;
   const myColor = useMemo(() => {
@@ -646,8 +656,9 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   useEffect(() => {
     if (ascendedInfo) {
       setArcanaSidebarOpen(true); // Auto-open when ascension happens
+      triggerAscensionScreenFx();
     }
-  }, [ascendedInfo]);
+  }, [ascendedInfo, triggerAscensionScreenFx]);
 
   // Clear hover threat indicators when selection/turn/actions change
   useEffect(() => {
@@ -1119,6 +1130,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
     const handleAscended = () => {
       soundManager.play('ascension');
+      triggerAscensionScreenFx();
     };
 
     const handleArcanaTriggered = (payload) => {
@@ -1937,6 +1949,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <CutsceneOverlay ref={overlayRef} />
+      <AscensionScreenFx token={ascensionFxToken} />
       {isContextLost && (
         <div style={{
           position: 'absolute',
@@ -2975,6 +2988,100 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
   return <group>{tiles}</group>;
 }
 
+
+function AscensionScreenFx({ token }) {
+  const [state, setState] = useState({ visible: false, progress: 1 });
+
+  useEffect(() => {
+    if (!token) return;
+
+    const durationMs = 2200;
+    let rafId = null;
+    let hideTimer = null;
+    const start = performance.now();
+    setState({ visible: true, progress: 0 });
+
+    const animate = (now) => {
+      const progress = Math.min((now - start) / durationMs, 1);
+      setState({ visible: true, progress });
+      if (progress < 1) {
+        rafId = requestAnimationFrame(animate);
+      } else {
+        hideTimer = setTimeout(() => {
+          setState({ visible: false, progress: 1 });
+        }, 120);
+      }
+    };
+
+    rafId = requestAnimationFrame(animate);
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      if (hideTimer) clearTimeout(hideTimer);
+    };
+  }, [token]);
+
+  if (!state.visible) return null;
+
+  const p = state.progress;
+  const burst = Math.sin(Math.min(1, p * 1.25) * Math.PI);
+  const veilOpacity = Math.max(0, (1 - p) * 0.9);
+  const ringScale = 0.5 + p * 1.9;
+  const ringOpacity = Math.max(0, (1 - p) * 0.65);
+  const titleOpacity = Math.max(0, Math.sin(Math.min(1, p * 1.2) * Math.PI));
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        pointerEvents: 'none',
+        zIndex: 1400,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: `radial-gradient(circle at 50% 50%, rgba(136,192,208,${0.36 * burst}) 0%, rgba(111,66,193,${0.22 * burst}) 32%, rgba(6,12,24,${veilOpacity}) 75%)`,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          transform: `translate(-50%, -50%) scale(${ringScale})`,
+          width: '42vmin',
+          height: '42vmin',
+          borderRadius: '999px',
+          border: `2px solid rgba(168,230,255,${ringOpacity})`,
+          boxShadow: `0 0 70px rgba(122, 201, 255, ${ringOpacity})`,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          transform: `translate(-50%, -52%) scale(${1 + burst * 0.08})`,
+          fontSize: 'clamp(2rem, 7vw, 5.4rem)',
+          letterSpacing: '0.14em',
+          fontWeight: 800,
+          color: 'rgba(226,245,255,0.98)',
+          textShadow: '0 0 24px rgba(136,192,208,0.88), 0 0 52px rgba(94,155,255,0.55)',
+          opacity: titleOpacity,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Ascension!
+      </div>
+    </div>
+  );
+}
 
 
 function AscensionRing() {

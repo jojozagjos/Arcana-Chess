@@ -15,6 +15,7 @@ export function App() {
   const DEV_MODE_PASSWORD = 'arcana dev';
 
   const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing', 'cutscene-studio'];
+  const devToolScreens = ['card-balancing', 'cutscene-studio'];
 
   const [screen, setScreen] = useState('intro');
   const [audioReady, setAudioReady] = useState(false);
@@ -175,10 +176,13 @@ export function App() {
   // Global music routing: play menu music on any menu-like screen; stop when entering gameplay/tutorial
   useEffect(() => {
     const isMenu = menuScreens.includes(screen);
-    if (isMenu && audioReady && !globalSettings.audio?.muted) {
+    const isDevToolScreen = devToolScreens.includes(screen);
+    const shouldPlayMenuMusic = isMenu && !isDevToolScreen;
+
+    if (shouldPlayMenuMusic && audioReady && !globalSettings.audio?.muted) {
       soundManager.playMusic('music:menu', { crossfadeMs: 600 });
-    } else if (screen === 'game' || screen === 'tutorial' || screen === 'intro') {
-      // Stop menu music when entering game/tutorial/intro - those screens manage their own music
+    } else if (screen === 'game' || screen === 'tutorial' || screen === 'intro' || isDevToolScreen) {
+      // Stop menu music when entering game/tutorial/intro/dev tools - those screens should be silent or self-managed.
       soundManager.stopMusic({ fadeMs: 200 });
     }
   }, [screen, audioReady, globalSettings.audio?.muted]);

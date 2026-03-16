@@ -1219,15 +1219,16 @@ function BreakingPointTrail({ from, to, fadeOpacity = 1 }) {
   );
 }
 
-export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [], pieceType = 'n', pieceColor = 'w', beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
+export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [], beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
   const anchorSquare = square || targetSquare;
   if (!anchorSquare) return null;
 
   const [anchorX, , anchorZ] = squareToPosition(anchorSquare);
-  const overlayRef = useRef();
-  const ringRef = useRef();
   const ageRef = useRef(0);
   const [expired, setExpired] = useState(false);
+  const gateRef = useRef();
+  const burstRingRef = useRef();
+  const runnerRef = useRef();
 
   const orderedSquares = useMemo(() => {
     const sequence = [];
@@ -1242,232 +1243,159 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
     return sequence;
   }, [anchorSquare, dashPath, square, targetSquare]);
 
-  const pathPositions = useMemo(
-    () => orderedSquares.map((sq) => squareToPosition(sq)),
-    [orderedSquares]
+  const worldPath = useMemo(() => orderedSquares.map((sq) => squareToPosition(sq)), [orderedSquares]);
+  const localPath = useMemo(
+    () => worldPath.map(([x, y, z]) => [x - anchorX, (y || 0.15) + 0.03, z - anchorZ]),
+    [anchorX, anchorZ, worldPath],
   );
 
-  const afterimages = useMemo(() => {
-    const ghosts = [];
-    for (let i = 1; i < pathPositions.length; i++) {
-      const [sx, , sz] = pathPositions[i - 1];
-      const [ex, , ez] = pathPositions[i];
-      const dx = ex - sx;
-      const dz = ez - sz;
-      if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) continue;
-      for (let layer = 0; layer < 5; layer++) {
-        const trailT = Math.max(0.08, 1 - (layer + 1) * 0.16);
-        ghosts.push({
-          key: `${i}-${layer}`,
-          x: sx + dx * trailT - anchorX,
-          z: sz + dz * trailT - anchorZ,
-          dx,
-          dz,
-          layer,
-          segment: i,
-        });
-      }
-    }
-    if (!ghosts.length) {
-      ghosts.push({ key: 'idle-0', x: 0, z: 0, dx: 0, dz: 1, layer: 1, segment: 1 });
-    }
-    return ghosts;
-  }, [anchorX, anchorZ, pathPositions]);
+  const lifeSeconds = useMemo(() => {
+    const synced = Number(syncDurationMs || 0) / 1000;
+    return clamp(synced > 0 ? synced * 0.85 : 1.35, 1, 2.4);
+  }, [syncDurationMs]);
 
   useFrame((state) => {
     ageRef.current += state.clock.getDelta();
-    const lifeSeconds = Math.max(1.05, (syncDurationMs || 0) / 1000);
-    const lifeT = Math.min(ageRef.current / lifeSeconds, 1);
+    const lifeT = clamp(ageRef.current / lifeSeconds, 0, 1);
     if (lifeT >= 1 && !expired) {
       setExpired(true);
+      return;
     }
-    if (!overlayRef.current) return;
+
     const t = state.clock.elapsedTime;
-    const pulse = 0.64 + Math.sin(t * 10.5) * 0.16;
-    overlayRef.current.material.opacity = Math.max(0.02, pulse * fadeOpacity * (1 - lifeT));
-    if (ringRef.current) {
-      const ringScale = 0.7 + lifeT * 2.4;
-      ringRef.current.scale.set(ringScale, ringScale, 1);
-      ringRef.current.material.opacity = Math.max(0.01, (0.48 - lifeT * 0.45) * fadeOpacity);
+    if (gateRef.current) {
+      const wobble = 1 + Math.sin(t * 13) * 0.06;
+      gateRef.current.scale.set(wobble, 1, wobble);
+      gateRef.current.material.opacity = (0.54 - lifeT * 0.5) * fadeOpacity;
+    }
+    if (burstRingRef.current) {
+      const s = 0.42 + lifeT * 2.7;
+      burstRingRef.current.scale.set(s, s, 1);
+      burstRingRef.current.material.opacity = Math.max(0.01, (0.48 - lifeT * 0.44) * fadeOpacity);
+    }
+    if (runnerRef.current && localPath.length) {
+      const p = interpolateOverdrivePath(localPath, lifeT);
+      runnerRef.current.position.set(p[0], p[1] + 0.06, p[2]);
+      runnerRef.current.material.opacity = Math.max(0.02, (0.92 - lifeT * 0.68) * fadeOpacity);
     }
   });
 
   if (expired) return null;
 
+  const beatMarks = (Array.isArray(beatTimingsMs) && beatTimingsMs.length ? beatTimingsMs : [0, 280, 560, 860]).slice(0, 8);
+
   return (
     <group position={[anchorX, 0, anchorZ]}>
-      <ParticleRing
-        position={[0, 0.16, 0]}
-        count={56}
-        color="#39ff6d"
-        size={0.045}
-        expandSpeed={2.6}
-        lifetime={0.58}
-      />
+      <ParticleBurst position={[0, 0.22, 0]} count={42} color="#16f2d6" size={0.065} speed={2.5} lifetime={0.52} />
+      <ParticleRing position={[0, 0.14, 0]} count={48} color="#2de7ff" size={0.04} expandSpeed={2.9} lifetime={0.5} />
 
-      {(Array.isArray(beatTimingsMs) && beatTimingsMs.length ? beatTimingsMs : [0, 320, 680, 1040]).slice(0, 8).map((beat, idx) => (
+      <mesh ref={gateRef} position={[0, 0.36, 0]}>
+        <cylinderGeometry args={[0.5, 0.5, 0.9, 6, 1, true]} />
+        <meshStandardMaterial emissive="#1ef0ff" emissiveIntensity={3.9} color="#67f8ff" transparent depthWrite={false} opacity={0.5 * fadeOpacity} wireframe />
+      </mesh>
+
+      <mesh ref={burstRingRef} position={[0, 0.07, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.24, 0.5, 40]} />
+        <meshStandardMaterial emissive="#20d9ff" emissiveIntensity={3.8} color="#8befff" transparent depthWrite={false} opacity={0.44 * fadeOpacity} />
+      </mesh>
+
+      {localPath.map((node, idx) => (
+        <OverdriveNodePulse key={`overdrive-node-${idx}`} node={node} nodeIndex={idx} ageRef={ageRef} lifeSeconds={lifeSeconds} fadeOpacity={fadeOpacity} />
+      ))}
+
+      {localPath.slice(1).map((to, idx) => (
+        <OverdriveSegmentRibbon
+          key={`overdrive-ribbon-${idx}`}
+          from={localPath[idx]}
+          to={to}
+          idx={idx}
+          ageRef={ageRef}
+          lifeSeconds={lifeSeconds}
+          fadeOpacity={fadeOpacity}
+        />
+      ))}
+
+      {beatMarks.map((beat, idx) => (
         <CutsceneBeatPulse
-          key={`overdrive-beat-${idx}`}
+          key={`overdrive-new-beat-${idx}`}
           ageRef={ageRef}
           startMs={Math.max(0, beat)}
-          durationMs={420}
-          color={idx % 2 === 0 ? '#39ff6d' : '#26ffd9'}
-          emissiveIntensity={4.1}
-          innerRadius={0.24}
-          outerRadius={0.5}
-          maxScale={2.45}
-          y={0.09 + idx * 0.004}
-          fadeOpacity={fadeOpacity}
-        />
-      ))}
-
-      <mesh ref={overlayRef} position={[0, 0.5, 0]}>
-        <cylinderGeometry args={[0.56, 0.56, 1.15, 32, 1, true]} />
-        <meshStandardMaterial
-          emissive="#39ff6d"
-          emissiveIntensity={4.8}
-          color="#7dff9f"
-          transparent
-          depthWrite={false}
-          opacity={0.66 * fadeOpacity}
-        />
-      </mesh>
-
-      <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.8, 40]} />
-        <meshStandardMaterial
-          emissive="#39ff6d"
-          emissiveIntensity={2.6}
-          color="#39ff6d"
-          transparent
-          depthWrite={false}
-          opacity={0.28 * fadeOpacity}
-        />
-      </mesh>
-
-      <mesh ref={ringRef} position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.3, 0.52, 44]} />
-        <meshStandardMaterial
-          emissive="#39ff6d"
+          durationMs={360}
+          color={idx % 2 === 0 ? '#2de7ff' : '#18ff9b'}
           emissiveIntensity={3.8}
-          color="#86ff9b"
-          transparent
-          depthWrite={false}
-          opacity={0.45 * fadeOpacity}
-        />
-      </mesh>
-
-      {afterimages.map((ghost) => (
-        <OverdriveAfterimage
-          key={ghost.key}
-          ghost={ghost}
-          pieceType={pieceType}
-          pieceColor={pieceColor}
-          ageRef={ageRef}
+          innerRadius={0.22}
+          outerRadius={0.48}
+          maxScale={2.25}
+          y={0.08 + idx * 0.004}
           fadeOpacity={fadeOpacity}
         />
       ))}
+
+      <mesh ref={runnerRef}>
+        <icosahedronGeometry args={[0.1, 0]} />
+        <meshStandardMaterial emissive="#f3ffff" emissiveIntensity={4.8} color="#e5ffff" transparent depthWrite={false} opacity={0.86 * fadeOpacity} />
+      </mesh>
     </group>
   );
 }
 
-function OverdriveAfterimage({ ghost, pieceType, pieceColor, ageRef, fadeOpacity = 1 }) {
+function interpolateOverdrivePath(path, t) {
+  if (!Array.isArray(path) || path.length === 0) return [0, 0.2, 0];
+  if (path.length === 1) return path[0];
+  const scaled = clamp(t, 0, 1) * (path.length - 1);
+  const idx = Math.min(path.length - 2, Math.floor(scaled));
+  const frac = scaled - idx;
+  const a = path[idx];
+  const b = path[idx + 1];
+  return [
+    a[0] + (b[0] - a[0]) * frac,
+    a[1] + (b[1] - a[1]) * frac,
+    a[2] + (b[2] - a[2]) * frac,
+  ];
+}
+
+function OverdriveNodePulse({ node, nodeIndex, ageRef, lifeSeconds, fadeOpacity }) {
   const ref = useRef();
-  const rotationY = Math.atan2(ghost.dx, ghost.dz);
-  const cyberpunkRamp = ['#10ff66', '#26ffd9', '#37c2ff', '#8a7dff', '#ff5ad9'];
-  const colorIdx = Math.min(cyberpunkRamp.length - 1, ghost.layer);
-  const emissiveColor = cyberpunkRamp[colorIdx];
-  const baseColor = pieceColor === 'w' ? '#d8ffe6' : '#9fffd0';
+  useFrame((state) => {
+    if (!ref.current) return;
+    const t = state.clock.elapsedTime;
+    const lifeT = clamp((ageRef.current || 0) / Math.max(0.001, lifeSeconds), 0, 1);
+    const pulse = 0.72 + Math.sin(t * 8 + nodeIndex * 0.7) * 0.16;
+    ref.current.scale.setScalar(pulse);
+    ref.current.material.opacity = Math.max(0.01, (0.5 - lifeT * 0.4) * fadeOpacity);
+  });
+
+  return (
+    <mesh ref={ref} position={[node[0], node[1] + 0.05, node[2]]}>
+      <sphereGeometry args={[0.08, 14, 14]} />
+      <meshStandardMaterial emissive="#25e7ff" emissiveIntensity={3.7} color="#96f6ff" transparent depthWrite={false} opacity={0.45 * fadeOpacity} />
+    </mesh>
+  );
+}
+
+function OverdriveSegmentRibbon({ from, to, idx, ageRef, lifeSeconds, fadeOpacity }) {
+  const ref = useRef();
 
   useFrame((state) => {
     if (!ref.current) return;
     const t = state.clock.elapsedTime;
-    const lifeT = Math.min((ageRef.current || 0) / 1.45, 1);
-    const flicker = 0.72 + Math.sin(t * 20 + ghost.layer * 1.7) * 0.18;
-    ref.current.material.opacity = Math.max(0.01, flicker * (0.62 - ghost.layer * 0.1) * fadeOpacity * (1 - lifeT));
+    const lifeT = clamp((ageRef.current || 0) / Math.max(0.001, lifeSeconds), 0, 1);
+    const shimmer = 0.7 + Math.sin(t * 18 + idx * 0.9) * 0.2;
+    ref.current.material.opacity = Math.max(0.01, shimmer * (0.4 - lifeT * 0.3) * fadeOpacity);
   });
 
-  const scaleX = 1 - ghost.layer * 0.08;
-  const scaleZ = 1 - ghost.layer * 0.06;
+  const dx = to[0] - from[0];
+  const dz = to[2] - from[2];
+  const dist = Math.max(0.12, Math.hypot(dx, dz));
+  const center = [(from[0] + to[0]) * 0.5, Math.max(from[1], to[1]) + 0.05 + idx * 0.01, (from[2] + to[2]) * 0.5];
+  const rotationY = Math.atan2(dx, dz);
 
   return (
-    <group
-      position={[ghost.x, 0.14 + ghost.layer * 0.02, ghost.z]}
-      rotation={[0, rotationY, 0]}
-      scale={[scaleX, 1, scaleZ]}
-    >
-      <OverdriveGhostPieceMesh
-        meshRef={ref}
-        pieceType={pieceType}
-        baseColor={baseColor}
-        emissiveColor={emissiveColor}
-        fadeOpacity={fadeOpacity}
-      />
-    </group>
+    <mesh ref={ref} position={center} rotation={[-Math.PI / 2, rotationY, 0]} scale={[1, 1, dist]}>
+      <planeGeometry args={[0.12, 1]} />
+      <meshStandardMaterial emissive="#1ef0ff" emissiveIntensity={4.2} color="#84f3ff" transparent depthWrite={false} opacity={0.34 * fadeOpacity} />
+    </mesh>
   );
-}
-
-function OverdriveGhostPieceMesh({ meshRef, pieceType, baseColor, emissiveColor, fadeOpacity }) {
-  const materialProps = {
-    emissive: emissiveColor,
-    emissiveIntensity: 3.6,
-    color: baseColor,
-    transparent: true,
-    depthWrite: false,
-    opacity: 0.38 * fadeOpacity,
-  };
-
-  switch (pieceType) {
-    case 'p':
-      return (
-        <mesh ref={meshRef} position={[0, 0.28, 0]}>
-          <cylinderGeometry args={[0.11, 0.14, 0.5, 12]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
-      );
-    case 'n':
-      return (
-        <mesh ref={meshRef} position={[0, 0.34, 0]}>
-          <boxGeometry args={[0.3, 0.62, 0.22]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
-      );
-    case 'b':
-      return (
-        <mesh ref={meshRef} position={[0, 0.36, 0]}>
-          <coneGeometry args={[0.16, 0.72, 14]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
-      );
-    case 'r':
-      return (
-        <mesh ref={meshRef} position={[0, 0.35, 0]}>
-          <cylinderGeometry args={[0.16, 0.16, 0.68, 10]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
-      );
-    case 'q':
-      return (
-        <mesh ref={meshRef} position={[0, 0.42, 0]}>
-          <cylinderGeometry args={[0.17, 0.2, 0.8, 14]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
-      );
-    case 'k':
-      return (
-        <mesh ref={meshRef} position={[0, 0.44, 0]}>
-          <cylinderGeometry args={[0.18, 0.22, 0.86, 14]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
-      );
-    default:
-      return (
-        <mesh ref={meshRef} position={[0, 0.34, 0]}>
-          <boxGeometry args={[0.3, 0.62, 0.22]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
-      );
-  }
 }
 
 // Iron Fortress Effect
