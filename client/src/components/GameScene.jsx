@@ -17,7 +17,10 @@ import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene
 const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.jsx').then(m => ({ default: m.default ?? m.ParticleOverlay })));
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import CutsceneOverlay from './CutsceneOverlay.jsx';
-import { getCutsceneConfig } from '../game/arcana/cutsceneDefinitions.js';
+import { getCutsceneCard } from '../game/arcana/cutsceneDefinitions.js';
+import { getStoredArcanaStudioCard } from '../game/arcana/studio/arcanaStudioSchema.js';
+import { ArcanaStudioRuntimeHost, ArcanaStudioScreenOverlay } from '../game/arcana/studio/ArcanaStudioRuntimeHost.jsx';
+import { createArcanaStudioRuntimeSession, normalizeArcanaStudioEventActions, scheduleArcanaStudioAudio, scheduleArcanaStudioEvents } from '../game/arcana/studio/arcanaStudioRuntime.js';
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
 // ArcanaVisualHost renders all effects using the shared arcanaVisuals module
 
@@ -29,6 +32,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const [pendingMoveError, setPendingMoveError] = useState('');
   const [selectedArcanaId, setSelectedArcanaId] = useState(null);
   const [activeVisualArcana, setActiveVisualArcana] = useState(null);
+  const [studioRuntimeSession, setStudioRuntimeSession] = useState(null);
   const [arcanaSidebarOpen, setArcanaSidebarOpen] = useState(false);
   const [cardReveal, setCardReveal] = useState(null); // { arcana, playerId }
   const [isDrawingCard, setIsDrawingCard] = useState(false);
@@ -734,6 +738,104 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }
   }, [chess?.fen()]); // Re-run whenever FEN changes (which includes turn changes)
 
+  const playStudioArcanaRuntime = useCallback((arcanaEvent, options = {}) => {
+    const eventCard = getCutsceneCard(arcanaEvent.arcanaId);
+    const hasStoredOverride = Boolean(getStoredArcanaStudioCard(arcanaEvent.arcanaId));
+    let visualClearTimeout = 1500;
+    let syncDurationMs = 0;
+    let beatTimingsMs = [];
+
+    if (eventCard) {
+      const session = createArcanaStudioRuntimeSession(eventCard, arcanaEvent.params || {});
+      const durationMs = Math.max(0, session.durationMs || 0);
+      syncDurationMs = durationMs;
+      visualClearTimeout = Math.max(visualClearTimeout, durationMs + 220);
+      beatTimingsMs = (eventCard.tracks?.camera?.[0]?.keys || []).map((key) => key.timeMs || 0);
+      setStudioRuntimeSession(session);
+
+      scheduleArcanaStudioAudio(eventCard, {
+        soundManager,
+        registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
+      });
+
+      scheduleArcanaStudioEvents(eventCard, {
+        eventParams: arcanaEvent.params || {},
+        registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
+        onEvent: (eventKey) => {
+          const actions = normalizeArcanaStudioEventActions(eventKey);
+          actions.forEach((action) => {
+            if (action.kind === 'overlay') {
+              overlayRef.current?.playEffect({
+                effect: action.effect,
+                color: action.color,
+                intensity: action.intensity,
+                duration: action.duration,
+                fadeIn: action.fadeIn,
+                hold: action.hold,
+                fadeOut: action.fadeOut,
+              });
+              return;
+            }
+
+            if (action.kind === 'sound') {
+              soundManager.play(action.soundId, {
+                volume: action.volume,
+                pitch: action.pitch,
+                loop: action.loop,
+              });
+              return;
+            }
+
+            if (action.kind === 'camera' && action.square) {
+              triggerCutscene(action.square, action.options || {});
+              return;
+            }
+
+            if (action.kind === 'highlight') {
+              setHighlightedSquares(action.squares || []);
+              setHighlightColor(action.color || '#88c0d0');
+              if ((action.durationMs || 0) > 0) {
+                const clearTimer = setTimeout(() => {
+                  setHighlightedSquares([]);
+                }, action.durationMs);
+                timeoutsRef.current.push(clearTimer);
+              }
+              return;
+            }
+
+            if (action.kind === 'log') {
+              setCombatLog((prev) => {
+                const next = [...prev, { at: Date.now(), type: 'effect', text: action.text }];
+                return next.length > 300 ? next.slice(next.length - 300) : next;
+              });
+            }
+          });
+
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[GameScene] Arcana Studio event fired:', eventKey.type, eventKey.payload || {});
+          }
+        },
+      });
+    }
+
+    const syncedParams = { ...(arcanaEvent.params || {}) };
+    if (syncDurationMs > 0) syncedParams.syncDurationMs = syncDurationMs;
+    if (beatTimingsMs.length) syncedParams.beatTimingsMs = beatTimingsMs;
+
+    if (!hasStoredOverride) {
+      setActiveVisualArcana({ ...arcanaEvent, params: syncedParams });
+    }
+
+    const t = setTimeout(() => {
+      if (!hasStoredOverride) setActiveVisualArcana(null);
+      setStudioRuntimeSession((current) => (current?.id === options.sessionId || !options.sessionId ? null : current));
+      setIsCardAnimationPlaying(false);
+    }, visualClearTimeout);
+    timeoutsRef.current.push(t);
+
+    return { visualClearTimeout, syncDurationMs, beatTimingsMs };
+  }, [triggerCutscene]);
+
   useEffect(() => {
     if (!lastArcanaEvent) return;
     // Avoid replaying the same event
@@ -754,143 +856,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
     lastActiveVisualKeyRef.current = key;
 
-    const runCutsceneCamera = (cfg, square, eventParams = {}) => {
-      if (!cfg?.config?.camera || !square || typeof square !== 'string') return 0;
-      const cam = cfg.config.camera;
-      const beatTimingsMs = [];
-      const resolveShotSquare = (shot) => {
-        if (shot?.square) return shot.square;
-        const anchor = shot?.anchor;
-        if (!anchor) return square;
-        if (anchor === 'target') return eventParams?.targetSquare || eventParams?.square || square;
-        const dashMatch = /^dash(\d+)$/i.exec(anchor);
-        if (dashMatch && Array.isArray(eventParams?.dashPath)) {
-          return eventParams.dashPath[Math.max(0, parseInt(dashMatch[1], 10) - 1)] || square;
-        }
-        const displacedMatch = /^displaced(\d+)$/i.exec(anchor);
-        if (displacedMatch && Array.isArray(eventParams?.displaced)) {
-          const idx = Math.max(0, parseInt(displacedMatch[1], 10) - 1);
-          return eventParams.displaced[idx]?.to || square;
-        }
-        return square;
-      };
-      const shots = Array.isArray(cam.shots) && cam.shots.length
-        ? cam.shots
-        : [{
-            zoom: cam.targetZoom || 1.5,
-            duration: cam.duration || 650,
-            holdDuration: cam.holdDuration || 2000,
-            returnDuration: cam.returnDuration || cam.duration || 650,
-            offset: cam.offset || null,
-            lookAtYOffset: cam.lookAtYOffset || 0,
-          }];
-
-      let delayMs = 0;
-      shots.forEach((shot) => {
-        beatTimingsMs.push(delayMs);
-        const isFirst = delayMs === 0;
-        const isLast = shot === shots[shots.length - 1];
-        const shotSquare = resolveShotSquare(shot);
-        const timer = setTimeout(() => {
-          triggerCutscene(shotSquare, {
-            zoom: shot.zoom || cam.targetZoom || 1.5,
-            holdDuration: shot.holdDuration || cam.holdDuration || 1500,
-            duration: shot.duration || cam.duration || 650,
-            returnDuration: shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650,
-            offset: shot.offset || cam.offset || null,
-            lookAtYOffset: shot.lookAtYOffset ?? cam.lookAtYOffset ?? 0,
-            sequenceStart: isFirst,
-            sequenceEnd: isLast,
-            holdPosition: !isLast,
-          });
-        }, delayMs);
-        timeoutsRef.current.push(timer);
-
-        delayMs += (shot.duration || cam.duration || 650)
-          + (shot.holdDuration || cam.holdDuration || 1500)
-          + (shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650);
-      });
-
-      return { durationMs: delayMs, beatTimingsMs };
-    };
-    
-    // Check if this arcana has cutscene enabled and a target square
-    // Note: divine_intervention is excluded because it only triggers when check actually happens, not when activated
-    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
-    let visualClearTimeout = 1500; // Default timeout for non-cutscene cards
-    let syncDurationMs = 0;
-    let beatTimingsMs = [];
-    
-    if (cutsceneCards.includes(lastArcanaEvent.arcanaId)) {
-      const config = getCutsceneConfig(lastArcanaEvent.arcanaId);
-      
-      // Extract square from various possible param field names
-      const targetSquare = lastArcanaEvent.params?.targetSquare || 
-                          lastArcanaEvent.params?.square ||
-                          lastArcanaEvent.params?.kingTo ||
-                          lastArcanaEvent.params?.rebornSquare;
-      
-      if (targetSquare && typeof targetSquare === 'string') {
-        const script = runCutsceneCamera(config, targetSquare, lastArcanaEvent.params || {});
-        const scriptDuration = script?.durationMs || 0;
-        syncDurationMs = Math.ceil(scriptDuration);
-        beatTimingsMs = Array.isArray(script?.beatTimingsMs) ? script.beatTimingsMs : [];
-        visualClearTimeout = Math.max(visualClearTimeout, Math.ceil(scriptDuration + 220));
-      } else {
-        console.warn('[GameScene] Cutscene card missing valid square param:', lastArcanaEvent);
-      }
-      
-      // Trigger overlay effects (if configured)
-      if (config?.config?.overlay && overlayRef.current) {
-        const overlay = config.config.overlay;
-        
-        // Handle single overlay effect
-        if (overlay.effect) {
-          overlayRef.current.playEffect({
-            effect: overlay.effect,
-            color: overlay.color,
-            duration: overlay.duration,
-            intensity: overlay.intensity,
-            fadeIn: overlay.fadeIn,
-            hold: overlay.hold,
-            fadeOut: overlay.fadeOut,
-          });
-        }
-        // Handle multiple overlay effects (e.g., time_travel with dual overlays)
-        else if (Array.isArray(overlay)) {
-          overlay.forEach((o) => {
-            overlayRef.current?.playEffect({
-              effect: o.effect,
-              color: o.color,
-              duration: o.duration,
-              intensity: o.intensity,
-              fadeIn: o.fadeIn,
-              hold: o.hold,
-              fadeOut: o.fadeOut,
-            });
-          });
-        }
-      }
-    }
-
-    const syncedParams = { ...(lastArcanaEvent.params || {}) };
-    if (syncDurationMs > 0) syncedParams.syncDurationMs = syncDurationMs;
-    if (beatTimingsMs.length) syncedParams.beatTimingsMs = beatTimingsMs;
-    setActiveVisualArcana({ ...lastArcanaEvent, params: syncedParams });
-    
-    const t = setTimeout(() => {
-      setActiveVisualArcana(null);
-      // Ensure any lingering animation lock is released when the visual clears
-      setIsCardAnimationPlaying(false);
-    }, visualClearTimeout);
-    // Track timeout for global cleanup
-    timeoutsRef.current.push(t);
+    const playback = playStudioArcanaRuntime(lastArcanaEvent);
     return () => {
-      clearTimeout(t);
-      // remove from tracked timeouts if present
-      timeoutsRef.current = timeoutsRef.current.filter(id => id !== t);
+      if (playback?.cleanup) playback.cleanup();
     };
-  }, [lastArcanaEvent, triggerCutscene]);
+  }, [lastArcanaEvent, playStudioArcanaRuntime]);
 
   // When card animation finishes, flush any queued arcana events so visuals play after animation
   useEffect(() => {
@@ -909,125 +879,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     lastProcessedArcanaAtRef.current = next.at || Date.now();
     lastActiveVisualKeyRef.current = nextKey;
 
-    // Apply the same cutscene/overlay flow as the immediate path
-    const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
-    let visualClearTimeout = 1500;
-    let syncDurationMs = 0;
-    let beatTimingsMs = [];
-
-    const runCutsceneCamera = (cfg, square, eventParams = {}) => {
-      if (!cfg?.config?.camera || !square || typeof square !== 'string') return 0;
-      const cam = cfg.config.camera;
-      const beatTimingsMs = [];
-      const resolveShotSquare = (shot) => {
-        if (shot?.square) return shot.square;
-        const anchor = shot?.anchor;
-        if (!anchor) return square;
-        if (anchor === 'target') return eventParams?.targetSquare || eventParams?.square || square;
-        const dashMatch = /^dash(\d+)$/i.exec(anchor);
-        if (dashMatch && Array.isArray(eventParams?.dashPath)) {
-          return eventParams.dashPath[Math.max(0, parseInt(dashMatch[1], 10) - 1)] || square;
-        }
-        const displacedMatch = /^displaced(\d+)$/i.exec(anchor);
-        if (displacedMatch && Array.isArray(eventParams?.displaced)) {
-          const idx = Math.max(0, parseInt(displacedMatch[1], 10) - 1);
-          return eventParams.displaced[idx]?.to || square;
-        }
-        return square;
-      };
-      const shots = Array.isArray(cam.shots) && cam.shots.length
-        ? cam.shots
-        : [{
-            zoom: cam.targetZoom || 1.5,
-            duration: cam.duration || 650,
-            holdDuration: cam.holdDuration || 2000,
-            returnDuration: cam.returnDuration || cam.duration || 650,
-            offset: cam.offset || null,
-            lookAtYOffset: cam.lookAtYOffset || 0,
-          }];
-
-      let delayMs = 0;
-      shots.forEach((shot) => {
-        beatTimingsMs.push(delayMs);
-        const isFirst = delayMs === 0;
-        const isLast = shot === shots[shots.length - 1];
-        const shotSquare = resolveShotSquare(shot);
-        const timer = setTimeout(() => {
-          triggerCutscene(shotSquare, {
-            zoom: shot.zoom || cam.targetZoom || 1.5,
-            holdDuration: shot.holdDuration || cam.holdDuration || 1500,
-            duration: shot.duration || cam.duration || 650,
-            returnDuration: shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650,
-            offset: shot.offset || cam.offset || null,
-            lookAtYOffset: shot.lookAtYOffset ?? cam.lookAtYOffset ?? 0,
-            sequenceStart: isFirst,
-            sequenceEnd: isLast,
-            holdPosition: !isLast,
-          });
-        }, delayMs);
-        timeoutsRef.current.push(timer);
-
-        delayMs += (shot.duration || cam.duration || 650)
-          + (shot.holdDuration || cam.holdDuration || 1500)
-          + (shot.returnDuration || shot.duration || cam.returnDuration || cam.duration || 650);
-      });
-
-      return { durationMs: delayMs, beatTimingsMs };
-    };
-
-    if (cutsceneCards.includes(next.arcanaId)) {
-      const config = getCutsceneConfig(next.arcanaId);
-      const targetSquare = next.params?.targetSquare ||
-                          next.params?.square ||
-                          next.params?.kingTo ||
-                          next.params?.rebornSquare;
-
-      if (targetSquare && typeof targetSquare === 'string') {
-        const script = runCutsceneCamera(config, targetSquare, next.params || {});
-        const scriptDuration = script?.durationMs || 0;
-        syncDurationMs = Math.ceil(scriptDuration);
-        beatTimingsMs = Array.isArray(script?.beatTimingsMs) ? script.beatTimingsMs : [];
-        visualClearTimeout = Math.max(visualClearTimeout, Math.ceil(scriptDuration + 220));
-      }
-
-      if (config?.config?.overlay && overlayRef.current) {
-        const overlay = config.config.overlay;
-        if (overlay.effect) {
-          overlayRef.current.playEffect({
-            effect: overlay.effect,
-            color: overlay.color,
-            duration: overlay.duration,
-            intensity: overlay.intensity,
-            fadeIn: overlay.fadeIn,
-            hold: overlay.hold,
-            fadeOut: overlay.fadeOut,
-          });
-        } else if (Array.isArray(overlay)) {
-          overlay.forEach((o) => {
-            overlayRef.current?.playEffect({
-              effect: o.effect,
-              color: o.color,
-              duration: o.duration,
-              intensity: o.intensity,
-              fadeIn: o.fadeIn,
-              hold: o.hold,
-              fadeOut: o.fadeOut,
-            });
-          });
-        }
-      }
-    }
-
-    const syncedParams = { ...(next.params || {}) };
-    if (syncDurationMs > 0) syncedParams.syncDurationMs = syncDurationMs;
-    if (beatTimingsMs.length) syncedParams.beatTimingsMs = beatTimingsMs;
-    setActiveVisualArcana({ ...next, params: syncedParams });
-
-    const t = setTimeout(() => {
-      setActiveVisualArcana(null);
-    }, visualClearTimeout);
-    timeoutsRef.current.push(t);
-  }, [isCardAnimationPlaying, triggerCutscene]);
+    playStudioArcanaRuntime(next);
+  }, [isCardAnimationPlaying, playStudioArcanaRuntime]);
 
   // Track fog of war effects and display particles while active
   useEffect(() => {
@@ -1949,6 +1802,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <CutsceneOverlay ref={overlayRef} />
+      <ArcanaStudioScreenOverlay session={studioRuntimeSession} />
       <AscensionScreenFx token={ascensionFxToken} />
       {isContextLost && (
         <div style={{
@@ -2132,6 +1986,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           gameState={gameState}
           pawnShields={gameState?.pawnShields}
         />
+
+        <ArcanaStudioRuntimeHost
+          session={studioRuntimeSession}
+          controlsRef={controlsRef}
+          myColor={myColor}
+          onComplete={() => setStudioRuntimeSession(null)}
+        />
         
         {/* Camera Cutscene Controller for card effect cinematics */}
         <CameraCutscene 
@@ -2141,7 +2002,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           controlsRef={controlsRef}
         />
         
-        <OrbitControls ref={controlsRef} enabled={!cutsceneTarget} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
+        <OrbitControls ref={controlsRef} enabled={!cutsceneTarget && !studioRuntimeSession} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
       </Canvas>
 
       {gameState?.timePerPlayer && (

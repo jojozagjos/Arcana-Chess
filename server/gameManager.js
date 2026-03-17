@@ -2715,30 +2715,82 @@ export class GameManager {
   }
 
   startRematchGame(finishedGameState, lobbyManager) {
-    // Create new game with same players, swapped colors
-    const newPlayerIds = [...finishedGameState.playerIds].reverse();
-    const newGameState = createInitialGameState({
-      mode: finishedGameState.mode,
-      playerIds: newPlayerIds,
-    });
-
-    this.games.set(newGameState.id, newGameState);
-    for (const pid of newGameState.playerIds) {
-      this.socketToGame.set(pid, newGameState.id);
+    // Check if this is an AI game
+    const isAIGame = finishedGameState.playerIds.some(id => id.startsWith('AI-'));
+    
+    if (isAIGame) {
+      // For AI games: send player back to AI screen with same settings
+      const humanPlayerId = finishedGameState.playerIds.find(id => !id.startsWith('AI-'));
+      
+      // Emit rematchAIScreen event with the game settings so client can pre-populate the form
+      this.io.to(humanPlayerId).emit('rematchAIScreen', {
+        gameMode: finishedGameState.mode,
+        difficulty: finishedGameState.aiDifficulty,
+        playerColor: finishedGameState.playerColor,
+        timeControl: finishedGameState.timeControl,
+      });
+      
+      // Clean up the old game
+      this.games.delete(finishedGameState.id);
+      
+      return { ok: true, rematchType: 'ai' };
     }
-
-    // Emit gameStarted to both players
-    for (const pid of newGameState.playerIds) {
-      if (!pid.startsWith('AI-')) {
-        const personalised = this.serialiseGameStateForViewer(newGameState, pid);
-        this.io.to(pid).emit('gameStarted', personalised);
+    
+    // For multiplayer games: create a rematch lobby with both players
+    // First, create a dummy socket/game-state pair to use lobbyManager's createLobby with proper payload
+    // We'll create a private rematch lobby automatically
+    try {
+      // Create rematch lobby using lobbyManager directly
+      const rematchLobby = {
+        id: `rematch-${Math.random().toString(36).slice(2, 9)}`,
+        name: 'Rematch',
+        code: this._generateRematchCode(),
+        isPrivate: true,
+        gameMode: finishedGameState.mode,
+        timeControl: finishedGameState.timeControl || 'unlimited',
+        hostId: finishedGameState.playerIds[0],
+        players: [...finishedGameState.playerIds],
+        createdAt: Date.now(),
+      };
+      
+      // Store in lobbyManager's lobbies map
+      lobbyManager.lobbies.set(rematchLobby.id, rematchLobby);
+      
+      // Map both players to this lobby
+      for (const pid of finishedGameState.playerIds) {
+        lobbyManager.socketToLobby.set(pid, rematchLobby.id);
+      }
+      
+      // Notify both players of the rematch lobby
+      for (const pid of finishedGameState.playerIds) {
+        this.io.to(pid).emit('rematchLobbyReady', {
+          lobbyId: rematchLobby.id,
+          code: rematchLobby.code,
+          gameMode: rematchLobby.gameMode,
+          timeControl: rematchLobby.timeControl,
+        });
+      }
+    } catch (err) {
+      console.error('Error creating rematch lobby:', err);
+      // Fallback: just notify players
+      for (const pid of finishedGameState.playerIds) {
+        this.io.to(pid).emit('rematchCancelled', { message: 'Failed to create rematch lobby' });
       }
     }
-
+    
     // Clean up the old game
     this.games.delete(finishedGameState.id);
-
-    return { ok: true, newGameState: this.serialiseGameState(newGameState) };
+    
+    return { ok: true, rematchType: 'multiplayer' };
+  }
+  
+  _generateRematchCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
   }
 
   cancelRematchGame(gameId, reason) {

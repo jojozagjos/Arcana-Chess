@@ -270,6 +270,21 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('getLobbyInfo', (payload, ack) => {
+    try {
+      const { lobbyId } = payload || {};
+      const lobby = lobbyManager.lobbies.get(lobbyId);
+      if (!lobby) {
+        safeAck(ack, { ok: false, error: 'Lobby not found' });
+      } else {
+        safeAck(ack, { ok: true, lobby });
+      }
+    } catch (err) {
+      logger.error('getLobbyInfo error', err);
+      safeAck(ack, { ok: false, error: err.message || 'Failed to get lobby info' });
+    }
+  });
+
   socket.on('startGame', (payload, ack) => {
     try {
       const state = gameManager.startMultiplayerGame(socket, payload || {});

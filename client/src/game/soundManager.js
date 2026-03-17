@@ -215,7 +215,7 @@ class SoundManager {
     return !!(a && a._ready);
   }
 
-  play(soundName) {
+  play(soundName, options = {}) {
     if (!this.enabled) return;
     // Skip silently if soundName is null/undefined (intentionally silent)
     if (!soundName) return;
@@ -232,7 +232,12 @@ class SoundManager {
     // Ensure start at beginning
     try { clone.currentTime = 0; } catch (e) {}
     // Treat played sounds as SFX by default
-    clone.volume = this.masterVolume * this.sfxVolume;
+    const requestedVolume = typeof options.volume === 'number' ? Math.max(0, Math.min(2, options.volume)) : 1;
+    clone.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * requestedVolume));
+    clone.loop = Boolean(options.loop);
+    if (typeof options.pitch === 'number' && Number.isFinite(options.pitch)) {
+      try { clone.playbackRate = Math.max(0.25, Math.min(4, options.pitch)); } catch (e) {}
+    }
     const p = clone.play();
     if (p && p.catch) {
       p.catch(err => {
@@ -242,6 +247,7 @@ class SoundManager {
         }
       });
     }
+    return clone;
   }
 
   // Backwards-compatible alias for master volume

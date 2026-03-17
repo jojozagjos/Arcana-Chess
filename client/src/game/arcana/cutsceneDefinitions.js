@@ -10,6 +10,9 @@
  * - Astral Rebirth: Piece materializes + glow effect
  */
 
+import { legacyCutsceneToArcanaStudioCard, arcanaStudioCardToLegacyCutscene } from './studio/arcanaStudioBridge.js';
+import { getStoredArcanaStudioCard, loadArcanaStudioCardsMap, migrateArcanaStudioCard } from './studio/arcanaStudioSchema.js';
+
 export const executionCutscene = {
   id: 'execution',
   duration: 3900,
@@ -695,22 +698,74 @@ export const edgerunnerOverdriveCutscene = {
   },
 };
 
+const LEGACY_CUTSCENE_CONFIGS = {
+  execution: executionCutscene,
+  time_freeze: timeFrozenCutscene,
+  time_travel: timeTravelCutscene,
+  divine_intervention: divineInterventionCutscene,
+  mind_control: mindControlCutscene,
+  astral_rebirth: astralRebirthCutscene,
+  promotion_ritual: promotionRitualCutscene,
+  breaking_point: breakingPointCutscene,
+  edgerunner_overdrive: edgerunnerOverdriveCutscene,
+};
+
+function getStoredLegacyConfig(cardId) {
+  const card = getStoredArcanaStudioCard(cardId);
+  if (!card) return null;
+
+  try {
+    const built = arcanaStudioCardToLegacyCutscene(card);
+    return built?.config ? built : null;
+  } catch (err) {
+    console.warn(`Failed to build Arcana Studio override for ${cardId}:`, err);
+    return null;
+  }
+}
+
+export function getAllCutsceneConfigs() {
+  return { ...LEGACY_CUTSCENE_CONFIGS };
+}
+
+export function getCutsceneCard(cardId) {
+  const stored = getStoredArcanaStudioCard(cardId);
+  if (stored) {
+    return migrateArcanaStudioCard(stored, cardId);
+  }
+
+  const legacy = LEGACY_CUTSCENE_CONFIGS[cardId];
+  if (!legacy) return null;
+  return legacyCutsceneToArcanaStudioCard(legacy, { id: cardId });
+}
+
+export function getAllCutsceneCards() {
+  const cards = {};
+  const stored = loadArcanaStudioCardsMap();
+
+  Object.entries(LEGACY_CUTSCENE_CONFIGS).forEach(([id, legacy]) => {
+    cards[id] = stored[id]
+      ? migrateArcanaStudioCard(stored[id], id)
+      : legacyCutsceneToArcanaStudioCard(legacy, { id });
+  });
+
+  Object.entries(stored).forEach(([id, card]) => {
+    if (!cards[id]) cards[id] = migrateArcanaStudioCard(card, id);
+  });
+
+  return cards;
+}
+
+export function buildLegacyCutsceneFromCard(cardInput) {
+  return arcanaStudioCardToLegacyCutscene(cardInput);
+}
+
 /**
  * Get cutscene config by card ID
  */
 export function getCutsceneConfig(cardId) {
-  const configs = {
-    execution: executionCutscene,
-    time_freeze: timeFrozenCutscene,
-    time_travel: timeTravelCutscene,
-    divine_intervention: divineInterventionCutscene,
-    mind_control: mindControlCutscene,
-    astral_rebirth: astralRebirthCutscene,
-    promotion_ritual: promotionRitualCutscene,
-    breaking_point: breakingPointCutscene,
-    edgerunner_overdrive: edgerunnerOverdriveCutscene,
-  };
-  return configs[cardId];
+  const storedConfig = getStoredLegacyConfig(cardId);
+  if (storedConfig) return storedConfig;
+  return LEGACY_CUTSCENE_CONFIGS[cardId];
 }
 
 /**

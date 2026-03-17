@@ -5,6 +5,7 @@ import { Tutorial } from './components/Tutorial.jsx';
 import { Settings } from './components/Settings.jsx';
 import { ArcanaCompendium } from './components/ArcanaCompendium.jsx';
 import { CardBalancingToolV2 } from './components/CardBalancingToolV2.jsx';
+import { ArcanaStudio } from './components/ArcanaStudio.jsx';
 
 import { IntroScreen } from './components/IntroScreen.jsx';
 import { socket } from './game/socket.js';
@@ -14,8 +15,8 @@ export function App() {
   const SETTINGS_KEY = 'arcanaChess.settings';
   const DEV_MODE_PASSWORD = 'arcana dev';
 
-  const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing'];
-  const devToolScreens = ['card-balancing'];
+  const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing', 'arcana-studio'];
+  const devToolScreens = ['card-balancing', 'arcana-studio'];
 
   const [screen, setScreen] = useState('intro');
   const [audioReady, setAudioReady] = useState(false);
@@ -29,6 +30,7 @@ export function App() {
   const [quickJoinedLobby, setQuickJoinedLobby] = useState(null);
   const [pendingReplayPayload, setPendingReplayPayload] = useState(null);
   const [menuFadeIn, setMenuFadeIn] = useState(false);
+  const [rematchAISettings, setRematchAISettings] = useState(null);
   const [globalSettings, setGlobalSettings] = useState(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
@@ -158,11 +160,27 @@ export function App() {
       setLastArcanaEvent({ ...payload, at: Date.now() });
     };
 
+    const handleRematchAIScreen = (settings) => {
+      // Rematch for AI game: go back to AI screen with settings pre-filled
+      setRematchAISettings(settings);
+      setScreen('host-game');
+      // Set tab to 'ai' will be handled by MainMenu which receives rematchAISettings as prop
+    };
+
+    const handleRematchLobbyReady = (lobbyInfo) => {
+      // Rematch for multiplayer: go to host game screen and join the rematch lobby
+      // The lobby info contains lobbyId, code, gameMode, timeControl
+      setQuickJoinedLobby(lobbyInfo);
+      setScreen('host-game');
+    };
+
     socket.on('gameStarted', handleGameStarted);
     socket.on('gameUpdated', handleGameUpdated);
     socket.on('gameEnded', handleGameEnded);
     socket.on('ascended', handleAscended);
     socket.on('arcanaTriggered', handleArcanaTriggered);
+    socket.on('rematchAIScreen', handleRematchAIScreen);
+    socket.on('rematchLobbyReady', handleRematchLobbyReady);
 
     return () => {
       socket.off('gameStarted', handleGameStarted);
@@ -170,6 +188,8 @@ export function App() {
       socket.off('gameEnded', handleGameEnded);
       socket.off('ascended', handleAscended);
       socket.off('arcanaTriggered', handleArcanaTriggered);
+      socket.off('rematchAIScreen', handleRematchAIScreen);
+      socket.off('rematchLobbyReady', handleRematchLobbyReady);
     };
   }, [ascendedInfo]);
 
@@ -382,6 +402,7 @@ export function App() {
             onViewArcana={() => setScreen('arcana')}
             onSettings={() => setScreen('settings')}
             onCardBalancing={() => setScreen('card-balancing')}
+            onArcanaStudio={() => setScreen('arcana-studio')}
             devMode={devMode}
             onToggleDevMode={handleToggleDevMode}
           />
@@ -390,6 +411,8 @@ export function App() {
       {screen === 'host-game' && (
         <MainMenu
           mode="host"
+          rematchAISettings={rematchAISettings}
+          rematchLobbyInfo={quickJoinedLobby}
           onOpenReplay={(replayPayload) => {
             setPendingReplayPayload(replayPayload || null);
             setGameState(null);
@@ -398,7 +421,11 @@ export function App() {
             setLastArcanaEvent(null);
             setScreen('game');
           }}
-          onBack={() => setScreen('main-menu')}
+          onBack={() => {
+            setRematchAISettings(null);
+            setQuickJoinedLobby(null);
+            setScreen('main-menu');
+          }}
         />
       )}
       {screen === 'join-game' && (
@@ -423,6 +450,9 @@ export function App() {
       )}
       {screen === 'card-balancing' && (
         <CardBalancingToolV2 onBack={() => setScreen('main-menu')} />
+      )}
+      {screen === 'arcana-studio' && (
+        <ArcanaStudio onBack={() => setScreen('main-menu')} />
       )}
       {screen === 'game' && (
         <GameScene

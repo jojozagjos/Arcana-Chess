@@ -16,6 +16,8 @@ const getTimeControlLabel = (value) => TIME_CONTROL_LABELS[value] || String(valu
 export function MainMenu({
   mode = 'root',
   initialLobby = null,
+  rematchAISettings = null,
+  rematchLobbyInfo = null,
   onOpenReplay,
   onPlayOnlineHost,
   onPlayOnlineJoin,
@@ -23,6 +25,7 @@ export function MainMenu({
   onViewArcana,
   onSettings,
   onCardBalancing,
+  onArcanaStudio,
   onBack,
   devMode = false,
   onToggleDevMode,
@@ -88,6 +91,7 @@ export function MainMenu({
             {devMode && (
               <>
                 <button className="menu-secondary" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }} onClick={onCardBalancing}>Card Balancing Tool</button>
+                <button className="menu-secondary" style={{ background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)' }} onClick={onArcanaStudio}>Arcana Studio</button>
               </>
             )}
           </div>
@@ -103,7 +107,7 @@ export function MainMenu({
   }
 
   if (mode === 'host') {
-    return <HostLobbyScreen onBack={onBack} onOpenReplay={onOpenReplay} />;
+    return <HostLobbyScreen onBack={onBack} onOpenReplay={onOpenReplay} rematchAISettings={rematchAISettings} rematchLobbyInfo={rematchLobbyInfo} />;
   }
 
   if (mode === 'join') {
@@ -113,9 +117,25 @@ export function MainMenu({
   return null;
 }
 
-function HostLobbyScreen({ onBack, initialLobby = null, onOpenReplay }) {
-  const [tab, setTab] = useState('online'); // 'online' | 'ai' | 'replay'
+function HostLobbyScreen({ onBack, initialLobby = null, onOpenReplay, rematchAISettings = null, rematchLobbyInfo = null }) {
+  const [tab, setTab] = useState(() => {
+    // Auto-select tab based on rematch context
+    if (rematchAISettings) return 'ai';
+    return 'online';
+  });
   const [currentLobby, setCurrentLobby] = useState(initialLobby);
+
+  // Handle rematch lobby info: fetch and join the lobby
+  useEffect(() => {
+    if (rematchLobbyInfo && rematchLobbyInfo.lobbyId && !currentLobby) {
+      // Fetch the rematch lobby from the server
+      socket.emit('getLobbyInfo', { lobbyId: rematchLobbyInfo.lobbyId }, (res) => {
+        if (res && res.ok && res.lobby) {
+          setCurrentLobby(res.lobby);
+        }
+      });
+    }
+  }, [rematchLobbyInfo, currentLobby]);
 
   return (
     <div style={styles.container}>
@@ -168,7 +188,7 @@ function HostLobbyScreen({ onBack, initialLobby = null, onOpenReplay }) {
         </div>
 
         {tab === 'online' && <OnlineHostForm initialLobby={initialLobby} onLobbyChange={setCurrentLobby} />}
-        {tab === 'ai' && <AIGameForm />}
+        {tab === 'ai' && <AIGameForm rematchSettings={rematchAISettings} />}
         {tab === 'replay' && <ReplayImportForm onOpenReplay={onOpenReplay} />}
       </div>
     </div>
@@ -427,11 +447,27 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
   );
 }
 
-function AIGameForm() {
-  const [gameMode, setGameMode] = useState('Ascendant');
-  const [difficulty, setDifficulty] = useState('Scholar');
-  const [playerColor, setPlayerColor] = useState('white');
-  const [timeControl, setTimeControl] = useState('unlimited'); // unlimited default
+function AIGameForm({ rematchSettings = null }) {
+  // Initialize form with rematch settings if available (when coming from a rematch)
+  const [gameMode, setGameMode] = useState(rematchSettings?.gameMode || 'Ascendant');
+  const [difficulty, setDifficulty] = useState(() => {
+    if (rematchSettings?.difficulty) {
+      return rematchSettings.difficulty;
+    }
+    return 'Scholar';
+  });
+  const [playerColor, setPlayerColor] = useState(() => {
+    if (rematchSettings?.playerColor) {
+      return rematchSettings.playerColor;
+    }
+    return 'white';
+  });
+  const [timeControl, setTimeControl] = useState(() => {
+    if (rematchSettings?.timeControl) {
+      return rematchSettings.timeControl === null ? 'unlimited' : String(rematchSettings.timeControl);
+    }
+    return 'unlimited';
+  });
   const [status, setStatus] = useState('');
 
   const handleStartAI = () => {
