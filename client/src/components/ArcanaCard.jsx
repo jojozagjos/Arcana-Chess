@@ -48,11 +48,16 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
   };
 
   const dims = sizes[size] || sizes.medium;
+  const nameFontSize = arcanaName.length > 24
+    ? `calc(${dims.fontSize} * 0.78)`
+    : arcanaName.length > 18
+      ? `calc(${dims.fontSize} * 0.88)`
+      : dims.fontSize;
   const iconOffsetY = arcanaId === 'breaking_point' || arcanaId === 'edgerunner_overdrive'
     ? (size === 'small' ? -15 : size === 'large' ? -35 : -25)
     : 0;
   const TOOLTIP_W = Math.max(dims.width + 80, 260);
-  // Fixed description height keeps all tooltips the same visual height
+  // Tooltip size estimate used for above/below placement.
   const DESC_H = 58;
   // Estimated full tooltip height for above/below positioning
   const TOOLTIP_H = 130;
@@ -145,9 +150,8 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
         >
           <div style={{ fontWeight: 700, marginBottom: 5 }}>{arcanaName}</div>
           <div style={{
-            height: DESC_H,
-            overflowY: 'auto',
-            overflowX: 'hidden',
+            maxHeight: DESC_H,
+            overflow: 'hidden',
             wordBreak: 'break-word',
             overflowWrap: 'break-word',
             whiteSpace: 'pre-line',
@@ -156,7 +160,6 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
             marginBottom: 4,
             textAlign: 'left',
             padding: '0 2px',
-            scrollbarWidth: 'thin',
           }}>
             {hoverInfo || ''}
           </div>
@@ -244,13 +247,18 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
             <div
               style={{
                 fontFamily: 'system-ui, sans-serif',
-                fontSize: dims.fontSize,
+                fontSize: nameFontSize,
                 fontWeight: 700,
                 color: '#eceff4',
                 textAlign: 'center',
                 textShadow: '0 2px 6px rgba(0,0,0,0.8)',
                 lineHeight: 1.2,
-                wordWrap: 'break-word',
+                wordBreak: 'break-word',
+                overflowWrap: 'anywhere',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
                 maxWidth: '100%',
               }}
             >

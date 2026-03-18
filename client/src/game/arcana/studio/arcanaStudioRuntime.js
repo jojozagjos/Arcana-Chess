@@ -2,33 +2,51 @@ import { sampleOverlayTrack } from './arcanaStudioPlayback.js';
 
 const EVENT_SQUARE_KEYS = ['targetSquare', 'square', 'kingTo', 'rebornSquare'];
 
+function toNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function sanitizeSquare(value) {
+  if (typeof value !== 'string') return null;
+  const s = value.toLowerCase();
+  return /^[a-h][1-8]$/.test(s) ? s : null;
+}
+
+function sanitizeSquareList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(sanitizeSquare).filter(Boolean);
+}
+
 export function resolveRuntimeSquare(alias, eventParams = {}, fallbackSquare = null) {
   if (!alias || typeof alias !== 'string') {
-    return EVENT_SQUARE_KEYS.map((key) => eventParams?.[key]).find(Boolean) || fallbackSquare || null;
+    return EVENT_SQUARE_KEYS.map((key) => sanitizeSquare(eventParams?.[key])).find(Boolean) || sanitizeSquare(fallbackSquare) || null;
   }
 
-  if (/^[a-h][1-8]$/i.test(alias)) return alias.toLowerCase();
+  const direct = sanitizeSquare(alias);
+  if (direct) return direct;
+
   if (alias === 'target') {
-    return EVENT_SQUARE_KEYS.map((key) => eventParams?.[key]).find(Boolean) || fallbackSquare || null;
+    return EVENT_SQUARE_KEYS.map((key) => sanitizeSquare(eventParams?.[key])).find(Boolean) || sanitizeSquare(fallbackSquare) || null;
   }
 
   const dashMatch = /^dash(\d+)$/i.exec(alias);
   if (dashMatch && Array.isArray(eventParams?.dashPath)) {
     const idx = Math.max(0, Number(dashMatch[1]) - 1);
-    return eventParams.dashPath[idx] || fallbackSquare || null;
+    return sanitizeSquare(eventParams.dashPath[idx]) || sanitizeSquare(fallbackSquare) || null;
   }
 
   const displacedMatch = /^displaced(\d+)$/i.exec(alias);
   if (displacedMatch && Array.isArray(eventParams?.displaced)) {
     const idx = Math.max(0, Number(displacedMatch[1]) - 1);
-    return eventParams.displaced[idx]?.to || fallbackSquare || null;
+    return sanitizeSquare(eventParams.displaced[idx]?.to) || sanitizeSquare(fallbackSquare) || null;
   }
 
-  return fallbackSquare || null;
+  return sanitizeSquare(fallbackSquare) || null;
 }
 
 export function getArcanaStudioCardDuration(card) {
-  const collections = [
+  const trackSets = [
     ...(card?.tracks?.camera || []),
     ...(card?.tracks?.objects || []),
     ...(card?.tracks?.particles || []),
@@ -38,11 +56,14 @@ export function getArcanaStudioCardDuration(card) {
   ];
 
   let durationMs = Math.max(0, Number(card?.durationMs) || 0);
-  collections.forEach((track) => {
+  trackSets.forEach((track) => {
     (track?.keys || []).forEach((key) => {
-      durationMs = Math.max(durationMs, Number(key?.timeMs) || 0, (Number(key?.timeMs) || 0) + (Number(key?.delayMs) || 0));
+      const timeMs = Number(key?.timeMs) || 0;
+      const delayMs = Number(key?.delayMs) || 0;
+      durationMs = Math.max(durationMs, timeMs, timeMs + delayMs);
     });
   });
+
   return durationMs;
 }
 
@@ -62,32 +83,35 @@ export function getScreenOverlaySamples(card, timeMs) {
 }
 
 export function scheduleArcanaStudioAudio(card, options = {}) {
-  const { soundManager, registerTimeout } = options;
-  const scheduled = [];
+  const { registerTimeout, soundManager } = options;
+  const timers = [];
 
   (card?.tracks?.sounds || []).forEach((track) => {
     (track?.keys || []).forEach((key) => {
+      const delay = Math.max(0, Number(key.timeMs) || 0);
       const timer = setTimeout(() => {
+        if (!key.soundId) return;
         soundManager?.play?.(key.soundId, {
           volume: key.volume,
           pitch: key.pitch,
           loop: key.loop,
         });
-      }, Math.max(0, Number(key.timeMs) || 0));
+      }, delay);
+      timers.push(timer);
       registerTimeout?.(timer);
-      scheduled.push(timer);
     });
   });
 
-  return scheduled;
+  return timers;
 }
 
 export function scheduleArcanaStudioEvents(card, options = {}) {
   const { eventParams, registerTimeout, onEvent } = options;
-  const scheduled = [];
+  const timers = [];
 
   (card?.tracks?.events || []).forEach((track) => {
     (track?.keys || []).forEach((key) => {
+      const delay = Math.max(0, (Number(key.timeMs) || 0) + (Number(key.delayMs) || 0));
       const timer = setTimeout(() => {
         onEvent?.({
           ...key,
@@ -96,43 +120,27 @@ export function scheduleArcanaStudioEvents(card, options = {}) {
             eventParams: eventParams || {},
           },
         });
-      }, Math.max(0, (Number(key.timeMs) || 0) + (Number(key.delayMs) || 0)));
+      }, delay);
+      timers.push(timer);
       registerTimeout?.(timer);
-      scheduled.push(timer);
     });
   });
 
-  return scheduled;
-}
-
-function toNumber(value, fallback) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : fallback;
-}
-
-function sanitizeSquareList(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => (typeof entry === 'string' ? entry.toLowerCase() : ''))
-    .filter((entry) => /^[a-h][1-8]$/.test(entry));
+  return timers;
 }
 
 function resolveOverlayEffectName(type, payload = {}) {
-  if (typeof payload.effect === 'string' && payload.effect.trim()) {
-    return payload.effect.trim();
-  }
+  if (typeof payload.effect === 'string' && payload.effect.trim()) return payload.effect.trim();
 
   if (type.startsWith('overlay_')) {
     const suffix = type.slice('overlay_'.length);
-    if (suffix === 'monochrome') return 'monochrome';
     if (suffix === 'flash' || suffix === 'divine_flash' || suffix === 'astral_glow' || suffix === 'mind_flash') return 'flash';
-    if (suffix === 'monochrome_fade') return 'monochrome';
+    if (suffix === 'monochrome' || suffix === 'monochrome_fade') return 'monochrome';
     if (suffix === 'color_restore') return 'color-fade';
   }
 
   if (type.startsWith('overlay:')) {
-    const suffix = type.slice('overlay:'.length);
-    return suffix || 'flash';
+    return type.slice('overlay:'.length) || 'flash';
   }
 
   return null;
@@ -140,7 +148,6 @@ function resolveOverlayEffectName(type, payload = {}) {
 
 export function normalizeArcanaStudioEventActions(eventKey) {
   if (!eventKey || typeof eventKey !== 'object') return [];
-
   const typeRaw = typeof eventKey.type === 'string' ? eventKey.type.trim() : '';
   if (!typeRaw) return [];
 
@@ -149,7 +156,7 @@ export function normalizeArcanaStudioEventActions(eventKey) {
   const actions = [];
 
   if (type === 'highlight_squares' || type === 'highlight:set' || type === 'highlight') {
-    const squares = sanitizeSquareList(payload.squares || payload.targets || payload.tiles || payload.moves);
+    const squares = sanitizeSquareList(payload.squares || payload.targets || payload.moves);
     if (squares.length) {
       actions.push({
         kind: 'highlight',
@@ -215,12 +222,12 @@ export function normalizeArcanaStudioEventActions(eventKey) {
 }
 
 export function createArcanaStudioRuntimeSession(card, eventParams = {}) {
-  const startedAt = performance.now();
+  const now = performance.now();
   return {
-    id: `studio_runtime_${card?.id || 'unknown'}_${Math.round(startedAt)}`,
+    id: `studio_runtime_${card?.id || 'unknown'}_${Math.round(now)}`,
     card,
     eventParams,
-    startedAt,
+    startedAt: now,
     durationMs: getArcanaStudioCardDuration(card),
   };
 }

@@ -274,6 +274,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       fogOfWar: { w: false, b: false },
       vision: { w: null, b: null },  // stores socketId of player who activated vision
       quietThought: { w: 0, b: 0 },  // remaining owner turns of threat visibility
+      cardSilence: { w: 0, b: 0 },   // turns of arcana lock per color
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
@@ -818,6 +819,10 @@ export class GameManager {
         throw new Error('You can only use arcana on your turn');
       }
 
+      if ((gameState.activeEffects?.cardSilence?.[playerTurnChar] || 0) > 0) {
+        throw new Error('Your arcana is sealed for this turn');
+      }
+
       // Limit to 1 arcana card per turn
       if (gameState.arcanaUsedThisTurn && gameState.arcanaUsedThisTurn[socket.id]) {
         throw new Error('You can only use one arcana card per turn');
@@ -955,13 +960,14 @@ export class GameManager {
       return true;
     });
 
-    // Additional validation: pawns cannot capture on the same rank (prevents capture of adjacent pawns)
+    // Additional validation: pawns cannot capture on the same rank unless En Passant Master is active.
     if (candidate && candidate.piece === 'p' && candidate.captured) {
       const fromRank = parseInt(candidate.from[1]);
       const toRank = parseInt(candidate.to[1]);
-      
-      // Pawn captures must move forward (rank must change), not sideways
-      if (fromRank === toRank) {
+
+      const enPassantMasterActive = !!gameState.activeEffects?.enPassantMaster?.[moverColor];
+      // Pawn captures must move forward (rank must change), not sideways, except card override.
+      if (fromRank === toRank && !enPassantMasterActive) {
         // This is an invalid pawn move - can't capture on same rank
         candidate = null;
       }
@@ -1031,8 +1037,25 @@ export class GameManager {
       }
     }
 
-    // Bishop's Blessing: prevent blessed pieces from being captured
-    const blessedSquares = gameState.activeEffects.bishopsBlessing[opponentColor];
+    // Bishop's Blessing: dynamic one-turn protection for any friendly piece currently
+    // sitting on a diagonal from any allied bishop.
+    let blessedSquares = gameState.activeEffects.bishopsBlessing[opponentColor];
+    if (Array.isArray(blessedSquares)) {
+      const dynamicBlessed = [];
+      const board = chess.board();
+      for (let r = 0; r < 8; r++) {
+        for (let f = 0; f < 8; f++) {
+          const piece = board[r][f];
+          if (!piece || piece.type !== 'b' || piece.color !== opponentColor) continue;
+          const bishopSquare = String.fromCharCode(97 + f) + (8 - r);
+          const squares = getPiecesDiagonalFromBishop(chess, bishopSquare, opponentColor);
+          dynamicBlessed.push(...squares);
+        }
+      }
+      blessedSquares = [...new Set(dynamicBlessed)];
+      gameState.activeEffects.bishopsBlessing[opponentColor] = blessedSquares;
+    }
+
     if (Array.isArray(blessedSquares) && blessedSquares.includes(candidate.to)) {
       throw new Error('That piece is blessed by Bishop\'s Blessing and cannot be captured!');
     }
@@ -1276,11 +1299,13 @@ export class GameManager {
     }
 
     // Update poisoned piece square if a poisoned piece moved
+    let movedPoisonedPiece = false;
     if (gameState.activeEffects.poisonedPieces && gameState.activeEffects.poisonedPieces.length > 0) {
       const poisonedEntry = gameState.activeEffects.poisonedPieces.find(p => p.square === result.from);
       if (poisonedEntry) {
         // Poison follows the piece to its new square
         poisonedEntry.square = result.to;
+        movedPoisonedPiece = true;
       }
     }
 
@@ -1311,12 +1336,16 @@ export class GameManager {
       }
     }
 
-    // Poisoned Piece: If a poisoned piece was captured, remove its poison tracking
+    // Poisoned Piece: If a poisoned piece was captured, remove its poison tracking.
+    // Do not remove poison when the *poisoned attacker* captures and moves onto result.to.
     if (result.captured && gameState.activeEffects.poisonedPieces && gameState.activeEffects.poisonedPieces.length > 0) {
-      const poisonIndex = gameState.activeEffects.poisonedPieces.findIndex(p => p.square === result.to);
+      const capturedSquare = this.getCapturedSquare(result);
+      const poisonIndex = gameState.activeEffects.poisonedPieces.findIndex(p => p.square === capturedSquare);
       if (poisonIndex !== -1) {
-        // Remove the poison entry - the piece was captured
-        gameState.activeEffects.poisonedPieces.splice(poisonIndex, 1);
+        if (!(movedPoisonedPiece && capturedSquare === result.to)) {
+          // Remove the poison entry - the poisoned piece itself was captured
+          gameState.activeEffects.poisonedPieces.splice(poisonIndex, 1);
+        }
       }
     }
 
@@ -2590,6 +2619,10 @@ export class GameManager {
     effects.quietThought = effects.quietThought || { w: 0, b: 0 };
     if (effects.quietThought[endingColor] > 0) {
       effects.quietThought[endingColor]--;
+    }
+    effects.cardSilence = effects.cardSilence || { w: 0, b: 0 };
+    if (effects.cardSilence[endingColor] > 0) {
+      effects.cardSilence[endingColor]--;
     }
     effects.focusFire = effects.focusFire || { w: false, b: false };
     // Keep structure consistent: doubleStrike stores objects or nulls per color

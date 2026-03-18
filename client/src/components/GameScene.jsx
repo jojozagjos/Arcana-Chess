@@ -81,6 +81,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const overlayRef = useRef(null);
   // Store GL instance reference for context management
   const glRef = useRef(null);
+  const contextRestoreTimerRef = useRef(null);
   const replayFenHistoryRef = useRef([]);
   const prevReplayIndexRef = useRef(0);
 
@@ -88,24 +89,33 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   useEffect(() => {
     if (isContextLost) {
       contextLossCountRef.current++;
-      // Progressively reduce effect limits on repeated context loss
-      const newMaxEffects = Math.max(1, 4 - Math.floor(contextLossCountRef.current / 2));
-      const newMaxParticles = Math.max(60, 120 - contextLossCountRef.current * 20);
-      effectResourcePool.maxConcurrentEffects = newMaxEffects;
-      effectResourcePool.maxParticlesPerEffect = newMaxParticles;
-      effectResourcePool.totalParticleLimit = Math.max(150, 400 - contextLossCountRef.current * 50);
+      effectResourcePool.hardResetForContextLoss(contextLossCountRef.current);
+      // Tear down running visuals/timers aggressively to reduce immediate pressure.
+      timeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+      timeoutsRef.current = [];
+      setStudioRuntimeSession(null);
+      setCardReveal(null);
+      setIsCardAnimationPlaying(false);
+      setActiveVisualArcana(null);
+      clearCutscene();
       console.warn(
-        `[GameScene] Context loss #${contextLossCountRef.current}. Capped effects to ${newMaxEffects}, particles to ${newMaxParticles}`
+        `[GameScene] Context loss #${contextLossCountRef.current}. Resetting active visuals and tightening effect budgets.`
       );
     } else if (contextLossCountRef.current > 0) {
-      // Gradually restore limits as context stabilizes
       contextLossCountRef.current = 0;
-      effectResourcePool.maxConcurrentEffects = 4;
-      effectResourcePool.maxParticlesPerEffect = 120;
-      effectResourcePool.totalParticleLimit = 400;
+      effectResourcePool.restoreDefaults();
       console.log('[GameScene] Context restored. Effect limits restored to normal.');
     }
-  }, [isContextLost]);
+  }, [isContextLost, clearCutscene]);
+
+  // Safety watchdog: if a cutscene target gets stuck, clear it so camera controls unlock.
+  useEffect(() => {
+    if (!cutsceneTarget) return;
+    const watchdog = setTimeout(() => {
+      clearCutscene();
+    }, 10000);
+    return () => clearTimeout(watchdog);
+  }, [cutsceneTarget, clearCutscene]);
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -120,6 +130,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   // Track move keys for which we've already played a sound (de-dup across async paths)
   const playedMoveKeysRef = useRef(new Set());
+  const recentMoveSoundKeysRef = useRef(new Map());
   const timeoutsRef = useRef([]);
   // Prevent accidental double-emit of actions during latency
   const pendingActionRef = useRef(false);
@@ -188,6 +199,22 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       return next.length > 300 ? next.slice(next.length - 300) : next;
     });
   };
+
+  const playMoveSoundOnce = useCallback((dedupeKey, isCapture) => {
+    const now = Date.now();
+    const ttlMs = 2500;
+    for (const [key, ts] of recentMoveSoundKeysRef.current.entries()) {
+      if (now - ts > ttlMs) recentMoveSoundKeysRef.current.delete(key);
+    }
+    if (recentMoveSoundKeysRef.current.has(dedupeKey)) return false;
+    try {
+      soundManager.play(isCapture ? 'capture' : 'move');
+      recentMoveSoundKeysRef.current.set(dedupeKey, now);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const triggerAscensionScreenFx = useCallback(() => {
     const now = Date.now();
@@ -640,6 +667,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     // Update countdown every 100ms
     const timerInterval = setInterval(() => {
       setClientSideTimes(prevTimes => {
+        // Pause countdown while paused, during active cutscenes, during studio runtime,
+        // or after game has ended.
+        if (showMenu || cutsceneTarget || studioRuntimeSession || gameState?.status !== 'ongoing' || gameEndOutcome) {
+          return prevTimes;
+        }
         const updated = { ...prevTimes };
         const activeTurnChar = gameState?.turn;
         const activePlayerId = Object.entries(gameState?.playerColors || {}).find(([, colorName]) => {
@@ -655,7 +687,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }, 100);
 
     return () => clearInterval(timerInterval);
-  }, [gameState?.timePerPlayer, gameState?.status, gameState?.turn, gameState?.playerColors]);
+  }, [gameState?.timePerPlayer, gameState?.status, gameState?.turn, gameState?.playerColors, showMenu, cutsceneTarget, studioRuntimeSession, gameEndOutcome]);
 
   useEffect(() => {
     if (ascendedInfo) {
@@ -1343,12 +1375,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       // Play sound immediately on local move to ensure browser allows playback
       const moveKey = `${selectedSquare}-${square}`;
-      const targetPiecePre = chess.get(square);
+      const localWasCapture = !!chess.get(square);
       try {
-        if (targetPiecePre) soundManager.play('capture');
-        else soundManager.play('move');
-        // Record that we've played the sound for this move to avoid later duplicates
-        playedMoveKeysRef.current.add(moveKey);
+        if (playMoveSoundOnce(`self-${moveKey}`, localWasCapture)) {
+          // Record that we've played the sound for this move to avoid later duplicates
+          playedMoveKeysRef.current.add(moveKey);
+        }
       } catch (e) {
         // If playback failed, ensure the key is not marked as played
         playedMoveKeysRef.current.delete(moveKey);
@@ -1374,9 +1406,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
               // Clear the marker since the move has been fully acknowledged
               playedMoveKeysRef.current.delete(moveKey);
             } else {
-              const targetPiece = chess.get(square);
-              if (targetPiece) soundManager.play('capture');
-              else soundManager.play('move');
+              playMoveSoundOnce(`self-${moveKey}`, localWasCapture);
             }
 
             setPendingMoveError('');
@@ -1411,12 +1441,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     pendingActionRef.current = true;
 
     const moveKey = `${from}-${to}`;
+    const localWasCapture = !!chess.get(to);
     // Play sound immediately on local move
-    const targetPiecePre = chess.get(to);
     try {
-      if (targetPiecePre) soundManager.play('capture');
-      else soundManager.play('move');
-      playedMoveKeysRef.current.add(moveKey);
+      if (playMoveSoundOnce(`self-${moveKey}`, localWasCapture)) {
+        playedMoveKeysRef.current.add(moveKey);
+      }
     } catch (e) {
       playedMoveKeysRef.current.delete(moveKey);
     }
@@ -1437,9 +1467,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           if (playedMoveKeysRef.current.has(moveKey)) {
             playedMoveKeysRef.current.delete(moveKey);
           } else {
-            const targetPiece = chess.get(to);
-            if (targetPiece) soundManager.play('capture');
-            else soundManager.play('move');
+            playMoveSoundOnce(`self-${moveKey}`, localWasCapture);
           }
 
           setPendingMoveError('');
@@ -1568,10 +1596,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
     // Move/capture sound from frame move metadata.
     if (frame?.move) {
-      try {
-        if (frame.move.captured) soundManager.play('capture');
-        else soundManager.play('move');
-      } catch {}
+      playMoveSoundOnce(
+        `replay-${nextIndex}-${frame.move.from || ''}-${frame.move.to || ''}`,
+        !!frame.move.captured,
+      );
     }
 
     // Arcana events from replay log.
@@ -1789,20 +1817,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }
 
     // Opponent moved — choose capture or move sound
-    try {
-      if (lm.captured) soundManager.play('capture');
-      else soundManager.play('move');
+    if (playMoveSoundOnce(`opp-${lmShortKey}`, !!lm.captured)) {
       // Mark that we've played the sound for this move to avoid duplicates from other paths
       playedMoveKeysRef.current.add(lmShortKey);
-    } catch (e) {
-      // ignore playback errors
     }
-  }, [gameState?.lastMove, gameState?.turn, myColor]);
+  }, [gameState?.lastMove, gameState?.turn, myColor, playMoveSoundOnce]);
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <CutsceneOverlay ref={overlayRef} />
-      <ArcanaStudioScreenOverlay session={studioRuntimeSession} />
+      {!showMenu && <CutsceneOverlay ref={overlayRef} />}
+      {!showMenu && <ArcanaStudioScreenOverlay session={studioRuntimeSession} />}
       <AscensionScreenFx token={ascensionFxToken} />
       {isContextLost && (
         <div style={{
@@ -1832,23 +1856,21 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         gl={{ 
           antialias: true, 
           alpha: true, 
-          preserveDrawingBuffer: true,  // Changed to true to prevent flashing on context loss
+          // PreserveDrawingBuffer increases GPU memory pressure; keep it off for stability.
+          preserveDrawingBuffer: false,
           powerPreference: 'high-performance',
           failIfMajorPerformanceCaveat: false  // Allow fallback to software rendering
         }}
         onCreated={({ gl }) => {
           glRef.current = gl;
-          
-          // Handle WebGL context loss gracefully - prevent screen flashing
-          gl.domElement.addEventListener('webglcontextlost', (e) => {
+
+          const handleContextLost = (e) => {
             e.preventDefault();
             setIsContextLost(true);
-            // Clear active visual effects to free resources
-            setActiveVisualArcana(null);
             console.warn('WebGL context lost in GameScene. Recovering...');
-          });
-          
-          gl.domElement.addEventListener('webglcontextrestored', () => {
+          };
+
+          const handleContextRestored = () => {
             console.log('WebGL context restored in GameScene.');
             // Restore context state
             try { 
@@ -1857,15 +1879,19 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
               console.warn('Unable to reset GL state:', err);
             }
             // Clear the context lost flag after a brief delay to ensure stability
-            setTimeout(() => {
+            if (contextRestoreTimerRef.current) clearTimeout(contextRestoreTimerRef.current);
+            contextRestoreTimerRef.current = setTimeout(() => {
               setIsContextLost(false);
-            }, 500);
-          });
+            }, 800);
+          };
+
+          gl.domElement.addEventListener('webglcontextlost', handleContextLost);
+          gl.domElement.addEventListener('webglcontextrestored', handleContextRestored);
           
           // Cap pixel ratio for stability and performance
           try { 
             if (gl.setPixelRatio) {
-              gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); 
+              gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)); 
             }
           } catch (err) {
             console.warn('Unable to set pixel ratio:', err);
@@ -1980,27 +2006,34 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         </group>
         
         {/* Arcana Visual Effects - Shared component used by both GameScene and CardBalancingToolV2 */}
-        <ArcanaVisualHost 
-          effectsModule={effectsModule}
-          activeVisualArcana={activeVisualArcana}
-          gameState={gameState}
-          pawnShields={gameState?.pawnShields}
-        />
+        {!showMenu && (
+          <ArcanaVisualHost
+            effectsModule={effectsModule}
+            activeVisualArcana={activeVisualArcana}
+            gameState={gameState}
+            pawnShields={gameState?.pawnShields}
+            viewerColorCode={myColorCode}
+          />
+        )}
 
-        <ArcanaStudioRuntimeHost
-          session={studioRuntimeSession}
-          controlsRef={controlsRef}
-          myColor={myColor}
-          onComplete={() => setStudioRuntimeSession(null)}
-        />
+        {!showMenu && (
+          <ArcanaStudioRuntimeHost
+            session={studioRuntimeSession}
+            controlsRef={controlsRef}
+            myColor={myColor}
+            onComplete={() => setStudioRuntimeSession(null)}
+          />
+        )}
         
         {/* Camera Cutscene Controller for card effect cinematics */}
-        <CameraCutscene 
-          cutsceneTarget={cutsceneTarget}
-          onCutsceneEnd={clearCutscene}
-          myColor={myColor}
-          controlsRef={controlsRef}
-        />
+        {!showMenu && (
+          <CameraCutscene
+            cutsceneTarget={cutsceneTarget}
+            onCutsceneEnd={clearCutscene}
+            myColor={myColor}
+            controlsRef={controlsRef}
+          />
+        )}
         
         <OrbitControls ref={controlsRef} enabled={!cutsceneTarget && !studioRuntimeSession} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
       </Canvas>
@@ -2618,7 +2651,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       {/* activeVisualArcana overlay removed - CardRevealAnimation handles all card displays */}
 
-      {cardReveal && (
+      {cardReveal && !showMenu && (
         <CardRevealAnimation
           arcana={cardReveal.arcana}
           playerId={cardReveal.playerId}
@@ -2660,7 +2693,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           rematchVote={rematchVote}
           rematchVoteCount={rematchVoteCount}
           rematchTotalPlayers={rematchTotalPlayers}
-          opponentLeft={opponentLeftDuringRematch}
+          opponentLeft={opponentLeftDuringRematch || (gameEndOutcome?.type === 'disconnect' && gameEndOutcome?.winnerSocketId === mySocketId)}
           stats={postGameStats}
           onExportReplay={exportReplay}
           onRematchVote={() => {
@@ -3531,7 +3564,7 @@ const styles = {
   },
   errorBanner: {
     position: 'absolute',
-    top: 56,
+    top: 78,
     left: 12,
     background: '#8f3131',
     padding: '6px 10px',

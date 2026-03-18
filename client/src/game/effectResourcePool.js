@@ -6,9 +6,12 @@
 class EffectResourcePool {
   constructor() {
     this.activeEffects = new Map(); // Map<effectId, { createdAt, particleCount }>
-    this.maxConcurrentEffects = 4; // Max effects at once
-    this.maxParticlesPerEffect = 120; // Reduced to avoid GPU saturation
-    this.totalParticleLimit = 400; // Max particles across all active effects
+    this.defaultMaxConcurrentEffects = 4;
+    this.defaultMaxParticlesPerEffect = 120;
+    this.defaultTotalParticleLimit = 400;
+    this.maxConcurrentEffects = this.defaultMaxConcurrentEffects; // Max effects at once
+    this.maxParticlesPerEffect = this.defaultMaxParticlesPerEffect; // Reduced to avoid GPU saturation
+    this.totalParticleLimit = this.defaultTotalParticleLimit; // Max particles across all active effects
     this.disposedMaterials = [];
     this.disposedGeometries = [];
   }
@@ -117,6 +120,31 @@ class EffectResourcePool {
         ? (performance.memory.totalJSHeapSize / performance.memory.jsHeapSizeLimit).toFixed(2)
         : 'N/A',
     };
+  }
+
+  /**
+   * Hard reset after context loss: clear active tracking/disposal queues and
+   * lower limits based on repeated loss count.
+   */
+  hardResetForContextLoss(lossCount = 1) {
+    const level = Math.max(1, Number(lossCount) || 1);
+    this.activeEffects.clear();
+    this.disposedMaterials.length = 0;
+    this.disposedGeometries.length = 0;
+
+    const steppedPenalty = Math.min(3, level);
+    this.maxConcurrentEffects = Math.max(1, this.defaultMaxConcurrentEffects - steppedPenalty);
+    this.maxParticlesPerEffect = Math.max(48, this.defaultMaxParticlesPerEffect - steppedPenalty * 22);
+    this.totalParticleLimit = Math.max(140, this.defaultTotalParticleLimit - steppedPenalty * 95);
+  }
+
+  /**
+   * Restore normal limits after the context has stabilized.
+   */
+  restoreDefaults() {
+    this.maxConcurrentEffects = this.defaultMaxConcurrentEffects;
+    this.maxParticlesPerEffect = this.defaultMaxParticlesPerEffect;
+    this.totalParticleLimit = this.defaultTotalParticleLimit;
   }
 }
 

@@ -438,6 +438,8 @@ function applyArcanaEffect(arcanaId, context) {
       return applyMapFragments(context);
     case 'peek_card':
       return applyPeekCard(context);
+    case 'silence_seal':
+      return applySilenceSeal(context);
     case 'antidote':
       return applyAntidote(context);
     case 'fog_of_war':
@@ -1074,9 +1076,18 @@ function applyArcaneCycle({ gameState, socketId, params }) {
   // Filtered Cycle: draw a weighted common/uncommon card from a selected category when provided.
   // Fallback order: explicit category -> discarded card category -> any common/uncommon.
   const targetCategory = selectedCategory || derivedCategory;
-  const newCard = makeArcanaInstance(
-    targetCategory ? pickCommonOrUncommonArcanaByCategory(targetCategory) : pickCommonOrUncommonArcana()
-  );
+  let picked = targetCategory ? pickCommonOrUncommonArcanaByCategory(targetCategory) : pickCommonOrUncommonArcana();
+  // Prevent "Filtered Cycle from itself" loops where the replacement is the same card.
+  if (picked?.id === 'filtered_cycle' || picked?.id === 'arcane_cycle') {
+    for (let i = 0; i < 6; i++) {
+      const retry = targetCategory ? pickCommonOrUncommonArcanaByCategory(targetCategory) : pickCommonOrUncommonArcana();
+      if (retry?.id !== 'filtered_cycle' && retry?.id !== 'arcane_cycle') {
+        picked = retry;
+        break;
+      }
+    }
+  }
+  const newCard = makeArcanaInstance(picked);
   gameState.arcanaByPlayer[socketId].push(newCard);
   return { params: { drewCard: newCard.id, discardIndex, category: targetCategory || 'any' } };
 }
@@ -1197,6 +1208,15 @@ function applyPeekCard({ gameState, socketId, params, io }) {
   return { params: { awaitingSelection: true, cardCount: opponentCards.length } };
 }
 
+function applySilenceSeal({ gameState, moverColor }) {
+  if (!gameState.activeEffects.cardSilence) {
+    gameState.activeEffects.cardSilence = { w: 0, b: 0 };
+  }
+  const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  gameState.activeEffects.cardSilence[opponentColor] = 1;
+  return { params: { lockedColor: opponentColor, turns: 1 } };
+}
+
 function applyAntidote({ gameState, params }) {
   const targetSquare = params?.targetSquare;
   if (!targetSquare) return null;
@@ -1216,14 +1236,15 @@ function applyAntidote({ gameState, params }) {
   return { params: { cleansedSquare: targetSquare } };
 }
 
-function applySquireSupport({ gameState, params }) {
+function applySquireSupport({ gameState, params, moverColor }) {
   const targetSquare = params?.targetSquare;
   if (!targetSquare) return null;
   
   // Add piece to squire support list for 2 turns (lasts until opponent's turn ends)
   gameState.activeEffects.squireSupport.push({
     square: targetSquare,
-    turnsLeft: 2
+    turnsLeft: 2,
+    ownerColor: moverColor,
   });
   
   return { params: { protectedSquare: targetSquare } };
@@ -1376,7 +1397,7 @@ function applyEnPassantMaster({ gameState, moverColor }) {
 }
 
 function applyMindControl({ chess, gameState, moverColor, params }) {
-  // Mind Control: Seize control of an enemy piece so only the controller can move it next
+  // Mind Control: Seize control of an enemy piece for one full enemy turn.
   const targetSquare = params?.targetSquare;
   if (!targetSquare) return null;
 
@@ -1393,19 +1414,17 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   if (!gameState.activeEffects) gameState.activeEffects = {};
   if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
   
-  // Track the mind-controlled piece with original color (don't change piece color on board)
-  // Only the controller can move this piece next
+  // Track original ownership and temporarily flip color so normal move validation
+  // and client selection treat the piece as controlled by the caster.
   gameState.activeEffects.mindControlled.push({
     square: targetSquare,
     controller: moverColor,
     originalColor: targetPiece.color,
     type: targetPiece.type,
-    // The piece does NOT change color on board - it stays the opponent's color
-    // But only the controller can move it
   });
-  
-  // DO NOT flip the piece color - this was the bug
-  // Leave piece as-is on the board
+
+  chess.remove(targetSquare);
+  chess.put({ type: targetPiece.type, color: moverColor }, targetSquare);
 
   return { params: { square: targetSquare, targetSquare, color: moverColor, originalColor: targetPiece.color } };
 }

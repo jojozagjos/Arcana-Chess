@@ -47,6 +47,12 @@ export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
     customMoves.push(...stormMoves);
   }
 
+  // EN PASSANT MASTER: Pawns can capture adjacent enemy pawns (sideways/diagonal variant)
+  if (effects.enPassantMaster?.[myColorCode] && piece.type === 'p') {
+    const enPassantMasterMoves = generateEnPassantMasterMoves(chess, square, myColorCode);
+    customMoves.push(...enPassantMasterMoves);
+  }
+
   // QUEEN'S GAMBIT: Handled differently (allows second move after first)
   // No custom moves here, just tracked in state
 
@@ -258,6 +264,57 @@ function generateSharpshooterMoves(chess, square, color) {
         // So don't break, just don't add this square as a move
         // Continue checking for enemies beyond
       }
+    }
+  }
+
+  return moves;
+}
+
+function generateEnPassantMasterMoves(chess, square, color) {
+  const moves = [];
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1], 10);
+  const direction = color === 'w' ? 1 : -1;
+
+  // Sideways capture (same rank): e4 -> f4, if enemy pawn is there.
+  for (const df of [-1, 1]) {
+    const sideFile = file + df;
+    if (sideFile < 0 || sideFile > 7) continue;
+    const sideSquare = String.fromCharCode(97 + sideFile) + rank;
+    const target = chess.get(sideSquare);
+    if (target && target.type === 'p' && target.color !== color) {
+      moves.push({
+        from: square,
+        to: sideSquare,
+        piece: 'p',
+        color,
+        captured: 'p',
+        flags: 'c',
+        san: `Px${sideSquare}`,
+      });
+    }
+  }
+
+  // Diagonal-forward en-passant variant: destination empty, adjacent pawn captured.
+  for (const df of [-1, 1]) {
+    const toFile = file + df;
+    const toRank = rank + direction;
+    if (toFile < 0 || toFile > 7 || toRank < 1 || toRank > 8) continue;
+
+    const toSquare = String.fromCharCode(97 + toFile) + toRank;
+    const adjacentSquare = String.fromCharCode(97 + toFile) + rank;
+    const adjacentPiece = chess.get(adjacentSquare);
+
+    if (!chess.get(toSquare) && adjacentPiece && adjacentPiece.type === 'p' && adjacentPiece.color !== color) {
+      moves.push({
+        from: square,
+        to: toSquare,
+        piece: 'p',
+        color,
+        captured: 'p',
+        flags: 'e',
+        san: `${toSquare}`,
+      });
     }
   }
 

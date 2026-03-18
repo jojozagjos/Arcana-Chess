@@ -23,7 +23,7 @@ function safeDispose(obj) {
 
 // ArcanaVisualHost mounts visual components exported from arcanaVisuals.jsx
 // It expects `effectsModule` to be an object of visual components (loaded dynamically).
-export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState, pawnShields, showFog }) {
+export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState, pawnShields, showFog, viewerColorCode }) {
   const Effects = effectsModule || {};
 
   if (!Effects) return null;
@@ -36,6 +36,7 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
 
   // Render persistent effects based on gameState.activeEffects
   const active = gameState?.activeEffects || {};
+  const poisonedSquares = new Set((active.poisonedPieces || []).map((p) => p.square).filter(Boolean));
 
   // Local instances to allow fade-out after the effect finishes
   const [instances, setInstances] = useState([]);
@@ -110,7 +111,9 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
 
       {/* Squire Support indicators */}
       {active.squireSupport && active.squireSupport.map((s, i) => (
-        Effects.SquireSupportEffect ? <Effects.SquireSupportEffect key={`squire-${i}`} square={s.square} /> : null
+        Effects.SquireSupportEffect && (!viewerColorCode || !s.ownerColor || s.ownerColor === viewerColorCode)
+          ? <Effects.SquireSupportEffect key={`squire-${i}`} square={s.square} />
+          : null
       ))}
 
       {/* Sanctuary indicators */}
@@ -124,8 +127,8 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       ))}
 
       {/* Pawn shields (display for both colors if present) */}
-      {pawnShields?.w && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
-      {pawnShields?.b && Effects.ShieldGlowEffect ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
+      {pawnShields?.w && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.w.square) ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
+      {pawnShields?.b && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.b.square) ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
       
       {/* Iron Fortress shields - show only for currently active fortress color */}
       {Effects.ShieldGlowEffect && active.ironFortress?.w && active.ironFortressShields?.w?.map((sq, i) => (

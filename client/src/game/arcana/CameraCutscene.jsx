@@ -171,6 +171,11 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       holdTimer.current -= delta * 1000;
       if (holdTimer.current <= 0) {
         if (inSequence.current && holdPositionRef.current && !sequenceEndRef.current) {
+          // If the sequence does not continue (interrupted runtime/event), avoid leaving
+          // the camera controls locked on this intermediate shot.
+          if (controls) {
+            controls.enabled = true;
+          }
           phase.current = 'idle';
           isAnimating.current = false;
           return;
