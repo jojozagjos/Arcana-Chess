@@ -212,7 +212,7 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
   return (
     <group position={[x, 0, z]} ref={groupRef}>
       {/* Toxic aura cylinder */}
-      <mesh ref={auraRef} position={[0, 0.4, 0]}>
+      {/* <mesh ref={auraRef} position={[0, 0.4, 0]}>
         <cylinderGeometry args={[0.4, 0.35, 0.8, 16, 1, true]} />
         <meshStandardMaterial
           emissive={baseColor}
@@ -223,10 +223,10 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
           opacity={0.35 * fadeOpacity}
           
         />
-      </mesh>
+      </mesh> */}
       
       {/* Dripping poison effect */}
-      {[...Array(6)].map((_, i) => (
+      {/* {[...Array(6)].map((_, i) => (
         <PoisonDrip
           key={i}
           angle={(i / 6) * Math.PI * 2}
@@ -236,7 +236,7 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
           delay={i * 0.3}
           fadeOpacity={fadeOpacity}
         />
-      ))}
+      ))} */}
       
       {/* Rising bubbles */}
       {bubbles.map((bubble, i) => (
@@ -2630,11 +2630,11 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
         <circleGeometry args={[0.48, 32]} />
         <meshStandardMaterial
           emissive="#ffd700"
-          emissiveIntensity={1.5}
+          emissiveIntensity={2.6}
           color="#ffeb3b"
           transparent
-          opacity={0.25 * fadeOpacity}
-          
+          opacity={0.45 * fadeOpacity}
+          depthTest={false}
           depthWrite={false}
         />
       </mesh>
@@ -2643,11 +2643,22 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
         <ringGeometry args={[0.35, 0.45, 32]} />
         <meshStandardMaterial
           emissive="#ffd700"
-          emissiveIntensity={2}
+          emissiveIntensity={3.4}
           color="#ffeb3b"
           transparent
-          opacity={0.4 * fadeOpacity}
-          
+          opacity={0.6 * fadeOpacity}
+          depthTest={false}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Elevated halo remains visible even when a piece occupies the square. */}
+      <mesh position={[0, 1.1, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.34, 0.03, 12, 40]} />
+        <meshBasicMaterial
+          color="#ffe670"
+          transparent
+          opacity={0.78 * fadeOpacity}
+          depthTest={false}
           depthWrite={false}
         />
       </mesh>
@@ -2744,9 +2755,12 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
       <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} ref={glowRef}>
         <circleGeometry args={[0.48, 32]} />
         <meshStandardMaterial
+          emissive="#7a0018"
+          emissiveIntensity={2.2}
           color="#4a0000"
           transparent
-          opacity={0.25 * fadeOpacity}
+          opacity={0.42 * fadeOpacity}
+          depthTest={false}
           depthWrite={false}
         />
       </mesh>
@@ -2754,9 +2768,23 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.35, 0.42, 6]} />
         <meshStandardMaterial
+          emissive="#ff1744"
+          emissiveIntensity={2.8}
           color="#8b0000"
           transparent
-          opacity={0.35 * fadeOpacity}
+          opacity={0.62 * fadeOpacity}
+          depthTest={false}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Elevated cursed crown for occupied squares. */}
+      <mesh position={[0, 1.05, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.34, 0.028, 10, 32]} />
+        <meshBasicMaterial
+          color="#ff335c"
+          transparent
+          opacity={0.72 * fadeOpacity}
+          depthTest={false}
           depthWrite={false}
         />
       </mesh>

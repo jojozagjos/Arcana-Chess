@@ -31,6 +31,8 @@ export function easingToT(easing = 'linear', t = 0, bezier = [0.25, 0.1, 0.25, 1
   switch (easing) {
     case 'linear':
       return x;
+    case 'instant':
+      return x < 1 ? 0 : 1;
     case 'easeInQuad':
       return x * x;
     case 'easeOutQuad':
@@ -103,7 +105,11 @@ export function sampleCameraTrack(track, timeMs = 0) {
 export function sampleObjectTrack(track, timeMs = 0) {
   const { from, to, alpha } = getSegment(track?.keys || [], timeMs);
   if (!from) {
-    return { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
+    return {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: track?.isAnimatablePiece ? [1.8, 1.8, 1.8] : [1, 1, 1],
+    };
   }
   if (!to || from === to) {
     return {
@@ -147,24 +153,52 @@ export function sampleOverlayTrack(track, timeMs = 0) {
 }
 
 export function sampleParticleTrack(track, timeMs = 0) {
-  const keys = sortKeys(track?.keys || []);
-  if (!keys.length) {
+  const { from, to, alpha } = getSegment(track?.keys || [], timeMs);
+  if (!from) {
     return { active: false, seed: 1337, overrides: {}, params: track?.params || {} };
   }
 
-  let selected = keys[0];
-  for (let i = 0; i < keys.length; i += 1) {
-    if ((keys[i].timeMs || 0) <= timeMs) selected = keys[i];
+  const baseParams = track?.params || {};
+  const fromOverrides = from.overrides || {};
+  if (!to || from === to) {
+    return {
+      active: Boolean(from.enabled),
+      seed: from.seed ?? 1337,
+      overrides: fromOverrides,
+      params: {
+        ...baseParams,
+        ...fromOverrides,
+      },
+    };
   }
 
+  const toOverrides = to.overrides || {};
+  const eased = easingToT(to.easing || from.easing || 'linear', alpha, to.bezier || from.bezier);
+  const merged = {
+    ...baseParams,
+    ...fromOverrides,
+    ...toOverrides,
+  };
+
+  Object.keys(merged).forEach((key) => {
+    const a = fromOverrides[key] ?? baseParams[key];
+    const b = toOverrides[key] ?? baseParams[key];
+
+    if (typeof a === 'number' && typeof b === 'number' && Number.isFinite(a) && Number.isFinite(b)) {
+      merged[key] = lerp(a, b, eased);
+      return;
+    }
+
+    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v) => typeof v === 'number') && b.every((v) => typeof v === 'number')) {
+      merged[key] = a.map((val, idx) => lerp(val, b[idx], eased));
+    }
+  });
+
   return {
-    active: Boolean(selected.enabled),
-    seed: selected.seed ?? 1337,
-    overrides: selected.overrides || {},
-    params: {
-      ...(track?.params || {}),
-      ...(selected.overrides || {}),
-    },
+    active: Boolean(from.enabled),
+    seed: from.seed ?? 1337,
+    overrides: fromOverrides,
+    params: merged,
   };
 }
 

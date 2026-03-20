@@ -438,8 +438,6 @@ function applyArcanaEffect(arcanaId, context) {
       return applyMapFragments(context);
     case 'peek_card':
       return applyPeekCard(context);
-    case 'silence_seal':
-      return applySilenceSeal(context);
     case 'antidote':
       return applyAntidote(context);
     case 'fog_of_war':
@@ -693,18 +691,16 @@ function applyRoyalSwap({ chess, moverColor, params }) {
     const targetPiece = chess.get(params.targetSquare);
     // Royal Swap: king can only swap with a pawn (per card description)
     if (kingSquare && targetPiece && targetPiece.type === 'p' && targetPiece.color === moverColor) {
-      const pawnToBackRank = kingSquare[1] === '1' || kingSquare[1] === '8';
-      const swappedPieceType = pawnToBackRank ? 'q' : targetPiece.type;
       chess.remove(kingSquare);
       chess.remove(params.targetSquare);
       chess.put({ type: 'k', color: moverColor }, params.targetSquare);
-      chess.put({ type: swappedPieceType, color: moverColor }, kingSquare);
+      chess.put({ type: targetPiece.type, color: moverColor }, kingSquare);
       return {
         params: {
           kingFrom: kingSquare,
           kingTo: params.targetSquare,
-          swappedPieceType,
-          promotedFromPawn: pawnToBackRank,
+          swappedPieceType: targetPiece.type,
+          promotedFromPawn: false,
         },
       };
     }
@@ -1206,15 +1202,6 @@ function applyPeekCard({ gameState, socketId, params, io }) {
   gameState.pendingPeek[socketId] = { opponentId, cardCount: opponentCards.length, ts: Date.now() };
 
   return { params: { awaitingSelection: true, cardCount: opponentCards.length } };
-}
-
-function applySilenceSeal({ gameState, moverColor }) {
-  if (!gameState.activeEffects.cardSilence) {
-    gameState.activeEffects.cardSilence = { w: 0, b: 0 };
-  }
-  const opponentColor = moverColor === 'w' ? 'b' : 'w';
-  gameState.activeEffects.cardSilence[opponentColor] = 1;
-  return { params: { lockedColor: opponentColor, turns: 1 } };
 }
 
 function applyAntidote({ gameState, params }) {

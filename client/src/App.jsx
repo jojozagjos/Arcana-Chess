@@ -27,6 +27,13 @@ export function App() {
   const [devMode, setDevMode] = useState(false);
   const [quickMatchStatus, setQuickMatchStatus] = useState('');
   const [quickMatchLoading, setQuickMatchLoading] = useState(false);
+
+  useEffect(() => {
+    if (screen === 'main-menu') {
+      setQuickMatchLoading(false);
+      setQuickMatchStatus('');
+    }
+  }, [screen]);
   const [quickJoinedLobby, setQuickJoinedLobby] = useState(null);
   const [pendingReplayPayload, setPendingReplayPayload] = useState(null);
   const [menuFadeIn, setMenuFadeIn] = useState(false);
@@ -369,6 +376,7 @@ export function App() {
                         socket.emit('joinLobby', { lobbyId: availableLobby.id }, (joinRes) => {
                           if (joinRes && joinRes.ok) {
                             setQuickMatchStatus('');
+                            setQuickMatchLoading(false);
                             // store joined lobby and navigate to join screen so the lobby UI is shown
                             setQuickJoinedLobby(joinRes.lobby);
                             setScreen('join-game');

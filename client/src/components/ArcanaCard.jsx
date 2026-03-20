@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import ReactDOM from 'react-dom';
 
 // ArcanaCard component: displays card background, icon, and name
@@ -6,11 +6,13 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
   const isHiddenCard = !!arcana?.hidden;
   const [hovered, setHovered] = useState(false);
   const [tooltipPos, setTooltipPos] = useState(null);
+  const [tooltipAnchor, setTooltipAnchor] = useState(null);
   const [bgLoaded, setBgLoaded] = useState(() => isHiddenCard);
   const [iconLoaded, setIconLoaded] = useState(() => isHiddenCard);
   const [bgFailed, setBgFailed] = useState(false);
   const [iconFailed, setIconFailed] = useState(false);
   const cardRef = useRef(null);
+  const tooltipRef = useRef(null);
   const touchTimerRef = useRef(null);
   const arcanaId = typeof arcana?.id === 'string'
     ? arcana.id
@@ -57,10 +59,10 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
     ? (size === 'small' ? -15 : size === 'large' ? -35 : -25)
     : 0;
   const TOOLTIP_W = Math.max(dims.width + 80, 260);
-  // Tooltip size estimate used for above/below placement.
-  const DESC_H = 58;
-  // Estimated full tooltip height for above/below positioning
-  const TOOLTIP_H = 130;
+  const tooltipBodyText = typeof hoverInfo === 'string' ? hoverInfo : '';
+  const estimatedDescriptionLines = Math.max(2, Math.min(10, Math.ceil(tooltipBodyText.length / 42)));
+  // Estimated tooltip height used for above/below placement.
+  const TOOLTIP_H = 92 + (estimatedDescriptionLines * 15);
 
   const cursor = onClick ? 'pointer' : 'default';
 
@@ -81,24 +83,32 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
 
   const showTooltip = !disableTooltip && hovered && tooltipPos && (hoverInfo || arcanaName);
 
-  const calcPos = (rect) => {
+  const calcPos = (rect, tooltipHeight = TOOLTIP_H) => {
     const vw = window.innerWidth || document.documentElement.clientWidth;
     const cardCenterX = rect.left + rect.width / 2;
     let left = cardCenterX - TOOLTIP_W / 2;
     left = Math.max(8, Math.min(left, vw - TOOLTIP_W - 8));
     const arrowOffset = cardCenterX - (left + TOOLTIP_W / 2);
     const ARROW_H = 8;
-    let top = rect.top - TOOLTIP_H - ARROW_H - 4;
+    let top = rect.top - tooltipHeight - ARROW_H - 4;
     const flipped = top < 8;
     if (flipped) top = rect.bottom + ARROW_H + 4;
     return { left, top, arrowOffset, flipped };
   };
 
+  useLayoutEffect(() => {
+    if (!hovered || !tooltipAnchor || !tooltipRef.current) return;
+    const measuredHeight = tooltipRef.current.offsetHeight || TOOLTIP_H;
+    setTooltipPos(calcPos(tooltipAnchor, measuredHeight));
+  }, [hovered, tooltipAnchor, TOOLTIP_H, TOOLTIP_W, tooltipBodyText]);
+
   const handleMouseEnter = (e) => {
     if (disableHover) return;
     if (onClick) e.currentTarget.style.transform = 'scale(1.05)';
+    const rect = cardRef.current.getBoundingClientRect();
+    setTooltipAnchor(rect);
     setHovered(true);
-    try { setTooltipPos(calcPos(cardRef.current.getBoundingClientRect())); }
+    try { setTooltipPos(calcPos(rect)); }
     catch { setTooltipPos({ left: 0, top: 0, arrowOffset: 0, flipped: false }); }
   };
 
@@ -107,6 +117,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
     if (onClick) e.currentTarget.style.transform = 'scale(1)';
     setHovered(false);
     setTooltipPos(null);
+    setTooltipAnchor(null);
   };
   const handleTouchStart = (e) => {
     if (disableHover) return;
@@ -117,18 +128,22 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
       return;
     }
     e.preventDefault();
-    try { setTooltipPos(calcPos(cardRef.current.getBoundingClientRect())); }
+    const rect = cardRef.current.getBoundingClientRect();
+    setTooltipAnchor(rect);
+    try { setTooltipPos(calcPos(rect)); }
     catch { setTooltipPos({ left: 0, top: 0, arrowOffset: 0, flipped: false }); }
     setHovered(true);
     clearTimeout(touchTimerRef.current);
     touchTimerRef.current = setTimeout(() => {
       setHovered(false);
       setTooltipPos(null);
+      setTooltipAnchor(null);
     }, 3000);
   };
 
   const tooltipEl = showTooltip ? (
         <div
+          ref={tooltipRef}
           style={{
             position: 'fixed',
             left: tooltipPos.left,
@@ -150,8 +165,6 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
         >
           <div style={{ fontWeight: 700, marginBottom: 5 }}>{arcanaName}</div>
           <div style={{
-            maxHeight: DESC_H,
-            overflow: 'hidden',
             wordBreak: 'break-word',
             overflowWrap: 'break-word',
             whiteSpace: 'pre-line',

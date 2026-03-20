@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
+import { getGameModeConfig } from '../shared/gameModes.js';
 import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, pickCommonArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
@@ -24,6 +25,7 @@ const ACTION_TTL_MS = 10000;
 const INITIAL_DRAW_PLY = -1;
 const MOVE_HISTORY_LIMIT = 10;
 const DRAW_COOLDOWN_PLIES = 3;
+const ARCANA_OVERFLOW_COPIES_PER_CARD = 10;
 
 // Chess board constants
 const BOARD_SIZE = 8;
@@ -31,6 +33,15 @@ const WHITE = 'white';
 const BLACK = 'black';
 const WHITE_CHAR = 'w';
 const BLACK_CHAR = 'b';
+
+const RARITY_SORT_ORDER = {
+  common: 0,
+  uncommon: 1,
+  rare: 2,
+  epic: 3,
+  legendary: 4,
+  '???': 5,
+};
 
 // Game status constants
 const STATUS_ONGOING = 'ongoing';
@@ -216,18 +227,44 @@ function getPiecesDiagonalFromBishop(chess, bishopSquare, color) {
  * @param {string} [config.playerColor] - Human player's color when playing against AI
  * @returns {Object} Initial game state object
  */
-function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor, timeControl = 30 }) {
+function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, playerColor, hostId = null, hostColorPreference = WHITE, timeControl = 30 }) {
   const chess = new Chess();
-  // No arcana at start - awarded on ascension
+  const modeConfig = getGameModeConfig(mode);
+  const resolvedMode = modeConfig.id;
+
+  // Arcana hand setup depends on selected game mode.
   const arcanaByPlayer = {};
   for (const id of playerIds) {
-    arcanaByPlayer[id] = [];
+    if (modeConfig.startingArcana === 'all') {
+      arcanaByPlayer[id] = ARCANA_DEFINITIONS
+        .filter((card) => card && card.enabledInGame !== false)
+        .slice()
+        .sort((a, b) => {
+          const rarityDiff = (RARITY_SORT_ORDER[a.rarity] ?? 999) - (RARITY_SORT_ORDER[b.rarity] ?? 999);
+          if (rarityDiff !== 0) return rarityDiff;
+          return (a.name || a.id || '').localeCompare(b.name || b.id || '');
+        })
+        .flatMap((card) => Array.from({ length: ARCANA_OVERFLOW_COPIES_PER_CARD }, () => makeArcanaInstance(card)));
+    } else {
+      arcanaByPlayer[id] = [];
+    }
   }
 
-  // Basic color assignment: index 0 = white, index 1 = black
+  // Color assignment: host can choose who starts (white/black/random).
   const playerColors = {};
-  if (playerIds[0]) playerColors[playerIds[0]] = WHITE;
-  if (playerIds[1]) playerColors[playerIds[1]] = BLACK;
+  if (hostId && playerIds.includes(hostId) && playerIds.length >= 2) {
+    const preference = String(hostColorPreference || WHITE).toLowerCase();
+    const hostColor = preference === 'random'
+      ? (Math.random() < 0.5 ? WHITE : BLACK)
+      : (preference === BLACK || preference === BLACK_CHAR ? BLACK : WHITE);
+    const opponentColor = hostColor === WHITE ? BLACK : WHITE;
+    const opponentId = playerIds.find((pid) => pid !== hostId) || null;
+    playerColors[hostId] = hostColor;
+    if (opponentId) playerColors[opponentId] = opponentColor;
+  } else {
+    if (playerIds[0]) playerColors[playerIds[0]] = WHITE;
+    if (playerIds[1]) playerColors[playerIds[1]] = BLACK;
+  }
 
   // Initialize lastDrawTurn per-player to never drawn
   const lastDrawTurn = {};
@@ -238,19 +275,20 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
   const timePerPlayer = timeMinutes === null
     ? null
     : Object.fromEntries(playerIds.map((pid) => [pid, timeMinutes * 60]));
+  const whitePlayerId = findPlayerIdByColor(playerColors, WHITE) || playerIds[0];
 
   return {
     id: Math.random().toString(36).slice(2),
-    mode,
+    mode: resolvedMode,
     chess,
     playerIds,
     aiDifficulty: aiDifficulty || null,
     playerColor: playerColor || WHITE,
     playerColors,
-    currentTurnSocket: playerIds[0],
+    currentTurnSocket: whitePlayerId,
     status: STATUS_ONGOING,
-    ascended: mode === 'Classic' ? false : false,
-    ascensionTrigger: mode === 'Classic' ? 'never' : 'firstCapture',
+    ascended: modeConfig.startsAscended,
+    ascensionTrigger: modeConfig.ascensionTrigger,
     arcanaByPlayer,
     usedArcanaIdsByPlayer: {},
     // Time control tracking
@@ -274,7 +312,6 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       fogOfWar: { w: false, b: false },
       vision: { w: null, b: null },  // stores socketId of player who activated vision
       quietThought: { w: 0, b: 0 },  // remaining owner turns of threat visibility
-      cardSilence: { w: 0, b: 0 },   // turns of arcana lock per color
       doubleStrike: { w: false, b: false },
       doubleStrikeActive: null, // { color, from } when ready for second attack
       poisonTouch: { w: false, b: false },
@@ -437,6 +474,8 @@ export class GameManager {
     const gameState = createInitialGameState({
       mode: lobby.gameMode,
       playerIds: [...lobby.players],
+      hostId: lobby.hostId,
+      hostColorPreference: lobby.hostColorPreference,
       timeControl: normalizeTimeControlMinutes(lobby.timeControl),
     });
 
@@ -473,8 +512,13 @@ export class GameManager {
       timeControl = 30, // minutes, or null for unlimited
     } = payload || {};
 
+    const resolvedPlayerColor = String(playerColor || 'white').toLowerCase();
+    const chosenColor = resolvedPlayerColor === 'random'
+      ? (Math.random() < 0.5 ? 'white' : 'black')
+      : (resolvedPlayerColor === 'black' ? 'black' : 'white');
+
     const aiSocketId = `AI-${Math.random().toString(36).slice(2)}`;
-    const playerIds = playerColor === 'white'
+    const playerIds = chosenColor === 'white'
       ? [socket.id, aiSocketId]
       : [aiSocketId, socket.id];
 
@@ -482,7 +526,7 @@ export class GameManager {
       mode: gameMode,
       playerIds,
       aiDifficulty: difficulty,
-      playerColor,
+      playerColor: chosenColor,
       timeControl: normalizeTimeControlMinutes(timeControl),
     });
 
@@ -492,7 +536,7 @@ export class GameManager {
     this.io.to(socket.id).emit('gameStarted', this.serialiseGameState(gameState));
 
     // If the human chose black, the AI (white) should move first.
-    if (playerColor === 'black') {
+    if (chosenColor === 'black') {
       await this.performAIMove(gameState);
       const personalised = this.serialiseGameStateForViewer(gameState, socket.id);
       this.io.to(socket.id).emit('gameUpdated', personalised);
@@ -817,10 +861,6 @@ export class GameManager {
       const playerTurnChar = playerColor === 'white' ? 'w' : 'b';
       if (currentTurn !== playerTurnChar) {
         throw new Error('You can only use arcana on your turn');
-      }
-
-      if ((gameState.activeEffects?.cardSilence?.[playerTurnChar] || 0) > 0) {
-        throw new Error('Your arcana is sealed for this turn');
       }
 
       // Limit to 1 arcana card per turn
@@ -1298,13 +1338,37 @@ export class GameManager {
       gameState.activeEffects.bishopsBlessing[moverColor] = [...new Set(protectedSquares)]; // Deduplicate
     }
 
+    // Keep Iron Fortress shield markers aligned to the current pawn positions.
+    if (!gameState.activeEffects.ironFortressShields) {
+      gameState.activeEffects.ironFortressShields = { w: [], b: [] };
+    }
+    for (const color of ['w', 'b']) {
+      if (!gameState.activeEffects.ironFortress?.[color]) {
+        gameState.activeEffects.ironFortressShields[color] = [];
+        continue;
+      }
+      const pawnSquares = [];
+      const board = chess.board();
+      for (let r = 0; r < 8; r++) {
+        for (let f = 0; f < 8; f++) {
+          const piece = board[r][f];
+          if (piece && piece.type === 'p' && piece.color === color) {
+            pawnSquares.push('abcdefgh'[f] + (8 - r));
+          }
+        }
+      }
+      gameState.activeEffects.ironFortressShields[color] = pawnSquares;
+    }
+
     // Update poisoned piece square if a poisoned piece moved
     let movedPoisonedPiece = false;
     if (gameState.activeEffects.poisonedPieces && gameState.activeEffects.poisonedPieces.length > 0) {
-      const poisonedEntry = gameState.activeEffects.poisonedPieces.find(p => p.square === result.from);
-      if (poisonedEntry) {
+      const matchingPoisonEntries = gameState.activeEffects.poisonedPieces.filter((p) => p.square === result.from);
+      if (matchingPoisonEntries.length > 0) {
         // Poison follows the piece to its new square
-        poisonedEntry.square = result.to;
+        for (const poisonedEntry of matchingPoisonEntries) {
+          poisonedEntry.square = result.to;
+        }
         movedPoisonedPiece = true;
       }
     }
@@ -1340,13 +1404,12 @@ export class GameManager {
     // Do not remove poison when the *poisoned attacker* captures and moves onto result.to.
     if (result.captured && gameState.activeEffects.poisonedPieces && gameState.activeEffects.poisonedPieces.length > 0) {
       const capturedSquare = this.getCapturedSquare(result);
-      const poisonIndex = gameState.activeEffects.poisonedPieces.findIndex(p => p.square === capturedSquare);
-      if (poisonIndex !== -1) {
-        if (!(movedPoisonedPiece && capturedSquare === result.to)) {
-          // Remove the poison entry - the poisoned piece itself was captured
-          gameState.activeEffects.poisonedPieces.splice(poisonIndex, 1);
-        }
-      }
+      gameState.activeEffects.poisonedPieces = gameState.activeEffects.poisonedPieces.filter((p) => {
+        if (p.square !== capturedSquare) return true;
+        // Keep poison entry when the poisoned attacker moved onto the capture square.
+        if (movedPoisonedPiece && capturedSquare === result.to) return true;
+        return false;
+      });
     }
 
     // Mirror Image: If a mirror image piece moved, update its tracking
@@ -2619,10 +2682,6 @@ export class GameManager {
     effects.quietThought = effects.quietThought || { w: 0, b: 0 };
     if (effects.quietThought[endingColor] > 0) {
       effects.quietThought[endingColor]--;
-    }
-    effects.cardSilence = effects.cardSilence || { w: 0, b: 0 };
-    if (effects.cardSilence[endingColor] > 0) {
-      effects.cardSilence[endingColor]--;
     }
     effects.focusFire = effects.focusFire || { w: false, b: false };
     // Keep structure consistent: doubleStrike stores objects or nulls per color

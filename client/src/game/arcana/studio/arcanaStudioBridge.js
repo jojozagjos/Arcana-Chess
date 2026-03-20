@@ -1,4 +1,5 @@
 import { createEmptyArcanaStudioCard, migrateArcanaStudioCard } from './arcanaStudioSchema.js';
+import { buildStudioParticleTracksFromLegacy } from './arcanaStudioVfxPresets.js';
 
 function normalizeOverlayArray(overlay) {
   if (!overlay) return [];
@@ -146,31 +147,12 @@ export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
   });
   card.tracks.events = [eventTrack];
 
-  // Seed one generic particle track so legacy VFX values can be edited manually.
-  card.tracks.particles = [{
-    id: 'legacy_particles',
-    name: 'Legacy VFX',
-    attach: { mode: 'follow', targetId: 'targetPiece', parentId: null, offset: [0, 0, 0], parenting: true },
-    params: {
-      emissionRate: Number(config.vfx?.bloodParticles || config.vfx?.rewindParticles || config.vfx?.astralParticles || 24),
-      burstCount: 0,
-      velocityMin: 0.4,
-      velocityMax: Number(config.vfx?.particleVelocity || 1.2),
-      lifetimeMin: 0.2,
-      lifetimeMax: 1.1,
-      sizeOverLife: [1, 0.7, 0],
-      colorOverLife: ['#ffffff', '#88ccff', '#2244ff'],
-      gravity: [0, -9.81, 0],
-      drag: 0.08,
-      spawnShape: 'sphere',
-      spawnRadius: 0.4,
-      noiseStrength: 0.2,
-      noiseFrequency: 1.5,
-      material: { additive: true, softParticles: true },
-      subemitters: [],
-    },
-    keys: [{ id: 'legacy_particles_key_0', timeMs: 0, enabled: true, seed: 1337, easing: 'linear', overrides: {} }],
-  }];
+  card.tracks.particles = buildStudioParticleTracksFromLegacy({
+    cardId: id,
+    legacyConfig: config,
+    durationMs: card.durationMs,
+    objectTrackId: null,
+  });
 
   return migrateArcanaStudioCard(card, id);
 }

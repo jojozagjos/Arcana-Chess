@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { ChessPiece } from '../../../components/ChessPiece.jsx';
 import { sampleCameraTrack, sampleObjectTrack, sampleOverlayTrack, sampleParticleTrack } from './arcanaStudioPlayback.js';
 import { getScreenOverlaySamples, resolveRuntimeSquare } from './arcanaStudioRuntime.js';
+import { buildParticlePreviewPoints } from './arcanaStudioVfxPresets.js';
 import { squareToPosition } from '../sharedHelpers.jsx';
 
 const DEFAULT_WORLD_ANCHOR = [0, 0.15, 0];
@@ -141,31 +142,16 @@ function RuntimeParticleTrack({ track, card, eventParams, objectStates, playhead
   const attachAlias = resolveRuntimeSquare(attachTrack?.pieceSquare || track.attach?.targetId, eventParams, eventParams?.targetSquare || eventParams?.square || null);
   const attachPos = attachSample?.worldPosition || (attachAlias && /^[a-h][1-8]$/i.test(attachAlias) ? squareToPosition(attachAlias) : DEFAULT_WORLD_ANCHOR);
   const base = addVec3(attachPos, [0, 0.2, 0], track.attach?.offset || [0, 0, 0]);
-  const colors = sample.params?.colorOverLife || ['#88ccff'];
-
-  const points = useMemo(() => {
-    const count = Math.min(24, Math.max(4, Math.round((sample.params?.emissionRate || 12) / 2)));
-    const radius = sample.params?.spawnRadius || 0.35;
-    const seed = sample.seed || 1337;
-    return Array.from({ length: count }).map((_, index) => {
-      const angle = ((((seed * 0.123) + index) % count) / count) * Math.PI * 2;
-      const ring = 0.25 + ((seed + index * 17) % 100) / 100;
-      return [
-        base[0] + Math.cos(angle) * radius * ring,
-        base[1] + ((index % 6) / 6) * (sample.params?.lifetimeMax || 1),
-        base[2] + Math.sin(angle) * radius * ring,
-      ];
-    });
-  }, [base, sample]);
+  const points = useMemo(() => buildParticlePreviewPoints({ sample, anchor: base, maxPoints: 64 }), [base, sample]);
 
   if (!sample.active) return null;
 
   return (
     <group>
       {points.map((point, index) => (
-        <mesh key={`${track.id}-${index}`} position={point}>
-          <sphereGeometry args={[0.05 + ((index % 3) * 0.01), 8, 8]} />
-          <meshStandardMaterial color={colors[index % colors.length]} emissive="#7bd5ff" emissiveIntensity={1.2} transparent opacity={0.78} depthWrite={false} />
+        <mesh key={`${track.id}-${index}`} position={point.position}>
+          <sphereGeometry args={[point.size || 0.05, 8, 8]} />
+          <meshStandardMaterial color={point.color} emissive={point.color} emissiveIntensity={1.2} transparent opacity={point.opacity || 0.78} depthWrite={false} />
         </mesh>
       ))}
       {track.attach?.targetId && attachTrack && (

@@ -125,6 +125,16 @@
   min-height: 0;
 }
 
+.card-library-search {
+  border: 1px solid rgba(119, 159, 214, 0.34);
+  border-radius: 8px;
+  background: rgba(13, 23, 37, 0.8);
+  color: #def0ff;
+  padding: 8px 10px;
+  font-size: 0.83rem;
+  margin-bottom: 8px;
+}
+
 .arcana-card-list.compact {
   display: flex;
   flex-direction: column;
@@ -139,9 +149,11 @@
   text-align: left;
   border: 1px solid rgba(113, 159, 225, 0.3);
   border-radius: 10px;
-  background: rgba(21, 35, 56, 0.72);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(93, 158, 255, 0.18), transparent 40%),
+    rgba(21, 35, 56, 0.72);
   color: #dcebff;
-  padding: 8px;
+  padding: 9px;
   cursor: pointer;
 }
 
@@ -152,6 +164,15 @@
 
 .card-item:hover {
   border-color: rgba(174, 222, 255, 0.75);
+  transform: translateY(-1px);
+}
+
+.card-item-meta {
+  color: #95b3d5;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+  text-transform: uppercase;
 }
 
 .card-item-top {
@@ -309,6 +330,16 @@
   color: #def0ff;
   padding: 7px 9px;
   font-size: 0.84rem;
+}
+
+.meta-readonly {
+  border: 1px solid rgba(119, 159, 214, 0.34);
+  border-radius: 8px;
+  background: rgba(13, 23, 37, 0.42);
+  color: #b7d7f8;
+  padding: 7px 9px;
+  font-size: 0.84rem;
+  min-height: 18px;
 }
 
 .inspector-section textarea {
@@ -529,6 +560,120 @@
   margin: 4px 0;
 }
 
+.tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 7, 14, 0.78);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 18px;
+}
+
+.tutorial-modal {
+  width: min(980px, 100%);
+  max-height: min(760px, 92vh);
+  border: 1px solid rgba(126, 184, 255, 0.36);
+  border-radius: 16px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #08101b 0%, #0d1f34 55%, #0e2a45 100%);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.52);
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.tutorial-sidebar {
+  border-right: 1px solid rgba(119, 176, 240, 0.3);
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: linear-gradient(180deg, rgba(8, 19, 33, 0.9) 0%, rgba(10, 24, 40, 0.95) 100%);
+}
+
+.tutorial-sidebar h3 {
+  margin: 0 0 8px;
+  color: #d7eeff;
+  font-size: 0.96rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tutorial-progress {
+  color: #9dc7ee;
+  font-size: 0.76rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.tutorial-nav-item {
+  border: 1px solid rgba(102, 158, 224, 0.34);
+  border-radius: 10px;
+  background: rgba(15, 35, 58, 0.65);
+  color: #cce6ff;
+  text-align: left;
+  padding: 9px 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tutorial-nav-item.active {
+  border-color: rgba(141, 226, 255, 0.84);
+  box-shadow: 0 0 0 1px rgba(141, 226, 255, 0.3);
+  background: rgba(22, 64, 100, 0.6);
+}
+
+.tutorial-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tutorial-header {
+  border-bottom: 1px solid rgba(122, 176, 238, 0.28);
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tutorial-header h2 {
+  margin: 0;
+  color: #ecf6ff;
+  font-size: 1.15rem;
+}
+
+.tutorial-close {
+  border: 1px solid rgba(132, 181, 255, 0.46);
+  background: linear-gradient(180deg, #142a42 0%, #0f1d30 100%);
+  color: #d9ebff;
+  border-radius: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.tutorial-body {
+  overflow: auto;
+  padding: 16px 22px 18px;
+  color: #c8dff6;
+}
+
+.tutorial-body ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.tutorial-body li {
+  line-height: 1.45;
+}
+
 @media (max-width: 1400px) {
   .arcana-studio-layout {
     grid-template-columns: 240px minmax(0, 1fr) 300px;
@@ -556,6 +701,15 @@
 
   .card-meta.card-meta-extended.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tutorial-modal {
+    grid-template-columns: 1fr;
+  }
+
+  .tutorial-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid rgba(119, 176, 240, 0.3);
   }
 }
 

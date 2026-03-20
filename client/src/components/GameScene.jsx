@@ -150,6 +150,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const lastProcessedArcanaAtRef = useRef(null);
   const lastActiveVisualKeyRef = useRef(null);
   const USE_CARD_ANIM_MS = 2500;
+  const OPPONENT_DRAW_REVEAL_MS = 1800;
   const FILTERED_CYCLE_CATEGORY_META = {
     offense: { label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
     defense: { label: 'Defense', hint: 'Protection and survival', glyph: 'O' },
@@ -199,6 +200,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       return next.length > 300 ? next.slice(next.length - 300) : next;
     });
   };
+
+  const showReplayNotification = useCallback((message, durationMs = 1300) => {
+    setPendingMoveError(message);
+    const timeout = setTimeout(() => {
+      setPendingMoveError((prev) => (prev === message ? '' : prev));
+    }, durationMs);
+    timeoutsRef.current.push(timeout);
+  }, []);
 
   const playMoveSoundOnce = useCallback((dedupeKey, isCapture) => {
     const now = Date.now();
@@ -492,9 +501,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       if (event?.type === 'arcana_used') {
         const card = getEventCard(event);
         // Remove the first matching card by id; if unknown, remove the earliest drawn hidden card
-        const removeIdx = card.hidden
+        let removeIdx = card.hidden
           ? workingHands[pid].findIndex((c) => c.hidden)
           : workingHands[pid].findIndex((c) => c.id === card.id);
+        if (removeIdx === -1 && !card.hidden) {
+          // Opponent draws are often hidden in replay data; consume a hidden placeholder first.
+          removeIdx = workingHands[pid].findIndex((c) => c.hidden);
+        }
         if (removeIdx !== -1) workingHands[pid].splice(removeIdx, 1);
       }
     });
@@ -628,24 +641,102 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   const privateActiveCards = useMemo(() => {
     const cards = [];
+    const effects = gameState?.activeEffects || {};
+
+    const add = (id, name, duration, owner = 'you') => {
+      cards.push({ id: `${owner}-${id}`, name, duration, owner });
+    };
+
+    if (effects.ironFortress?.[myColorCode]) {
+      add('iron_fortress', 'Iron Fortress', 'Active until your turn starts');
+    }
+    if (effects.ironFortress?.[opponentColorChar]) {
+      add('iron_fortress', 'Iron Fortress', 'Opponent pawns are shielded', 'opponent');
+    }
+
+    if ((effects.castleBroken?.[myColorCode] || 0) > 0) {
+      const turns = effects.castleBroken[myColorCode];
+      add('castle_breaker', 'Castle Breaker', `${turns} turn${turns === 1 ? '' : 's'} left`);
+    }
+    if ((effects.castleBroken?.[opponentColorChar] || 0) > 0) {
+      const turns = effects.castleBroken[opponentColorChar];
+      add('castle_breaker', 'Castle Breaker', `${turns} turn${turns === 1 ? '' : 's'} left`, 'opponent');
+    }
+
+    if ((effects.sanctuaries || []).length > 0) {
+      const maxTurns = Math.max(...effects.sanctuaries.map((s) => s.turns || 0));
+      add('sanctuary', 'Sanctuary', `${effects.sanctuaries.length} square${effects.sanctuaries.length === 1 ? '' : 's'} (${maxTurns} turn max)`);
+    }
+
+    if ((effects.cursedSquares || []).length > 0) {
+      const maxTurns = Math.max(...effects.cursedSquares.map((c) => c.turns || 0));
+      add('cursed_square', 'Cursed Square', `${effects.cursedSquares.length} square${effects.cursedSquares.length === 1 ? '' : 's'} (${maxTurns} turn max)`);
+    }
+
+    if ((effects.poisonedPieces || []).length > 0) {
+      const minTurns = Math.min(...effects.poisonedPieces.map((p) => Math.ceil((p.turnsLeft || 0) / 2)));
+      add('poison_touch', 'Poisoned Pieces', `${effects.poisonedPieces.length} piece${effects.poisonedPieces.length === 1 ? '' : 's'} (min ${minTurns} turn)`);
+    }
+
+    if ((effects.squireSupport || []).length > 0) {
+      add('squire_support', 'Squire Support', `${effects.squireSupport.length} protected piece${effects.squireSupport.length === 1 ? '' : 's'}`);
+    }
+
+    if ((effects.queensGambit?.[myColorCode] || 0) > 0) {
+      add('queens_gambit', "Queen's Gambit", 'Extra move primed');
+    }
+    if ((effects.queensGambit?.[opponentColorChar] || 0) > 0) {
+      add('queens_gambit', "Queen's Gambit", 'Opponent extra move primed', 'opponent');
+    }
+
+    if (effects.berserkerRageActive?.color === myColorCode) {
+      add('berserker_rage', 'Berserker Rage', 'Second capture move available');
+    }
+    if (effects.berserkerRageActive?.color === opponentColorChar) {
+      add('berserker_rage', 'Berserker Rage', 'Opponent second capture move available', 'opponent');
+    }
+
+    if (effects.doubleStrikeActive?.color === myColorCode) {
+      add('double_strike', 'Double Strike', 'Second capture move available');
+    }
+    if (effects.doubleStrikeActive?.color === opponentColorChar) {
+      add('double_strike', 'Double Strike', 'Opponent second capture move available', 'opponent');
+    }
+
+    if (effects.fogOfWar?.[myColorCode]) {
+      add('fog_of_war', 'Fog of War', 'Active until your turn starts');
+    }
+    if (effects.fogOfWar?.[opponentColorChar]) {
+      add('fog_of_war', 'Fog of War', 'Opponent position fog active', 'opponent');
+    }
+
     if (hasVision) {
-      cards.push({ id: 'vision', name: 'Vision', duration: 'Ends when your current turn ends' });
+      add('vision', 'Vision', 'Ends when your current turn ends');
     }
     if (localTurnArcana.line_of_sight && highlightedArcana === 'line_of_sight') {
-      cards.push({ id: 'line_of_sight', name: 'Line of Sight', duration: 'Ends when your current turn ends' });
+      add('line_of_sight', 'Line of Sight', 'Ends when your current turn ends');
     }
     if (localTurnArcana.map_fragments && highlightedArcana === 'map_fragments') {
-      cards.push({ id: 'map_fragments', name: 'Map Fragments', duration: 'Ends when your current turn ends' });
+      add('map_fragments', 'Map Fragments', 'Ends when your current turn ends');
     }
     if (quietThoughtTurnsLeft > 0) {
-      cards.push({
-        id: 'quiet_thought',
-        name: 'Quiet Thought',
-        duration: `${quietThoughtTurnsLeft} of your turn${quietThoughtTurnsLeft === 1 ? '' : 's'} left`,
-      });
+      add(
+        'quiet_thought',
+        'Quiet Thought',
+        `${quietThoughtTurnsLeft} of your turn${quietThoughtTurnsLeft === 1 ? '' : 's'} left`
+      );
     }
+
     return cards;
-  }, [hasVision, highlightedArcana, localTurnArcana, quietThoughtTurnsLeft]);
+  }, [
+    gameState?.activeEffects,
+    hasVision,
+    highlightedArcana,
+    localTurnArcana,
+    myColorCode,
+    opponentColorChar,
+    quietThoughtTurnsLeft,
+  ]);
 
   // Time control countdown - update client-side display in real-time
   useEffect(() => {
@@ -971,7 +1062,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'draw', stayUntilClick: true, isHidden: false });
       } else {
         // For opponent draws, show a CardReveal animation (hidden card back)
-        setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'draw', stayUntilClick: false, isHidden: true });
+        setCardReveal({
+          arcana: data.arcana,
+          playerId: data.playerId,
+          type: 'draw',
+          stayUntilClick: false,
+          isHidden: true,
+          hideDurationMs: OPPONENT_DRAW_REVEAL_MS,
+        });
       }
     };
 
@@ -1606,19 +1704,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     eventsInRange.forEach((event) => {
       if (event?.type === 'arcana_drawn') {
         try { soundManager.play('cardDraw'); } catch {}
-
-        if (event.arcana) {
-          const revealTimeoutMs = 1300;
-          setCardReveal({
-            arcana: event.arcana,
-            playerId: event.playerId || null,
-            type: 'draw',
-            stayUntilClick: false,
-            isHidden: false,
-          });
-          const t = setTimeout(() => setCardReveal((prev) => (prev?.type === 'draw' ? null : prev)), revealTimeoutMs);
-          timeoutsRef.current.push(t);
-        }
+        const actor = event.playerId && event.playerId === mySocketId ? 'You' : 'Opponent';
+        showReplayNotification(`${actor} drew a card`);
       }
 
       if (event?.type === 'arcana_used') {
@@ -1642,19 +1729,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             at: event.at || Date.now(),
           });
           try { soundManager.play(event.soundKey || `arcana:${arcanaId}`); } catch {}
-        }
-
-        if (event.arcana) {
-          setCardReveal({
-            arcana: event.arcana,
-            playerId: event.playerId || null,
-            type: 'use',
-            stayUntilClick: false,
-          });
+          const actor = event.playerId && event.playerId === mySocketId ? 'You' : 'Opponent';
+          const label = event.arcana?.name || arcanaId.replace(/_/g, ' ');
+          showReplayNotification(`${actor} used ${label}`);
         }
       }
     });
-  }, [isReplayMode, replayFrames, replayEvents, replayIndex, replayPayload]);
+  }, [isReplayMode, replayFrames, replayEvents, replayIndex, replayPayload, mySocketId, showReplayNotification]);
 
   useEffect(() => {
     if (!isReplayMode || !isReplayPlaying || replayFrames.length <= 1) return undefined;
@@ -2107,11 +2188,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                         gap: 2,
                         padding: '5px 8px',
                         borderRadius: 6,
-                        background: 'rgba(136, 192, 208, 0.12)',
-                        border: '1px solid rgba(136, 192, 208, 0.22)',
+                        background: card.owner === 'opponent' ? 'rgba(191, 97, 106, 0.12)' : 'rgba(136, 192, 208, 0.12)',
+                        border: card.owner === 'opponent' ? '1px solid rgba(191, 97, 106, 0.28)' : '1px solid rgba(136, 192, 208, 0.22)',
                       }}
                     >
-                      <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#dbeeff' }}>{card.name}</div>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 700, color: card.owner === 'opponent' ? '#ffd8dd' : '#dbeeff' }}>{card.name}</div>
                       <div style={{ fontSize: '0.68rem', opacity: 0.82 }}>{card.duration}</div>
                     </div>
                   ))}
@@ -2651,7 +2732,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       {/* activeVisualArcana overlay removed - CardRevealAnimation handles all card displays */}
 
-      {cardReveal && !showMenu && (
+      {cardReveal && !showMenu && !isReplayMode && (
         <CardRevealAnimation
           arcana={cardReveal.arcana}
           playerId={cardReveal.playerId}
@@ -2659,6 +2740,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           mySocketId={mySocketId}
           stayUntilClick={cardReveal.stayUntilClick}
           isHidden={cardReveal.isHidden}
+          hideDurationMs={cardReveal.hideDurationMs}
           onDismiss={() => {
             // Inform server that the reveal animation finished so reveal-dependent
             // effects (AI moves, VFX sequencing) can proceed server-side.
@@ -3014,6 +3096,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   });
   const toColorCode = (color) => color === 'white' ? 'w' : 'b';
   const isMyTurn = currentTurn === toColorCode(myColor);
+  const cardRowRef = React.useRef(null);
 
   // Group cards by ID to handle duplicates
   const groupedCards = React.useMemo(() => {
@@ -3044,10 +3127,30 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
     }
   };
 
+  useEffect(() => {
+    const row = cardRowRef.current;
+    if (!row) return;
+
+    const onWheel = (event) => {
+      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+      if (delta === 0) return;
+      event.preventDefault();
+      row.scrollLeft -= delta;
+    };
+
+    row.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      row.removeEventListener('wheel', onWheel, { passive: false });
+    };
+  }, [cardRowRef]);
+
   return (
     <div style={styles.arcanaBottomPanel}>
       <div style={styles.arcanaBottomHeader}>
-        <span>Arcana</span>
+        <div style={styles.arcanaHeaderTitle}>
+          <span>Arcana</span>
+          <span style={styles.arcanaCountPill}>{groupedCards.length}</span>
+        </div>
         <div style={{ display: 'flex', gap: 4 }}>
           <button
             style={styles.drawCardButton}
@@ -3059,7 +3162,11 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
           </button>
         </div>
       </div>
-      <div style={styles.arcanaCardRow}>
+      <div
+        ref={cardRowRef}
+        className="arcana-card-row-scroll"
+        style={styles.arcanaCardRow}
+      >
         {groupedCards.length === 0 && (
           <div style={styles.arcanaEmpty}>No Arcana available. Draw a card!</div>
         )}
@@ -3101,7 +3208,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   );
 }
 
-function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClick, isHidden, onDismiss }) {
+function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClick, isHidden, hideDurationMs, onDismiss }) {
   // Hooks must always be called in the same order — declare them before any early returns
 
   const onDismissRef = React.useRef(onDismiss);
@@ -3116,7 +3223,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
     // 'draw' type: no auto-close — player must click to dismiss their own draw
     // Opponent hidden draws are auto-closed elsewhere via isHidden logic
     if (type === 'draw' && isHidden) {
-      const AUTO_DISMISS_DRAW_MS = 3600;
+      const AUTO_DISMISS_DRAW_MS = hideDurationMs || 1800;
       const auto = setTimeout(() => onDismissRef.current?.(), AUTO_DISMISS_DRAW_MS);
       return () => clearTimeout(auto);
     }
@@ -3312,7 +3419,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           pointerEvents: 'auto',
           animation: type === 'use'
             ? 'overlayShowThenFade 4.2s ease-in-out forwards'
-            : (isHidden ? 'overlayFadeOutSlow 0.35s ease-out 3.05s forwards' : 'overlayFadeIn 0.3s ease forwards')
+            : (isHidden ? 'overlayFadeOutSlow 0.3s ease-out 1.35s forwards' : 'overlayFadeIn 0.3s ease forwards')
         }}
         onClick={handleClick}
       >
@@ -4103,16 +4210,38 @@ const styles = {
     paddingBottom: 8,
     borderBottom: '1px solid rgba(136,192,208,0.2)',
   },
+  arcanaHeaderTitle: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  arcanaCountPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 24,
+    height: 18,
+    padding: '0 7px',
+    borderRadius: 999,
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    color: '#d8f6ff',
+    background: 'linear-gradient(135deg, rgba(62, 144, 166, 0.92), rgba(54, 110, 189, 0.92))',
+    border: '1px solid rgba(126, 212, 230, 0.45)',
+    boxShadow: '0 0 10px rgba(80, 188, 208, 0.28)',
+  },
   arcanaCardRow: {
     display: 'flex',
-    gap: 12,
-    justifyContent: 'center',
+    flexWrap: 'nowrap',
+    justifyContent: 'flex-start',
+    gap: 8,
     paddingBottom: 4,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     overflowX: 'auto',
-    overflowY: 'visible',
-    whiteSpace: 'nowrap',
+    overflowY: 'hidden',
+    maxHeight: '9rem',
     scrollbarWidth: 'thin',
+    scrollbarColor: 'rgba(112,228,221,0.95) rgba(9,18,31,0.72)',
   },
   arcanaTooltip: {
     position: 'absolute',

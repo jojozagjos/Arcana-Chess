@@ -1,17 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { soundManager } from '../game/soundManager.js';
 import { socket } from '../game/socket.js';
+import { GAME_MODE_OPTIONS } from '../../../shared/gameModes.js';
 import './styles/MainMenu.css';
 import MenuParticlesCanvas from './MenuParticles.jsx';
 
 const TIME_CONTROL_LABELS = {
   unlimited: 'Unlimited',
+  bullet: 'Bullet (5 min each)',
   blitz: 'Blitz (10 min each)',
   rapid: 'Rapid (30 min each)',
   classical: 'Classical (60 min each)',
 };
 
 const getTimeControlLabel = (value) => TIME_CONTROL_LABELS[value] || String(value || 'Unlimited');
+
+const getGameModeLabel = (modeId) => {
+  const mode = GAME_MODE_OPTIONS.find((m) => m.id === modeId);
+  if (!mode) return modeId;
+  return mode.description ? `${mode.label} (${mode.description})` : mode.label;
+};
 
 export function MainMenu({
   mode = 'root',
@@ -69,7 +77,7 @@ export function MainMenu({
                 <ul className="update-log-list">
                   <li>Updated the menu update log to a latest-version format with no older release entries.</li>
                   <li>Made secondary menu buttons fully rounded for a cleaner pill-button look.</li>
-                  <li>Improved in-lobby information layout so privacy, mode, clock, and player count are grouped in one place.</li>
+                  <li>Improved in-lobby information layout so privacy, mode, time, and player count are grouped in one place.</li>
                   <li>Restored full host time-control choices, including Classical.</li>
                 </ul>
               </div>
@@ -199,6 +207,7 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
   const [lobbyName, setLobbyName] = useState('My Lobby');
   const [isPrivate, setIsPrivate] = useState(false);
   const [gameMode, setGameMode] = useState('Ascendant');
+  const [whoStarts, setWhoStarts] = useState('white');
   const [timeControl, setTimeControl] = useState('unlimited');
   const [status, setStatus] = useState('');
   const [currentLobby, setCurrentLobby] = useState(initialLobby || null);
@@ -236,7 +245,7 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
     setStatus('Creating lobby...');
     socket.emit(
       'createLobby',
-      { lobbyName, isPrivate, gameMode, timeControl },
+      { lobbyName, isPrivate, gameMode, hostColorPreference: whoStarts, timeControl },
       (res) => {
         if (!res || !res.ok) {
           setStatus(`Error: ${res?.error || 'Unknown error'}`);
@@ -323,7 +332,15 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
               <div style={styles.lobbyMetaValue}>{currentLobby.gameMode}</div>
             </div>
             <div style={styles.lobbyMetaCard}>
-              <div style={styles.lobbyMetaLabel}>Time control</div>
+              <div style={styles.lobbyMetaLabel}>Mode description</div>
+              <div style={styles.lobbyMetaValue}>{GAME_MODE_OPTIONS.find((mode) => mode.id === currentLobby.gameMode)?.description || 'Default mode behavior'}</div>
+            </div>
+            <div style={styles.lobbyMetaCard}>
+              <div style={styles.lobbyMetaLabel}>Who starts</div>
+              <div style={styles.lobbyMetaValue}>{String(currentLobby.hostColorPreference || 'white').replace(/^./, (c) => c.toUpperCase())}</div>
+            </div>
+            <div style={styles.lobbyMetaCard}>
+              <div style={styles.lobbyMetaLabel}>Time</div>
               <div style={styles.lobbyMetaValue}>{getTimeControlLabel(currentLobby.timeControl)}</div>
             </div>
             <div style={styles.lobbyMetaCard}>
@@ -336,16 +353,18 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
 
         {/* Action buttons */}
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {isHost && (
+          {isHost && playersCount < 2 ? (
+            <div style={{ padding: 12, textAlign: 'center', background: 'rgba(136,192,208,0.1)', borderRadius: 8, fontSize: '0.9rem', color: '#88c0d0' }}>
+              Waiting for player...
+            </div>
+          ) : isHost ? (
             <button
               style={{ ...styles.primaryButton, width: '100%' }}
               onClick={handleStartGame}
-              disabled={playersCount < 2}
             >
-              {playersCount < 2 ? 'Waiting for player...' : 'Start match'}
+              Start match
             </button>
-          )}
-          {!isHost && (
+          ) : (
             <div style={{ padding: 12, textAlign: 'center', background: 'rgba(136,192,208,0.1)', borderRadius: 8, fontSize: '0.9rem', color: '#88c0d0' }}>
               Waiting for host to start the match...
             </div>
@@ -389,19 +408,34 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
               value={gameMode}
               onChange={(e) => setGameMode(e.target.value)}
             >
-              <option value="Ascendant">Ascendant (Arcana enabled)</option>
-              <option value="Classic">Classic Chess (no Arcana)</option>
+              {GAME_MODE_OPTIONS.map((mode) => (
+                <option key={mode.id} value={mode.id}>{getGameModeLabel(mode.id)}</option>
+              ))}
             </select>
           </label>
 
           <label style={styles.label}>
-            Time control
+            Who starts
+            <select
+              style={styles.input}
+              value={whoStarts}
+              onChange={(e) => setWhoStarts(e.target.value)}
+            >
+              <option value="white">White (move first)</option>
+              <option value="black">Black (move second)</option>
+              <option value="random">Random</option>
+            </select>
+          </label>
+
+          <label style={styles.label}>
+            Time
             <select
               style={styles.input}
               value={timeControl}
               onChange={(e) => setTimeControl(e.target.value)}
             >
               <option value="unlimited">{TIME_CONTROL_LABELS.unlimited}</option>
+              <option value="bullet">Bullet (5 min)</option>
               <option value="blitz">{TIME_CONTROL_LABELS.blitz}</option>
               <option value="rapid">{TIME_CONTROL_LABELS.rapid}</option>
               <option value="classical">{TIME_CONTROL_LABELS.classical}</option>
@@ -426,9 +460,11 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
           <h3 style={styles.sectionTitle}>{lobbyName || 'Untitled Lobby'}</h3>
           <div style={styles.previewList}>
             <div style={styles.previewRow}><span>Mode</span><strong>{gameMode}</strong></div>
+            <div style={styles.previewRow}><span>Mode description</span><strong>{GAME_MODE_OPTIONS.find((mode) => mode.id === gameMode)?.description || ''}</strong></div>
+            <div style={styles.previewRow}><span>Who starts</span><strong>{whoStarts.charAt(0).toUpperCase() + whoStarts.slice(1)}</strong></div>
+            <div style={styles.previewRow}><span>Time</span><strong>{getTimeControlLabel(timeControl)}</strong></div>
             <div style={styles.previewRow}><span>Privacy</span><strong>{isPrivate ? 'Private' : 'Public'}</strong></div>
-            <div style={styles.previewRow}><span>Clock</span><strong>{getTimeControlLabel(timeControl)}</strong></div>
-            <div style={styles.previewRow}><span>Seats</span><strong>2 players</strong></div>
+            {/* <div style={styles.previewRow}><span>Players</span><strong>2 players</strong></div> */}
           </div>
 
           <div style={styles.calloutBox}>
@@ -462,6 +498,12 @@ function AIGameForm({ rematchSettings = null }) {
     }
     return 'white';
   });
+
+  const getGameModeLabel = (modeId) => {
+    const mode = GAME_MODE_OPTIONS.find((m) => m.id === modeId);
+    if (!mode) return modeId;
+    return mode.description ? `${mode.label} (${mode.description})` : mode.label;
+  };
   const [timeControl, setTimeControl] = useState(() => {
     if (rematchSettings?.timeControl) {
       return rematchSettings.timeControl === null ? 'unlimited' : String(rematchSettings.timeControl);
@@ -493,19 +535,7 @@ function AIGameForm({ rematchSettings = null }) {
           <h3 style={styles.sectionTitle}>Create an AI game</h3>
           <div style={styles.helperText}>Choose the board rules, bot difficulty, and side before the match starts.</div>
 
-          <label style={styles.label}>
-            Game mode
-            <select
-              style={styles.input}
-              value={gameMode}
-              onChange={(e) => setGameMode(e.target.value)}
-            >
-              <option value="Ascendant">Ascendant (Arcana enabled)</option>
-              <option value="Classic">Classic Chess (no Arcana)</option>
-            </select>
-          </label>
-
-          <label style={styles.label}>
+           <label style={styles.label}>
             AI difficulty
             <select
               style={styles.input}
@@ -519,19 +549,33 @@ function AIGameForm({ rematchSettings = null }) {
           </label>
 
           <label style={styles.label}>
-            Your color
+            Game mode
+            <select
+              style={styles.input}
+              value={gameMode}
+              onChange={(e) => setGameMode(e.target.value)}
+            >
+              {GAME_MODE_OPTIONS.map((mode) => (
+                <option key={mode.id} value={mode.id}>{getGameModeLabel(mode.id)}</option>
+              ))}
+            </select>
+          </label>
+
+          <label style={styles.label}>
+            Who starts
             <select
               style={styles.input}
               value={playerColor}
               onChange={(e) => setPlayerColor(e.target.value)}
             >
               <option value="white">White (move first)</option>
-              <option value="black">Black (AI moves first)</option>
+              <option value="black">Black (move second)</option>
+              <option value="random">Random</option>
             </select>
           </label>
 
           <label style={styles.label}>
-            Time control
+            Time
             <select
               style={styles.input}
               value={timeControl}
@@ -551,9 +595,9 @@ function AIGameForm({ rematchSettings = null }) {
           <h3 style={styles.sectionTitle}>Versus AI</h3>
           <div style={styles.previewList}>
             <div style={styles.previewRow}><span>Mode</span><strong>{gameMode}</strong></div>
-            <div style={styles.previewRow}><span>Difficulty</span><strong>{difficulty}</strong></div>
-            <div style={styles.previewRow}><span>Your side</span><strong>{playerColor === 'white' ? 'White' : 'Black'}</strong></div>
-            <div style={styles.previewRow}><span>Clock</span><strong>{timeControl === 'unlimited' ? 'Unlimited' : `${timeControl} min`}</strong></div>
+            <div style={styles.previewRow}><span>Mode description</span><strong>{GAME_MODE_OPTIONS.find((mode) => mode.id === gameMode)?.description || ''}</strong></div>
+            <div style={styles.previewRow}><span>Who starts</span><strong>{playerColor === 'random' ? 'Random' : playerColor === 'white' ? 'White' : 'Black'}</strong></div>
+            <div style={styles.previewRow}><span>Time</span><strong>{timeControl === 'unlimited' ? 'Unlimited' : timeControl === 'bullet' ? '5 min' : `${timeControl} min`}</strong></div>
           </div>
 
           <div style={styles.calloutBox}>
@@ -1006,6 +1050,21 @@ const styles = {
     lineHeight: 1.5,
     color: '#cbbceb',
     marginBottom: 4,
+  },
+  modeDescriptionsList: {
+    border: '1px solid rgba(191, 161, 255, 0.16)',
+    borderRadius: 10,
+    background: 'rgba(27, 14, 44, 0.38)',
+    padding: 10,
+    display: 'grid',
+    gap: 6,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  modeDescriptionsItem: {
+    fontSize: '0.78rem',
+    color: '#d9ccf8',
+    lineHeight: 1.35,
   },
   label: {
     display: 'flex',

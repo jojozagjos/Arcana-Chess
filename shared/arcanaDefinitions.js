@@ -10,8 +10,6 @@ export const ARCANA_DEFINITIONS = [
     visualLifecycle: { mode: 'untilTurnEnd', autoClearOnServerTurnEnd: true },
     soundKey: 'arcana:shield',
   },
-    /* 'pawn_wall' removed: functionality replaced by 'pawn_guard' which now
-      shields only the first friendly piece immediately behind a pawn for 1 turn */
   {
     id: 'squire_support',
     name: 'Squire Support',
@@ -348,17 +346,6 @@ export const ARCANA_DEFINITIONS = [
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:peek_card',
   },
-  {
-    id: 'silence_seal',
-    name: 'Silence Seal',
-    rarity: 'uncommon',
-    category: 'utility',
-    description: 'Seal your opponent\'s arcana for their next turn. They cannot use cards during that turn.',
-    visual: { particles: true, animation: true, cutscene: false },
-    soundKey: 'arcana:silence_seal',
-    endsTurn: true,
-  },
-
   // TACTICAL / UTILITY - UNCOMMON+
   {
     id: 'fog_of_war',

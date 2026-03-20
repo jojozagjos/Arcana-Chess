@@ -106,24 +106,24 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
 
       {/* Poisoned pieces */}
       {active.poisonedPieces && active.poisonedPieces.map((p, i) => (
-        Effects.PoisonedPieceEffect ? <Effects.PoisonedPieceEffect key={`poison-${i}`} square={p.square} turnsLeft={p.turnsLeft} /> : null
+        Effects.PoisonedPieceEffect ? <Effects.PoisonedPieceEffect key={`poison-${p.square || 'unknown'}-${p.poisonedBy || 'x'}-${i}`} square={p.square} turnsLeft={p.turnsLeft} /> : null
       ))}
 
       {/* Squire Support indicators */}
       {active.squireSupport && active.squireSupport.map((s, i) => (
         Effects.SquireSupportEffect && (!viewerColorCode || !s.ownerColor || s.ownerColor === viewerColorCode)
-          ? <Effects.SquireSupportEffect key={`squire-${i}`} square={s.square} />
+          ? <Effects.SquireSupportEffect key={`squire-${s.square || 'unknown'}-${i}`} square={s.square} />
           : null
       ))}
 
       {/* Sanctuary indicators */}
       {active.sanctuaries && active.sanctuaries.map((s, i) => (
-        Effects.SanctuaryIndicatorEffect ? <Effects.SanctuaryIndicatorEffect key={`sanctuary-${i}`} square={s.square} /> : null
+        Effects.SanctuaryIndicatorEffect ? <Effects.SanctuaryIndicatorEffect key={`sanctuary-${s.square || 'unknown'}-${i}`} square={s.square} /> : null
       ))}
 
       {/* Cursed square indicators */}
       {active.cursedSquares && active.cursedSquares.map((c, i) => (
-        Effects.CursedSquareIndicatorEffect ? <Effects.CursedSquareIndicatorEffect key={`cursed-${i}`} square={c.square} turnsLeft={c.turns} /> : null
+        Effects.CursedSquareIndicatorEffect ? <Effects.CursedSquareIndicatorEffect key={`cursed-${c.square || 'unknown'}-${i}`} square={c.square} turnsLeft={c.turns} /> : null
       ))}
 
       {/* Pawn shields (display for both colors if present) */}

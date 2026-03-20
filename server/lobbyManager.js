@@ -19,6 +19,7 @@ export class LobbyManager {
       lobbyName = 'New Lobby',
       isPrivate = false,
       gameMode = 'Ascendant',
+      hostColorPreference = 'white',
       timeControl = 'unlimited',
     } = payload || {};
 
@@ -31,6 +32,7 @@ export class LobbyManager {
       code,
       isPrivate,
       gameMode,
+      hostColorPreference,
       timeControl,
       hostId: socket.id,
       players: [socket.id],

@@ -4,10 +4,9 @@ import { Html, OrbitControls, TransformControls, useAnimations, useGLTF } from '
 import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaStudioTutorial } from './ArcanaStudioTutorial.jsx';
 import {
+  ARCANA_STUDIO_STORAGE_KEY,
   createEmptyArcanaStudioCard,
-  loadArcanaStudioCardsMap,
   migrateArcanaStudioCard,
-  saveArcanaStudioCardsMap,
 } from '../game/arcana/studio/arcanaStudioSchema.js';
 import {
   collectTimelineRows,
@@ -17,14 +16,17 @@ import {
   sampleParticleTrack,
 } from '../game/arcana/studio/arcanaStudioPlayback.js';
 import { resolveSoundPreviewUrl } from '../game/arcana/studio/arcanaStudioRuntime.js';
-import { getAllCutsceneCards } from '../game/arcana/cutsceneDefinitions.js';
+import { getAllCutsceneCards, getAllCutsceneConfigs } from '../game/arcana/cutsceneDefinitions.js';
+import { legacyCutsceneToArcanaStudioCard } from '../game/arcana/studio/arcanaStudioBridge.js';
+import { buildParticlePreviewPoints, buildStudioParticleTracksFromLegacy } from '../game/arcana/studio/arcanaStudioVfxPresets.js';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import './styles/ArcanaStudio.css';
 
-const DEFAULT_WORLD_ANCHOR = [0, 0.15, 0];
-const EASINGS = ['linear', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'easeInCubic', 'easeOutCubic', 'easeInOutCubic', 'customBezier'];
-const TRACK_TYPES = ['camera', 'object', 'particle', 'overlay', 'sound', 'event'];
+const DEFAULT_WORLD_ANCHOR = [0, 0.075, 0];
+const EASINGS = ['linear', 'instant', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'easeInCubic', 'easeOutCubic', 'easeInOutCubic', 'customBezier'];
+const TRACK_TYPES = ['camera', 'object', 'particle', 'overlay', 'sound'];
+const LEGACY_CUTSCENE_CONFIGS = getAllCutsceneConfigs();
 
 function uid(prefix = 'id') {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -56,7 +58,7 @@ function parseFenPieces(fenStr) {
           square,
           type: char.toLowerCase(),
           isWhite: char === char.toUpperCase(),
-          targetPosition: [x, 0.15, z],
+          targetPosition: [x, 0.075, z],
         });
         file += 1;
       }
@@ -72,7 +74,7 @@ function squareToPiece(square, type = 'p', isWhite = true) {
     square: square.toLowerCase(),
     type,
     isWhite,
-    targetPosition: [x, 0.15, z],
+    targetPosition: [x, 0.075, z],
   };
 }
 
@@ -121,29 +123,186 @@ function makeCardFromGameCard(gameCard, isCutscene = false, forceId = null) {
   return next;
 }
 
+function normalizeCardId(cardId = '') {
+  return cardId === 'arcane_cycle' ? 'filtered_cycle' : cardId;
+}
+
+function findDefinitionById(cardId = '') {
+  const runtimeId = cardId === 'filtered_cycle' ? 'arcane_cycle' : cardId;
+  return (ARCANA_DEFINITIONS || []).find((entry) => entry.id === runtimeId) || null;
+}
+
+function getCardDescription(card = {}) {
+  if (card.description) return card.description;
+  return findDefinitionById(card.id)?.description || '';
+}
+
+function isDefinitionCutscene(cardId = '') {
+  return Boolean(findDefinitionById(cardId)?.visual?.cutscene);
+}
+
+function hasMeaningfulCutsceneData(card = {}) {
+  const cameraKeys = (card.tracks?.camera || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
+  const particleKeys = (card.tracks?.particles || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
+  const overlayKeys = (card.tracks?.overlays || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
+  const soundKeys = (card.tracks?.sounds || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
+  return cameraKeys > 1 || particleKeys > 0 || overlayKeys > 0 || soundKeys > 0;
+}
+
 function getAllAvailableCards() {
   const cards = {};
+  const cutsceneIds = new Set(
+    (ARCANA_DEFINITIONS || [])
+      .filter((entry) => Boolean(entry.visual?.cutscene))
+      .map((entry) => normalizeCardId(entry.id)),
+  );
 
   const cutsceneCards = getAllCutsceneCards();
-  Object.entries(cutsceneCards || {}).forEach(([rawId, card]) => {
-    const id = rawId === 'arcane_cycle' ? 'filtered_cycle' : rawId;
+  const legacyCutsceneConfigs = getAllCutsceneConfigs();
+  cutsceneIds.forEach((id) => {
+    let card = cutsceneCards?.[id];
+    if (!hasMeaningfulCutsceneData(card) && legacyCutsceneConfigs?.[id]) {
+      card = legacyCutsceneToArcanaStudioCard(legacyCutsceneConfigs[id], { id });
+    }
+    if (!card) return;
     const migrated = migrateArcanaStudioCard(card, id);
     migrated.id = id;
+    const definition = findDefinitionById(id);
+    migrated.name = migrated.name || definition?.name || id;
+    migrated.description = migrated.description || definition?.description || '';
     migrated.meta = { ...(migrated.meta || {}), isCutscene: true };
     cards[id] = migrated;
   });
 
   (ARCANA_DEFINITIONS || []).forEach((gameCard) => {
-    const id = gameCard.id === 'arcane_cycle' ? 'filtered_cycle' : gameCard.id;
+    const id = normalizeCardId(gameCard.id);
+    const isCutscene = Boolean(gameCard.visual?.cutscene);
     if (!cards[id]) {
-      cards[id] = makeCardFromGameCard({ ...gameCard, id }, false, id);
+      cards[id] = makeCardFromGameCard({ ...gameCard, id }, isCutscene, id);
     } else {
       cards[id].name = cards[id].name || gameCard.name || id;
       cards[id].description = cards[id].description || gameCard.description || '';
+      cards[id].meta = { ...(cards[id].meta || {}), isCutscene };
+    }
+
+    if (!isCutscene) {
+      cards[id].tracks = {
+        ...(cards[id].tracks || {}),
+        camera: [],
+      };
     }
   });
 
   return cards;
+}
+
+function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
+  const id = normalizeCardId(rawCard?.id || fallbackId);
+  const migrated = migrateArcanaStudioCard(rawCard, id);
+  const definition = findDefinitionById(id);
+  const isCutscene = Boolean(definition?.visual?.cutscene);
+  const legacyCutscene = LEGACY_CUTSCENE_CONFIGS?.[id] || LEGACY_CUTSCENE_CONFIGS?.[(id === 'filtered_cycle' ? 'arcane_cycle' : id)] || null;
+
+  const tracks = { ...(migrated.tracks || {}) };
+  let objects = [...(tracks.objects || [])];
+  if (!objects.length) {
+    objects = [createDefaultTrack('object', 0, '', id)];
+  }
+
+  const pieceTrackIndex = objects.findIndex((track) => track?.type === 'piece');
+  if (pieceTrackIndex < 0) {
+    objects.unshift(createDefaultTrack('object', 0, '', id));
+  } else if (pieceTrackIndex > 0) {
+    const [main] = objects.splice(pieceTrackIndex, 1);
+    objects.unshift(main);
+  }
+
+  const mainPiece = objects[0] || createDefaultTrack('object', 0, '', id);
+  const normalizedMainPieceKeys = Array.isArray(mainPiece.keys)
+    ? mainPiece.keys.map((key) => ({
+      ...key,
+      scale: Array.isArray(key?.scale) && key.scale.length >= 3
+        ? key.scale
+        : [1.8, 1.8, 1.8],
+    }))
+    : [];
+  objects[0] = {
+    ...mainPiece,
+    id: mainPiece.id || uid('obj'),
+    name: 'Main Piece',
+    type: 'piece',
+    pieceSquare: '',
+    pieceType: mainPiece.pieceType || inferPieceTypeFromCard(id),
+    pieceColor: mainPiece.pieceColor || 'white',
+    isAnimatablePiece: true,
+    attach: { mode: 'world-space', targetId: null, parentId: null, offset: [0, 0, 0], parenting: false },
+    keys: normalizedMainPieceKeys,
+  };
+
+  let particles = [...(tracks.particles || [])];
+  if (particles.length === 0) {
+    const importedTracks = buildStudioParticleTracksFromLegacy({
+      cardId: id,
+      legacyConfig: legacyCutscene?.config || null,
+      durationMs: migrated.durationMs,
+      objectTrackId: objects[0]?.id || null,
+    });
+    if (importedTracks.length > 0) {
+      particles = importedTracks;
+    } else if (definition?.visual?.particles) {
+      particles = [createDefaultTrack('particle', 0, '', id)];
+    }
+  }
+
+  const defaultParticleKey = createDefaultTrack('particle', 0, '', id).keys?.[0] || null;
+  particles = particles.map((track, index) => ({
+    ...track,
+    id: track?.id || uid('pt'),
+    name: track?.name || `Particle ${index + 1}`,
+    attach: {
+      ...(track?.attach || {}),
+      mode: track?.attach?.mode || 'follow',
+      targetId: track?.attach?.targetId || objects[0]?.id || null,
+      offset: Array.isArray(track?.attach?.offset) ? track.attach.offset : [0, 0, 0],
+    },
+    keys: Array.isArray(track?.keys) && track.keys.length > 0
+      ? track.keys
+      : (defaultParticleKey ? [{ ...defaultParticleKey, id: uid('ptk') }] : []),
+  }));
+
+  tracks.objects = objects;
+  tracks.particles = particles;
+  tracks.camera = isCutscene ? [...(tracks.camera || [])] : [];
+
+  return {
+    ...migrated,
+    id,
+    name: migrated.name || definition?.name || id,
+    description: migrated.description || definition?.description || '',
+    tracks,
+    meta: {
+      ...(migrated.meta || {}),
+      isCutscene,
+    },
+  };
+}
+
+function buildStudioCardsMap() {
+  const base = getAllAvailableCards();
+  const normalized = {};
+
+  Object.entries(base).forEach(([id, card]) => {
+    normalized[id] = sanitizeCardForStudio(card, id);
+  });
+
+  (ARCANA_DEFINITIONS || []).forEach((definition) => {
+    const id = normalizeCardId(definition.id);
+    if (!normalized[id]) {
+      normalized[id] = sanitizeCardForStudio(makeCardFromGameCard({ ...definition, id }, Boolean(definition.visual?.cutscene), id), id);
+    }
+  });
+
+  return normalized;
 }
 
 function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'e4', cardId = '') {
@@ -168,7 +327,7 @@ function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'e4', cardId = '
   if (type === 'object') {
     return {
       id: uid('obj'),
-      name: 'Default Piece',
+      name: 'Main Piece',
       active: true,
       type: 'piece',
       pieceSquare: '',
@@ -180,16 +339,8 @@ function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'e4', cardId = '
       clipLoop: true,
       previewPlayAnimation: false,
       isAnimatablePiece: true,
-      attach: { mode: 'world', targetId: null, parentId: null, offset: [0, 0, 0], parenting: false },
-      keys: [{
-        id: uid('objk'),
-        timeMs: playheadMs,
-        position: [0, 0.15, 0],
-        rotation: [0, 0, 0],
-        scale: [1.8, 1.8, 1.8],
-        easing: 'easeInOutCubic',
-        bezier: [0.25, 0.1, 0.25, 1],
-      }],
+      attach: { mode: 'world-space', targetId: null, parentId: null, offset: [0, 0, 0], parenting: false },
+      keys: [],
     };
   }
 
@@ -263,7 +414,7 @@ function findTrack(card, trackType, trackId) {
 }
 
 function resolveTrackStates(card, boardPieces, timeMs) {
-  const tracks = (card?.tracks?.objects || []).filter((track) => track.active !== false);
+  const tracks = card?.tracks?.objects || [];
   const bySquare = new Map(boardPieces.map((piece) => [piece.square, piece]));
   const byId = new Map(tracks.map((track) => [track.id, track]));
   const resolved = {};
@@ -289,9 +440,10 @@ function resolveTrackStates(card, boardPieces, timeMs) {
     visiting.add(trackId);
     const sampled = sampleObjectTrack(track, timeMs);
     const attachMode = track.attach?.mode || 'follow';
+    const isWorldSpace = attachMode === 'world-space' || attachMode === 'world';
 
     let anchor = DEFAULT_WORLD_ANCHOR;
-    if (attachMode !== 'world-space') {
+    if (!isWorldSpace) {
       if (track.attach?.targetId && byId.has(track.attach.targetId)) {
         anchor = resolveTrack(track.attach.targetId)?.worldPosition || anchor;
       } else {
@@ -387,8 +539,8 @@ function CameraKeyGizmos({ tracks, visible }) {
         }
         return (
           <group key={`${track.id}_${key.id}`} position={pos} quaternion={[qx, qy, qz, qw]}>
-            <mesh>
-              <pyramidGeometry args={[0.22, 0.18, 0.35, 4]} />
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+              <coneGeometry args={[0.2, 0.36, 4]} />
               <meshStandardMaterial color="#3dd9ff" emissive="#00ccff" emissiveIntensity={0.55} />
             </mesh>
             <Html center>
@@ -402,20 +554,7 @@ function CameraKeyGizmos({ tracks, visible }) {
 }
 
 function StudioParticlePreview({ track, sample, anchor }) {
-  const points = useMemo(() => {
-    if (!sample.active) return [];
-    const count = clamp(Math.round((sample.params?.emissionRate || 10) / 2), 4, 32);
-    const radius = sample.params?.spawnRadius || 0.3;
-    const colors = sample.params?.colorOverLife || ['#aef4ff', '#63d5ff'];
-    return Array.from({ length: count }).map((_, idx) => {
-      const t = idx / Math.max(1, count - 1);
-      const angle = (Math.PI * 2 * idx) / count;
-      return {
-        position: [anchor[0] + Math.cos(angle) * radius, anchor[1] + t * 0.8, anchor[2] + Math.sin(angle) * radius],
-        color: colors[idx % colors.length],
-      };
-    });
-  }, [sample, anchor]);
+  const points = useMemo(() => buildParticlePreviewPoints({ sample, anchor, maxPoints: 84 }), [sample, anchor]);
 
   if (!points.length) return null;
 
@@ -423,8 +562,8 @@ function StudioParticlePreview({ track, sample, anchor }) {
     <group>
       {points.map((point, idx) => (
         <mesh key={`${track.id}_${idx}`} position={point.position}>
-          <sphereGeometry args={[0.05, 8, 8]} />
-          <meshStandardMaterial color={point.color} emissive={point.color} emissiveIntensity={0.65} transparent opacity={0.76} />
+          <sphereGeometry args={[point.size || 0.05, 8, 8]} />
+          <meshStandardMaterial color={point.color} emissive={point.color} emissiveIntensity={0.85} transparent opacity={point.opacity || 0.76} depthWrite={false} />
         </mesh>
       ))}
     </group>
@@ -476,8 +615,14 @@ function ImportedMesh({ uri, play, clipTimeMs, clipName, clipLoop }) {
 }
 
 function TrackFallbackMesh({ track, piece }) {
-  if (track.type === 'piece' && piece) {
-    return <ChessPiece {...piece} targetPosition={[0, 0.15, 0]} />;
+  if (track.type === 'piece') {
+    const renderedPiece = piece || {
+      square: track.pieceSquare || 'e4',
+      type: track.pieceType || 'p',
+      isWhite: (track.pieceColor || 'white') !== 'black',
+      targetPosition: [0, 0.075, 0],
+    };
+    return <ChessPiece {...renderedPiece} targetPosition={[0, 0.075, 0]} />;
   }
 
   return (
@@ -503,53 +648,50 @@ function StudioObjectEntity({
 }) {
   const entityRef = useRef(null);
   const finalPosition = sampled?.worldPosition || sampled?.anchorPosition || piece?.targetPosition || DEFAULT_WORLD_ANCHOR;
+  const anchorPosition = sampled?.anchorPosition || DEFAULT_WORLD_ANCHOR;
 
   const content = track.assetUri
     ? <ImportedMesh uri={track.assetUri} play={Boolean(track.previewPlayAnimation && playPreview)} clipTimeMs={Math.max(0, playheadMs - (track.clipOffsetMs || 0))} clipName={track.clipName} clipLoop={track.clipLoop !== false} />
     : <TrackFallbackMesh track={track} piece={piece} />;
 
   return (
-    <group
-      ref={entityRef}
-      position={finalPosition}
-      rotation={sampled?.rotation || [0, 0, 0]}
-      scale={sampled?.scale || [1, 1, 1]}
-      onClick={(event) => {
-        event.stopPropagation();
-        onSelect();
-      }}
-    >
-      {content}
-      {enableTransformControls ? (
+    <>
+      <group
+        ref={entityRef}
+        position={finalPosition}
+        rotation={sampled?.rotation || [0, 0, 0]}
+        scale={sampled?.scale || [1, 1, 1]}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+      >
+        {content}
+      </group>
+      {enableTransformControls && entityRef.current ? (
         <TransformControls
           object={entityRef.current}
           mode={transformMode}
           size={0.85}
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            onTransformDragging?.(true);
-          }}
-          onMouseUp={(event) => {
-            event.stopPropagation();
-            onTransformDragging?.(false);
+          onDraggingChanged={(event) => {
+            onTransformDragging?.(Boolean(event?.value));
           }}
           onObjectChange={() => {
             const node = entityRef.current;
             if (!node) return;
             onTransformChange?.({
-              position: [node.position.x, node.position.y, node.position.z],
+              position: [
+                node.position.x - anchorPosition[0],
+                node.position.y - anchorPosition[1],
+                node.position.z - anchorPosition[2],
+              ],
               rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
               scale: [node.scale.x, node.scale.y, node.scale.z],
             });
           }}
         />
       ) : null}
-      {selected ? (
-        <Html center>
-          <div className="viewport-tag">{track.name}</div>
-        </Html>
-      ) : null}
-    </group>
+    </>
   );
 }
 
@@ -563,8 +705,12 @@ function StudioScene({
   selection,
   onSelectTrack,
   onDeselect,
+  onTransformInteraction,
   transformMode,
   onTransformObjectKey,
+  selectedCameraKey,
+  cameraTransformTarget,
+  onTransformCameraKey,
   previewMode,
   isPlaying,
   showCameraGizmos,
@@ -572,9 +718,9 @@ function StudioScene({
   const controlsRef = useRef(null);
   const { camera } = useThree();
 
-  const activeObjects = useMemo(() => (card.tracks?.objects || []).filter((track) => track.active !== false), [card]);
-  const activeParticles = useMemo(() => (card.tracks?.particles || []).filter((track) => track.active !== false), [card]);
-  const activeOverlays = useMemo(() => (sampledOverlays || []).filter(({ track }) => track.active !== false), [sampledOverlays]);
+  const activeObjects = useMemo(() => card.tracks?.objects || [], [card]);
+  const activeParticles = useMemo(() => card.tracks?.particles || [], [card]);
+  const activeOverlays = useMemo(() => sampledOverlays || [], [sampledOverlays]);
   const pieceBySquare = useMemo(() => new Map(boardPieces.map((piece) => [piece.square, piece])), [boardPieces]);
 
   const animatedSquares = useMemo(
@@ -583,13 +729,14 @@ function StudioScene({
   );
 
   useEffect(() => {
-    if (!sampledCamera) return;
+    const shouldDriveCamera = Boolean(sampledCamera) && (isPlaying || selection?.trackType === 'camera');
+    if (!shouldDriveCamera) return;
     camera.position.set(...(sampledCamera.position || [7, 8, 7]));
     camera.fov = sampledCamera.fov || 55;
     camera.updateProjectionMatrix();
     controlsRef.current?.target.set(...(sampledCamera.target || [0, 0, 0]));
     controlsRef.current?.update();
-  }, [camera, sampledCamera]);
+  }, [camera, sampledCamera, isPlaying, selection?.trackType]);
 
   return (
     <>
@@ -631,10 +778,11 @@ function StudioScene({
             playheadMs={playheadMs}
             playPreview={isPlaying}
             transformMode={transformMode}
-            enableTransformControls={selection?.trackType === 'object' && selection?.trackId === track.id && Boolean(selection?.keyId)}
+            enableTransformControls={selection?.trackType === 'object' && selection?.trackId === track.id}
             onTransformChange={(patch) => onTransformObjectKey?.(track.id, patch)}
             onTransformDragging={(isDragging) => {
               if (controlsRef.current) controlsRef.current.enabled = !isDragging;
+              onTransformInteraction?.(isDragging);
             }}
           />
         );
@@ -694,6 +842,35 @@ function StudioScene({
           );
         })}
 
+      {selection?.trackType === 'camera' && selectedCameraKey ? (
+        <TransformControls
+          mode="translate"
+          onMouseDown={() => {
+            if (controlsRef.current) controlsRef.current.enabled = false;
+            onTransformInteraction?.(true);
+          }}
+          onMouseUp={() => {
+            if (controlsRef.current) controlsRef.current.enabled = true;
+            onTransformInteraction?.(false);
+          }}
+          onObjectChange={(event) => {
+            const node = event?.target?.object;
+            if (!node) return;
+            const key = cameraTransformTarget === 'target' ? 'target' : 'position';
+            onTransformCameraKey?.({ [key]: [node.position.x, node.position.y, node.position.z] });
+          }}
+        >
+          <mesh position={(cameraTransformTarget === 'target' ? selectedCameraKey.target : selectedCameraKey.position) || [7, 8, 7]}>
+            <sphereGeometry args={[0.18, 16, 16]} />
+            <meshStandardMaterial
+              color={cameraTransformTarget === 'target' ? '#f6d367' : '#67d3ff'}
+              emissive={cameraTransformTarget === 'target' ? '#8f6f0f' : '#0f6c8f'}
+              emissiveIntensity={0.45}
+            />
+          </mesh>
+        </TransformControls>
+      ) : null}
+
       <CameraKeyGizmos tracks={card.tracks?.camera || []} visible={showCameraGizmos} />
       <OrbitControls ref={controlsRef} makeDefault />
     </>
@@ -720,9 +897,7 @@ function truncate(text = '', max = 110) {
 
 export function ArcanaStudio({ onBack }) {
   const [cards, setCards] = useState(() => {
-    const base = getAllAvailableCards();
-    const stored = loadArcanaStudioCardsMap();
-    return { ...base, ...stored };
+    return buildStudioCardsMap();
   });
 
   const [selectedId, setSelectedId] = useState(() => {
@@ -736,9 +911,11 @@ export function ArcanaStudio({ onBack }) {
   const [showTutorial, setShowTutorial] = useState(false);
   const [showCameraGizmos, setShowCameraGizmos] = useState(true);
   const [transformMode, setTransformMode] = useState('translate');
-  const [showActiveOnly, setShowActiveOnly] = useState(false);
+  const [cameraTransformTarget, setCameraTransformTarget] = useState('position');
+  const [cardSearch, setCardSearch] = useState('');
   const [status, setStatus] = useState('Ready');
   const [dragKey, setDragKey] = useState(null);
+  const suppressDeselectUntilRef = useRef(0);
 
   const laneRefs = useRef({});
   const playbackFrameRef = useRef(null);
@@ -756,6 +933,7 @@ export function ArcanaStudio({ onBack }) {
 
   const sampledCamera = useMemo(() => {
     const activeCamera = (selectedCard.tracks?.camera || []).find((track) => track.active !== false) || selectedCard.tracks?.camera?.[0];
+    if (!activeCamera) return null;
     return sampleCameraTrack(activeCamera, playheadMs);
   }, [selectedCard, playheadMs]);
 
@@ -763,19 +941,11 @@ export function ArcanaStudio({ onBack }) {
 
   const sampledOverlays = useMemo(() => (
     (selectedCard.tracks?.overlays || [])
-      .filter((track) => track.active !== false)
       .map((track) => ({ track, sample: sampleOverlayTrack(track, playheadMs) }))
       .filter((entry) => entry.sample)
   ), [selectedCard, playheadMs]);
 
-  const timelineRows = useMemo(() => {
-    const rows = collectTimelineRows(selectedCard);
-    if (!showActiveOnly) return rows;
-    return rows.filter((row) => {
-      const track = findTrack(selectedCard, row.type, row.id);
-      return track?.active !== false;
-    });
-  }, [selectedCard, showActiveOnly]);
+  const timelineRows = useMemo(() => collectTimelineRows(selectedCard), [selectedCard]);
 
   const selectedTrack = useMemo(() => {
     if (!selection?.trackType || !selection?.trackId) return null;
@@ -788,6 +958,7 @@ export function ArcanaStudio({ onBack }) {
   }, [selectedTrack, selection]);
 
   const screenOverlays = sampledOverlays.filter(({ track }) => (track.space || 'screen') !== 'world');
+  const selectedCardDescription = useMemo(() => getCardDescription(selectedCard) || 'No description', [selectedCard]);
 
   useEffect(() => {
     const handleSpace = (event) => {
@@ -799,6 +970,14 @@ export function ArcanaStudio({ onBack }) {
 
     window.addEventListener('keydown', handleSpace);
     return () => window.removeEventListener('keydown', handleSpace);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem(ARCANA_STUDIO_STORAGE_KEY);
+    } catch {
+      // ignore storage access failures
+    }
   }, []);
 
   useEffect(() => {
@@ -822,9 +1001,7 @@ export function ArcanaStudio({ onBack }) {
         },
       }, selectedId);
 
-      const next = { ...prev, [selectedId]: patched };
-      saveArcanaStudioCardsMap(next);
-      return next;
+      return { ...prev, [selectedId]: patched };
     });
 
     setStatus('Created default animatable piece track for card');
@@ -907,7 +1084,7 @@ export function ArcanaStudio({ onBack }) {
 
     if (!isPlaying) return undefined;
 
-    (selectedCard.tracks?.sounds || []).filter((track) => track.active !== false).forEach((track) => {
+    (selectedCard.tracks?.sounds || []).forEach((track) => {
       (track.keys || []).forEach((key) => {
         const delay = Math.max(0, (key.timeMs || 0) - playheadMs);
         const timer = setTimeout(() => {
@@ -939,14 +1116,17 @@ export function ArcanaStudio({ onBack }) {
   }, [isPlaying, selectedCard, playheadMs]);
 
   function updateCards(next, statusText = '') {
-    setCards(next);
-    saveArcanaStudioCardsMap(next);
+    const normalized = {};
+    Object.entries(next || {}).forEach(([id, card]) => {
+      normalized[id] = sanitizeCardForStudio(card, id);
+    });
+    setCards(normalized);
     if (statusText) setStatus(statusText);
   }
 
   function updateSelectedCard(patcher, statusText = '') {
     const current = migrateArcanaStudioCard(cards[selectedId] || selectedCard, selectedId);
-    const patched = migrateArcanaStudioCard(patcher(current), selectedId);
+    const patched = sanitizeCardForStudio(migrateArcanaStudioCard(patcher(current), selectedId), selectedId);
     updateCards({ ...cards, [selectedId]: patched }, statusText);
   }
 
@@ -995,7 +1175,8 @@ export function ArcanaStudio({ onBack }) {
       if (trackType === 'camera') {
         key = { id: uid('camk'), timeMs: Math.round(playheadMs), position: [7, 8, 7], target: [0, 0, 0], fov: 55, easing: 'easeInOutCubic', bezier: [0.25, 0.1, 0.25, 1], blendMode: 'curve' };
       } else if (trackType === 'object') {
-        key = { id: uid('objk'), timeMs: Math.round(playheadMs), position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], easing: 'easeInOutCubic', bezier: [0.25, 0.1, 0.25, 1] };
+        const defaultScale = track.isAnimatablePiece ? [1.8, 1.8, 1.8] : [1, 1, 1];
+        key = { id: uid('objk'), timeMs: Math.round(playheadMs), position: [0, 0, 0], rotation: [0, 0, 0], scale: defaultScale, easing: 'easeInOutCubic', bezier: [0.25, 0.1, 0.25, 1] };
       } else if (trackType === 'particle') {
         key = { id: uid('ptk'), timeMs: Math.round(playheadMs), enabled: true, seed: 1337, easing: 'linear', overrides: {} };
       } else if (trackType === 'overlay') {
@@ -1055,7 +1236,13 @@ export function ArcanaStudio({ onBack }) {
       const idx = list.findIndex((entry) => entry.id === trackId);
       if (idx < 0) return card;
 
-      list[idx] = { ...list[idx], ...patch };
+      if (trackType === 'object' && list[idx].isAnimatablePiece && Object.prototype.hasOwnProperty.call(patch || {}, 'name')) {
+        const { name, ...rest } = patch || {};
+        list[idx] = { ...list[idx], ...rest };
+      } else {
+        list[idx] = { ...list[idx], ...patch };
+      }
+
       return {
         ...card,
         tracks: {
@@ -1092,17 +1279,45 @@ export function ArcanaStudio({ onBack }) {
   }
 
   function updateSelectedObjectTransform(trackId, patch) {
-    if (selection?.trackType !== 'object' || selection?.trackId !== trackId || !selection?.keyId) return;
-    updateKeyField('object', trackId, selection.keyId, patch, false);
+    if (selection?.trackType !== 'object' || selection?.trackId !== trackId) return;
+    if (selection?.keyId) {
+      updateKeyField('object', trackId, selection.keyId, patch, false);
+      return;
+    }
+
+    const newKeyId = uid('objk');
+    updateSelectedCard((card) => {
+      const list = [...(card.tracks?.objects || [])];
+      const idx = list.findIndex((entry) => entry.id === trackId);
+      if (idx < 0) return card;
+
+      const track = { ...list[idx], keys: [...(list[idx].keys || [])] };
+      track.keys.push({
+        id: newKeyId,
+        timeMs: Math.round(playheadMs),
+        position: patch.position || [0, 0, 0],
+        rotation: patch.rotation || [0, 0, 0],
+        scale: patch.scale || [1.8, 1.8, 1.8],
+        easing: 'easeInOutCubic',
+        bezier: [0.25, 0.1, 0.25, 1],
+      });
+      track.keys.sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0));
+      list[idx] = track;
+
+      return {
+        ...card,
+        tracks: {
+          ...card.tracks,
+          objects: list,
+        },
+      };
+    }, 'Auto-created keyframe from gizmo');
+    setSelection({ trackType: 'object', trackId, keyId: newKeyId });
   }
 
-  function toggleTrackActive(trackType, trackId) {
-    const track = findTrack(selectedCard, trackType, trackId);
-    updateTrackField(trackType, trackId, { active: track?.active === false });
-  }
-
-  function saveCurrentRuntime() {
-    updateCards({ ...cards, [selectedId]: selectedCard }, 'Saved runtime card');
+  function updateSelectedCameraTransform(patch) {
+    if (selection?.trackType !== 'camera' || !selection?.trackId || !selection?.keyId) return;
+    updateKeyField('camera', selection.trackId, selection.keyId, patch, false);
   }
 
   function exportCard() {
@@ -1151,6 +1366,21 @@ export function ArcanaStudio({ onBack }) {
   }
 
   const cardEntries = useMemo(() => Object.entries(cards).sort((a, b) => (a[1].name || a[0]).localeCompare(b[1].name || b[0])), [cards]);
+  const filteredCardEntries = useMemo(() => {
+    const q = cardSearch.trim().toLowerCase();
+    if (!q) return cardEntries;
+    return cardEntries.filter(([id, card]) => {
+      const definition = findDefinitionById(id);
+      const haystack = [
+        id,
+        card.name,
+        card.description,
+        definition?.category,
+        definition?.rarity,
+      ].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [cardEntries, cardSearch]);
 
   return (
     <div className="arcana-studio-shell">
@@ -1159,8 +1389,6 @@ export function ArcanaStudio({ onBack }) {
       <header className="arcana-studio-header">
         <div>
           <h1>Arcana Studio</h1>
-          <p>Animate pieces, cutscenes, particles, overlays, audio, and timeline events in one sequencer.</p>
-          <div className="arcana-studio-status">{status}</div>
         </div>
         <div className="arcana-studio-actions">
           <button onClick={onBack}>Back</button>
@@ -1169,7 +1397,6 @@ export function ArcanaStudio({ onBack }) {
             Import JSON
             <input type="file" accept="application/json" onChange={importJsonCard} />
           </label>
-          <button onClick={saveCurrentRuntime}>Save Runtime</button>
           <button onClick={exportCard}>Export Card</button>
         </div>
       </header>
@@ -1177,18 +1404,28 @@ export function ArcanaStudio({ onBack }) {
       <div className="arcana-studio-layout">
         <aside className="arcana-studio-sidebar">
           <div className="arcana-panel card-library-panel">
-            <div className="arcana-panel-title">Card Library</div>
+            <div className="arcana-panel-title">Card Library ({filteredCardEntries.length}/{cardEntries.length})</div>
+            <input
+              className="card-library-search"
+              placeholder="Search by id, name, rarity, category..."
+              value={cardSearch}
+              onChange={(event) => setCardSearch(event.target.value)}
+            />
             <div className="arcana-card-list compact">
-              {cardEntries.map(([id, card]) => (
+              {filteredCardEntries.map(([id, card]) => {
+                const definition = findDefinitionById(id);
+                return (
                 <button key={id} className={`card-item ${id === selectedId ? 'selected' : ''}`} onClick={() => { setSelectedId(id); setSelection(null); setPlayheadMs(0); }}>
                   <div className="card-item-top">
-                    <strong>{card.name || id}</strong>
+                    <strong>{card.name || definition?.name || id}</strong>
                     <span className={`pill ${card.meta?.isCutscene ? 'cutscene' : 'card'}`}>{card.meta?.isCutscene ? 'Cutscene' : 'Card'}</span>
                   </div>
+                  <div className="card-item-meta">{(definition?.rarity || 'unknown').toUpperCase()} • {(definition?.category || 'uncategorized')}</div>
                   <span className="card-item-id">{id}</span>
-                  <p className="card-item-desc">{truncate(card.description || 'No description yet.', 140)}</p>
+                  <p className="card-item-desc">{truncate(getCardDescription(card) || 'No description', 140)}</p>
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -1200,30 +1437,16 @@ export function ArcanaStudio({ onBack }) {
               <button onClick={() => addTrack('particle')}>+ Particle</button>
               <button onClick={() => addTrack('overlay')}>+ Overlay</button>
               <button onClick={() => addTrack('sound')}>+ Audio</button>
-              <button onClick={() => addTrack('event')}>+ Event</button>
-            </div>
-
-            <div className="track-filter-row">
-              <label className="inline-toggle">
-                <input type="checkbox" checked={showActiveOnly} onChange={(event) => setShowActiveOnly(event.target.checked)} />
-                Active Tracks Only
-              </label>
             </div>
 
             <div className="outliner-list">
               {timelineRows.map((row) => {
-                const track = findTrack(selectedCard, row.type, row.id);
-                const isActive = track?.active !== false;
                 return (
                   <div key={`${row.type}_${row.id}`} className={`outliner-item ${selection?.trackType === row.type && selection?.trackId === row.id ? 'selected' : ''}`}>
                     <button className="outliner-main" onClick={() => selectTrack(row.type, row.id)}>
                       <span>{row.type}</span>
                       <strong>{row.label}</strong>
                     </button>
-                    <label className="outliner-toggle" title="Toggle track active state">
-                      <input type="checkbox" checked={isActive} onChange={() => toggleTrackActive(row.type, row.id)} />
-                      Active
-                    </label>
                   </div>
                 );
               })}
@@ -1235,11 +1458,11 @@ export function ArcanaStudio({ onBack }) {
           <div className="arcana-panel card-meta card-meta-extended compact">
             <label>
               Card ID
-              <input value={selectedCard.id} readOnly />
+              <div className="meta-readonly">{selectedCard.id}</div>
             </label>
             <label>
               Name
-              <input value={selectedCard.name || ''} readOnly />
+              <div className="meta-readonly">{selectedCard.name || findDefinitionById(selectedCard.id)?.name || selectedCard.id}</div>
             </label>
             <label>
               Duration (ms)
@@ -1271,6 +1494,15 @@ export function ArcanaStudio({ onBack }) {
                 <option value="scale">Scale</option>
               </select>
             </label>
+            {selection?.trackType === 'camera' ? (
+              <label>
+                Camera Gizmo Target
+                <select value={cameraTransformTarget} onChange={(event) => setCameraTransformTarget(event.target.value)}>
+                  <option value="position">Position</option>
+                  <option value="target">Target</option>
+                </select>
+              </label>
+            ) : null}
           </div>
 
           <div className="arcana-workspace">
@@ -1285,9 +1517,20 @@ export function ArcanaStudio({ onBack }) {
                   sampledOverlays={sampledOverlays}
                   selection={selection}
                   onSelectTrack={selectTrack}
-                  onDeselect={() => setSelection(null)}
+                  onDeselect={() => {
+                    if (Date.now() < suppressDeselectUntilRef.current) return;
+                    setSelection(null);
+                  }}
+                  onTransformInteraction={(isDragging) => {
+                    if (!isDragging) {
+                      suppressDeselectUntilRef.current = Date.now() + 120;
+                    }
+                  }}
                   transformMode={transformMode}
                   onTransformObjectKey={updateSelectedObjectTransform}
+                  selectedCameraKey={selection?.trackType === 'camera' ? selectedKey : null}
+                  cameraTransformTarget={cameraTransformTarget}
+                  onTransformCameraKey={updateSelectedCameraTransform}
                   previewMode={selectedCard.settings?.previewMode || 'plane'}
                   isPlaying={isPlaying}
                   showCameraGizmos={showCameraGizmos}
@@ -1346,10 +1589,9 @@ export function ArcanaStudio({ onBack }) {
                     const track = findTrack(selectedCard, row.type, row.id);
                     const keys = track?.keys || [];
                     const laneId = `${row.type}_${row.id}`;
-                    const isActive = track?.active !== false;
 
                     return (
-                      <div key={laneId} className={`timeline-row ${selection?.trackType === row.type && selection?.trackId === row.id ? 'selected' : ''} ${isActive ? '' : 'muted'}`}>
+                      <div key={laneId} className={`timeline-row ${selection?.trackType === row.type && selection?.trackId === row.id ? 'selected' : ''}`}>
                         <button className="timeline-label" onClick={() => selectTrack(row.type, row.id)}>
                           <span>{row.type}</span>
                           <strong>{row.label}</strong>
@@ -1397,11 +1639,7 @@ export function ArcanaStudio({ onBack }) {
                 <p>Select a track or keyframe to edit detailed properties.</p>
                 <label>
                   Description
-                  <div className="description-readonly">{selectedCard.description || 'No description'}</div>
-                </label>
-                <label>
-                  Starting FEN
-                  <input value={selectedCard.board?.fen || ''} onChange={(event) => updateSelectedCard((card) => ({ ...card, board: { ...card.board, fen: event.target.value } }))} />
+                  <div className="description-readonly">{selectedCardDescription}</div>
                 </label>
               </>
             ) : (
@@ -1410,95 +1648,81 @@ export function ArcanaStudio({ onBack }) {
                   Track Name
                   <input value={selectedTrack.name || ''} onChange={(event) => updateTrackField(selection.trackType, selectedTrack.id, { name: event.target.value })} />
                 </label>
-                <label>
-                  Active
-                  <select value={selectedTrack.active === false ? 'off' : 'on'} onChange={(event) => updateTrackField(selection.trackType, selectedTrack.id, { active: event.target.value === 'on' })}>
-                    <option value="on">On</option>
-                    <option value="off">Off</option>
-                  </select>
-                </label>
 
                 {selection.trackType === 'object' ? (
                   <>
                     <label>
                       Type
-                      <select value={selectedTrack.type || 'piece'} onChange={(event) => updateTrackField('object', selectedTrack.id, { type: event.target.value })}>
+                      <select value={selectedTrack.type || (selectedTrack.isAnimatablePiece ? 'piece' : 'mesh')} onChange={(event) => updateTrackField('object', selectedTrack.id, { type: event.target.value })}>
                         <option value="piece">Piece</option>
                         <option value="mesh">Mesh</option>
                         <option value="part">Part</option>
                       </select>
                     </label>
-                    <label>
-                      Piece Square
-                      <input value={selectedTrack.pieceSquare || ''} onChange={(event) => updateTrackField('object', selectedTrack.id, { pieceSquare: event.target.value.toLowerCase() })} />
-                    </label>
-                    <label>
-                      Piece Type
-                      <select value={selectedTrack.pieceType || 'p'} onChange={(event) => updateTrackField('object', selectedTrack.id, { pieceType: event.target.value })}>
-                        <option value="p">Pawn</option>
-                        <option value="n">Knight</option>
-                        <option value="b">Bishop</option>
-                        <option value="r">Rook</option>
-                        <option value="q">Queen</option>
-                        <option value="k">King</option>
-                      </select>
-                    </label>
-                    <label>
-                      Piece Color
-                      <select value={selectedTrack.pieceColor || 'white'} onChange={(event) => updateTrackField('object', selectedTrack.id, { pieceColor: event.target.value })}>
-                        <option value="white">White</option>
-                        <option value="black">Black</option>
-                      </select>
-                    </label>
-                    <label>
-                      Attach Mode
-                      <select value={selectedTrack.attach?.mode || 'follow'} onChange={(event) => updateTrackField('object', selectedTrack.id, { attach: { ...(selectedTrack.attach || {}), mode: event.target.value } })}>
-                        <option value="follow">Follow</option>
-                        <option value="attach-offset">Attach Offset</option>
-                        <option value="world-space">World Space</option>
-                      </select>
-                    </label>
-                    <label>
-                      Attach Target Track ID
-                      <input value={selectedTrack.attach?.targetId || ''} onChange={(event) => updateTrackField('object', selectedTrack.id, { attach: { ...(selectedTrack.attach || {}), targetId: event.target.value || null } })} />
-                    </label>
-                    <label>
-                      Mesh URI
-                      <input value={selectedTrack.assetUri || ''} onChange={(event) => {
-                        const val = event.target.value.trim();
-                        if (val && !/^(blob:|\/|\.\/|\.\.\/)/.test(val)) {
-                          setStatus('⚠ Only local meshes allowed (blob:, /, ./, ../)');
-                        } else {
-                          updateTrackField('object', selectedTrack.id, { assetUri: val });
-                        }
-                      }} placeholder="blob:, /models/file.glb, ./local.glb" />
-                    </label>
-                    <label className="file-like-button inline">
-                      Import GLB/GLTF
-                      <input type="file" accept=".glb,.gltf,model/gltf+json,model/gltf-binary" onChange={importAssetForSelectedObject} />
-                    </label>
-                    <label>
-                      Clip Name
-                      <input value={selectedTrack.clipName || ''} onChange={(event) => updateTrackField('object', selectedTrack.id, { clipName: event.target.value || null })} />
-                    </label>
-                    <label>
-                      Clip Offset (ms)
-                      <input type="number" value={selectedTrack.clipOffsetMs || 0} onChange={(event) => updateTrackField('object', selectedTrack.id, { clipOffsetMs: Number(event.target.value) || 0 })} />
-                    </label>
-                    <label>
-                      Loop Clip
-                      <select value={selectedTrack.clipLoop === false ? 'off' : 'on'} onChange={(event) => updateTrackField('object', selectedTrack.id, { clipLoop: event.target.value === 'on' })}>
-                        <option value="on">On</option>
-                        <option value="off">Off</option>
-                      </select>
-                    </label>
-                    <label>
-                      Preview Play Animation
-                      <select value={selectedTrack.previewPlayAnimation ? 'on' : 'off'} onChange={(event) => updateTrackField('object', selectedTrack.id, { previewPlayAnimation: event.target.value === 'on' })}>
-                        <option value="off">Off</option>
-                        <option value="on">On</option>
-                      </select>
-                    </label>
+
+                    {(selectedTrack.type || (selectedTrack.isAnimatablePiece ? 'piece' : 'mesh')) === 'piece' ? (
+                      <>
+                        <label>
+                          Piece
+                          <select value={selectedTrack.pieceType || 'p'} onChange={(event) => updateTrackField('object', selectedTrack.id, { pieceType: event.target.value })}>
+                            <option value="p">Pawn</option>
+                            <option value="n">Knight</option>
+                            <option value="b">Bishop</option>
+                            <option value="r">Rook</option>
+                            <option value="q">Queen</option>
+                            <option value="k">King</option>
+                          </select>
+                        </label>
+                        <label>
+                          Color
+                          <select value={selectedTrack.pieceColor || 'white'} onChange={(event) => updateTrackField('object', selectedTrack.id, { pieceColor: event.target.value })}>
+                            <option value="white">White</option>
+                            <option value="black">Black</option>
+                          </select>
+                        </label>
+                        <p>Front direction guide: positive Z is forward. Use rotation gizmo to set facing before keyframing motion.</p>
+                      </>
+                    ) : (
+                      <>
+                        <label>
+                          Mesh URI
+                          <input value={selectedTrack.assetUri || ''} onChange={(event) => {
+                            const val = event.target.value.trim();
+                            if (val && !/^(blob:|\/|\.\/|\.\.\/)/.test(val)) {
+                              setStatus('⚠ Only local meshes allowed (blob:, /, ./, ../)');
+                            } else {
+                              updateTrackField('object', selectedTrack.id, { assetUri: val });
+                            }
+                          }} placeholder="blob:, /models/file.glb, ./local.glb" />
+                        </label>
+                        <label className="file-like-button inline">
+                          Import GLB/GLTF
+                          <input type="file" accept=".glb,.gltf,model/gltf+json,model/gltf-binary" onChange={importAssetForSelectedObject} />
+                        </label>
+                        <label>
+                          Clip Name
+                          <input value={selectedTrack.clipName || ''} onChange={(event) => updateTrackField('object', selectedTrack.id, { clipName: event.target.value || null })} />
+                        </label>
+                        <label>
+                          Clip Offset (ms)
+                          <input type="number" value={selectedTrack.clipOffsetMs || 0} onChange={(event) => updateTrackField('object', selectedTrack.id, { clipOffsetMs: Number(event.target.value) || 0 })} />
+                        </label>
+                        <label>
+                          Loop Clip
+                          <select value={selectedTrack.clipLoop === false ? 'off' : 'on'} onChange={(event) => updateTrackField('object', selectedTrack.id, { clipLoop: event.target.value === 'on' })}>
+                            <option value="on">On</option>
+                            <option value="off">Off</option>
+                          </select>
+                        </label>
+                        <label>
+                          Preview Play Animation
+                          <select value={selectedTrack.previewPlayAnimation ? 'on' : 'off'} onChange={(event) => updateTrackField('object', selectedTrack.id, { previewPlayAnimation: event.target.value === 'on' })}>
+                            <option value="off">Off</option>
+                            <option value="on">On</option>
+                          </select>
+                        </label>
+                      </>
+                    )}
                   </>
                 ) : null}
 
