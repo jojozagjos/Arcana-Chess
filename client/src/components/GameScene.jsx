@@ -2775,7 +2775,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           rematchVote={rematchVote}
           rematchVoteCount={rematchVoteCount}
           rematchTotalPlayers={rematchTotalPlayers}
-          opponentLeft={opponentLeftDuringRematch || (gameEndOutcome?.type === 'disconnect' && gameEndOutcome?.winnerSocketId === mySocketId)}
+          opponentLeft={opponentLeftDuringRematch || ((gameEndOutcome?.type === 'disconnect' || gameEndOutcome?.type === 'forfeit') && gameEndOutcome?.winnerSocketId === mySocketId)}
           stats={postGameStats}
           onExportReplay={exportReplay}
           onRematchVote={() => {

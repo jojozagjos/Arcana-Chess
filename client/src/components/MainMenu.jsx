@@ -71,14 +71,18 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
-                  <span>v1.3.1  Lobby UX + Menu Polish</span>
-                  <span className="update-log-date">Mar 11, 2026</span>
+                  <span>v1.3.2  Rematch + UX Stabilization</span>
+                  <span className="update-log-date">Mar 19, 2026</span>
                 </div>
                 <ul className="update-log-list">
-                  <li>Updated the menu update log to a latest-version format with no older release entries.</li>
-                  <li>Made secondary menu buttons fully rounded for a cleaner pill-button look.</li>
-                  <li>Improved in-lobby information layout so privacy, mode, time, and player count are grouped in one place.</li>
-                  <li>Restored full host time-control choices, including Classical.</li>
+                  <li>Added rematch button safety: opponent rematch request is disabled when opponent forfeits, disconnects, or leaves post-match.</li>
+                  <li>Strengthened server rematch state paths: forfeit/disconnect path cancels rematch voting and emits clear cancellation messages.</li>
+                  <li>Added random "Who starts" option to both Online and AI game setup, with consistent label text across UI.</li>
+                  <li>Created bullet time option (5 min) in both Online and AI time control pickers.</li>
+                  <li>Included mode descriptions inline in the dropdown and in lobby preview metadata for better mode clarity.</li>
+                  <li>Fixed card row layout to horizontal scroll and card counter to show unique cards drawn, with passive wheel behavior suppression fix.</li>
+                  <li>Quick Match now resets loading/status when leaving lobby or returning to main menu, avoiding soft lock-out.</li>
+                  <li>Remaining menu and lobby polish: button styling, host/guest waiting text, in-lobby metadata, and clear post-game flow.</li>
                 </ul>
               </div>
 
