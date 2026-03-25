@@ -40,8 +40,29 @@ export function MainMenu({
   onQuickMatch,
   quickMatchStatus,
   quickMatchLoading = false,
+  quickMatchFilters = null,
+  onQuickMatchFiltersChange,
 }) {
   const [showUpdateLog, setShowUpdateLog] = useState(false);
+  const [showFindMatchModal, setShowFindMatchModal] = useState(false);
+  const [quickMatchGameMode, setQuickMatchGameMode] = useState(() => quickMatchFilters?.gameMode || 'any');
+  const [quickMatchTimeControl, setQuickMatchTimeControl] = useState(() => quickMatchFilters?.timeControl || 'any');
+
+  useEffect(() => {
+    if (!quickMatchFilters) return;
+    setQuickMatchGameMode(quickMatchFilters.gameMode || 'any');
+    setQuickMatchTimeControl(quickMatchFilters.timeControl || 'any');
+  }, [quickMatchFilters?.gameMode, quickMatchFilters?.timeControl]);
+
+  const runQuickMatch = () => {
+    const nextFilters = {
+      gameMode: quickMatchGameMode,
+      timeControl: quickMatchTimeControl,
+    };
+    if (onQuickMatchFiltersChange) onQuickMatchFiltersChange(nextFilters);
+    if (onQuickMatch) onQuickMatch(nextFilters);
+  };
+
   // Music is handled globally in App; no per-mode control needed here  
   if (mode === 'root') {
     return (
@@ -56,8 +77,68 @@ export function MainMenu({
           <div className="menu-buttons">
             <button className="menu-button" onClick={onPlayOnlineHost}>Host game</button>
             <button className="menu-button" onClick={onPlayOnlineJoin}>Join game</button>
-            <button className="menu-button" onClick={onQuickMatch} disabled={quickMatchLoading}>{quickMatchStatus || 'Find Match'}</button>
+            <button className="menu-button" onClick={() => setShowFindMatchModal(true)}>Find Match</button>
           </div>
+
+          {showFindMatchModal && (
+            <div className="find-match-modal-overlay" onClick={() => setShowFindMatchModal(false)}>
+              <div className="find-match-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="find-match-modal-header">
+                  <h2>Find Match</h2>
+                  <button className="find-match-close" onClick={() => setShowFindMatchModal(false)}>Close</button>
+                </div>
+
+                <div className="find-match-modal-grid">
+                  <div className="find-match-panel">
+                    <div className="find-match-eyebrow">Quick Match Filters</div>
+                    <h3>Match preferences</h3>
+                    <p>Pick optional filters and search for a waiting public lobby.</p>
+
+                    <label>
+                      Game mode
+                      <select
+                        value={quickMatchGameMode}
+                        onChange={(event) => setQuickMatchGameMode(event.target.value)}
+                        disabled={quickMatchLoading}
+                      >
+                        <option value="any">Any mode</option>
+                        {GAME_MODE_OPTIONS.map((modeOption) => (
+                          <option key={modeOption.id} value={modeOption.id}>{getGameModeLabel(modeOption.id)}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label>
+                      Time control
+                      <select
+                        value={quickMatchTimeControl}
+                        onChange={(event) => setQuickMatchTimeControl(event.target.value)}
+                        disabled={quickMatchLoading}
+                      >
+                        <option value="any">Any time</option>
+                        {Object.keys(TIME_CONTROL_LABELS).map((control) => (
+                          <option key={control} value={control}>{getTimeControlLabel(control)}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <button className="find-match-submit" onClick={runQuickMatch} disabled={quickMatchLoading}>
+                      {quickMatchLoading ? 'Searching...' : 'Find Match'}
+                    </button>
+                  </div>
+
+                  <div className="find-match-panel">
+                    <div className="find-match-eyebrow">Status</div>
+                    <h3>Queue lookup</h3>
+                    <div className="find-match-preview-row"><span>Mode</span><strong>{quickMatchGameMode === 'any' ? 'Any mode' : getGameModeLabel(quickMatchGameMode)}</strong></div>
+                    <div className="find-match-preview-row"><span>Time</span><strong>{quickMatchTimeControl === 'any' ? 'Any time' : getTimeControlLabel(quickMatchTimeControl)}</strong></div>
+                    <div className="find-match-note">Quick Match joins the first waiting public lobby that matches your filters.</div>
+                    <div className="find-match-status">{quickMatchStatus || 'Ready to search.'}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {showUpdateLog ? (
             <div className="update-log">
@@ -71,18 +152,29 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
-                  <span>v1.3.2  Rematch + UX Stabilization</span>
-                  <span className="update-log-date">Mar 19, 2026</span>
+                  <span>v1.3.7  Studio + Dev Tool Hardening</span>
+                  <span className="update-log-date">Mar 21, 2026</span>
                 </div>
                 <ul className="update-log-list">
-                  <li>Added rematch button safety: opponent rematch request is disabled when opponent forfeits, disconnects, or leaves post-match.</li>
-                  <li>Strengthened server rematch state paths: forfeit/disconnect path cancels rematch voting and emits clear cancellation messages.</li>
-                  <li>Added random "Who starts" option to both Online and AI game setup, with consistent label text across UI.</li>
-                  <li>Created bullet time option (5 min) in both Online and AI time control pickers.</li>
-                  <li>Included mode descriptions inline in the dropdown and in lobby preview metadata for better mode clarity.</li>
-                  <li>Fixed card row layout to horizontal scroll and card counter to show unique cards drawn, with passive wheel behavior suppression fix.</li>
-                  <li>Quick Match now resets loading/status when leaving lobby or returning to main menu, avoiding soft lock-out.</li>
-                  <li>Remaining menu and lobby polish: button styling, host/guest waiting text, in-lobby metadata, and clear post-game flow.</li>
+                  <li>Arcana Studio now persists local draft changes and restores them on reopen instead of dropping session progress.</li>
+                  <li>Arcana Studio now surfaces unsaved local changes and warns on page unload when edits are pending.</li>
+                  <li>Arcana Studio import now validates JSON payload shape before applying a card and surfaces cleaner import failures.</li>
+                  <li>Arcana Studio now supports deleting selected non-core tracks directly from timeline controls.</li>
+                  <li>Card Balancing Tool fixed reveal/highlight runtime state references that could throw during server-applied intel cards.</li>
+                  <li>Card Balancing Tool now tracks and clears transient timers consistently to prevent stale visual callbacks after reset/unmount.</li>
+                  <li>Threat Sight highlight handling in the balancing tool now matches the Quiet Thought rename.</li>
+                  <li>Map Fragments now ranks and shows the 3 strongest predicted enemy move targets instead of generic region picks.</li>
+                  <li>Arcana hand stack visuals were reworked for clearer duplicate-card readability.</li>
+                  <li>Peek Card selection now fits more cards in the overlay while preserving card identity feedback and reveal animation.</li>
+                  <li>Sanctuary-protected capture rejections are now suppressed from popup notifications to reduce UI noise.</li>
+                  <li>Quiet Thought was renamed to Threat Sight for clearer intent.</li>
+                  <li>Peek Card selection panel now gives clearer card identity and selected-card feedback before reveal.</li>
+                  <li>Sanctuary persistent visuals were overhauled with stronger halos, rotating rings, and elevated marker clarity.</li>
+                  <li>Cursed Square persistent visuals were overhauled with animated embers, stronger danger aura, and a turn counter marker.</li>
+                  <li>Camera cutscene control recovery was hardened to prevent camera controls staying locked on interrupted sequences.</li>
+                  <li>Temporal Echo now uses the mover's own last move pattern (not the opponent's last move).</li>
+                  <li>Necromancy revive logic now supports partial revives when no pawn is available.</li>
+                  <li>Mirror Image duration visuals include a blue turns-left counter and match 6-turn duration timing.</li>
                 </ul>
               </div>
 
@@ -91,7 +183,7 @@ export function MainMenu({
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
               <span className="update-log-pill-dot" />
-              <span>v1.3.1</span>
+              <span>v1.3.7</span>
               <span className="update-log-pill-label">What's new</span>
             </button>
           )}

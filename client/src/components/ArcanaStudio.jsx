@@ -4,9 +4,10 @@ import { Html, OrbitControls, TransformControls, useAnimations, useGLTF } from '
 import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaStudioTutorial } from './ArcanaStudioTutorial.jsx';
 import {
-  ARCANA_STUDIO_STORAGE_KEY,
   createEmptyArcanaStudioCard,
+  loadArcanaStudioCardsMap,
   migrateArcanaStudioCard,
+  saveArcanaStudioCardsMap,
 } from '../game/arcana/studio/arcanaStudioSchema.js';
 import {
   collectTimelineRows,
@@ -897,7 +898,15 @@ function truncate(text = '', max = 110) {
 
 export function ArcanaStudio({ onBack }) {
   const [cards, setCards] = useState(() => {
-    return buildStudioCardsMap();
+    const base = buildStudioCardsMap();
+    const stored = loadArcanaStudioCardsMap();
+    if (!stored || Object.keys(stored).length === 0) return base;
+
+    const merged = { ...base };
+    Object.entries(stored).forEach(([id, card]) => {
+      merged[id] = sanitizeCardForStudio(card, id);
+    });
+    return merged;
   });
 
   const [selectedId, setSelectedId] = useState(() => {
@@ -914,8 +923,10 @@ export function ArcanaStudio({ onBack }) {
   const [cameraTransformTarget, setCameraTransformTarget] = useState('position');
   const [cardSearch, setCardSearch] = useState('');
   const [status, setStatus] = useState('Ready');
+  const [isDirty, setIsDirty] = useState(false);
   const [dragKey, setDragKey] = useState(null);
   const suppressDeselectUntilRef = useRef(0);
+  const draftSnapshotRef = useRef('');
 
   const laneRefs = useRef({});
   const playbackFrameRef = useRef(null);
@@ -923,6 +934,10 @@ export function ArcanaStudio({ onBack }) {
   const playbackOriginRef = useRef(0);
   const audioTimersRef = useRef([]);
   const audioNodesRef = useRef([]);
+
+  useEffect(() => {
+    draftSnapshotRef.current = JSON.stringify(cards || {});
+  }, []);
 
   const selectedCard = useMemo(() => {
     const card = cards[selectedId] || createEmptyArcanaStudioCard(selectedId);
@@ -973,12 +988,27 @@ export function ArcanaStudio({ onBack }) {
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.removeItem(ARCANA_STUDIO_STORAGE_KEY);
-    } catch {
-      // ignore storage access failures
-    }
-  }, []);
+    const snapshot = JSON.stringify(cards || {});
+    const dirty = snapshot !== draftSnapshotRef.current;
+    setIsDirty(dirty);
+
+    const timer = setTimeout(() => {
+      saveArcanaStudioCardsMap(cards);
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [cards]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
 
   useEffect(() => {
     if (!selectedCard || !selectedId) return;
@@ -1322,7 +1352,33 @@ export function ArcanaStudio({ onBack }) {
 
   function exportCard() {
     downloadJson(`${selectedId}.arcana-studio.json`, selectedCard);
+    draftSnapshotRef.current = JSON.stringify(cards || {});
+    setIsDirty(false);
     setStatus(`Exported ${selectedId}`);
+  }
+
+  function saveDraft() {
+    saveArcanaStudioCardsMap(cards);
+    draftSnapshotRef.current = JSON.stringify(cards || {});
+    setIsDirty(false);
+    setStatus('Saved local studio draft');
+  }
+
+  function resetDraft() {
+    if (!window.confirm('Reset Arcana Studio draft to project defaults? This will clear local draft changes.')) {
+      return;
+    }
+
+    const base = buildStudioCardsMap();
+    const firstId = Object.keys(base)[0] || 'new_cutscene';
+    setCards(base);
+    setSelectedId(firstId);
+    setSelection(null);
+    setPlayheadMs(0);
+    saveArcanaStudioCardsMap(base);
+    draftSnapshotRef.current = JSON.stringify(base || {});
+    setIsDirty(false);
+    setStatus('Reset studio draft to defaults');
   }
 
   function importJsonCard(event) {
@@ -1334,8 +1390,11 @@ export function ArcanaStudio({ onBack }) {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result || '{}'));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('JSON must contain a card object');
+        }
         const normalizedId = parsed?.id === 'arcane_cycle' ? 'filtered_cycle' : (parsed?.id || 'imported_card');
-        const card = migrateArcanaStudioCard({ ...parsed, id: normalizedId }, normalizedId);
+        const card = sanitizeCardForStudio(migrateArcanaStudioCard({ ...parsed, id: normalizedId }, normalizedId), normalizedId);
         updateCards({ ...cards, [card.id]: card }, `Imported ${card.id}`);
         setSelectedId(card.id);
       } catch (err) {
@@ -1343,6 +1402,29 @@ export function ArcanaStudio({ onBack }) {
       }
     };
     reader.readAsText(file);
+  }
+
+  function removeSelectedTrack() {
+    if (!selection?.trackType || !selection?.trackId) return;
+
+    if (selection.trackType === 'object') {
+      const objects = selectedCard.tracks?.objects || [];
+      if (objects[0]?.id === selection.trackId) {
+        setStatus('Main Piece track is required and cannot be deleted');
+        return;
+      }
+    }
+
+    const { trackType, trackId } = selection;
+    const collection = trackCollectionName(trackType);
+    updateSelectedCard((card) => ({
+      ...card,
+      tracks: {
+        ...card.tracks,
+        [collection]: (card.tracks?.[collection] || []).filter((track) => track.id !== trackId),
+      },
+    }), `Removed ${trackType} track`);
+    setSelection(null);
   }
 
   function importAssetForSelectedObject(event) {
@@ -1389,10 +1471,13 @@ export function ArcanaStudio({ onBack }) {
       <header className="arcana-studio-header">
         <div>
           <h1>Arcana Studio</h1>
+          <p className="arcana-studio-status">{status}{isDirty ? ' • Unsaved local changes' : ''}</p>
         </div>
         <div className="arcana-studio-actions">
           <button onClick={onBack}>Back</button>
           <button onClick={() => setShowTutorial(true)}>Tutorial</button>
+          <button onClick={saveDraft}>Save Draft</button>
+          <button className="danger-button" onClick={resetDraft}>Reset Draft</button>
           <label className="file-like-button">
             Import JSON
             <input type="file" accept="application/json" onChange={importJsonCard} />
@@ -1569,6 +1654,7 @@ export function ArcanaStudio({ onBack }) {
                 <button onClick={() => setPlayheadMs((value) => clamp(value + 100, 0, selectedCard.durationMs || 1))}>+100ms</button>
                 {selectedTrack ? <button onClick={() => addKeyToTrack(selection.trackType, selectedTrack.id)}>Add Key</button> : null}
                 {selectedKey ? <button onClick={removeSelectedKey}>Delete Key</button> : null}
+                {selectedTrack ? <button className="danger-button" onClick={removeSelectedTrack}>Delete Track</button> : null}
               </div>
 
               <div className="playhead-slider-wrap">

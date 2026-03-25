@@ -30,7 +30,7 @@ export function getArcanaEffectDuration(arcanaId) {
     edgerunner_overdrive: 2200,
     
     // Long effects (2s+)
-    fog_of_war: 2500,
+    fog_of_war: 5500,
     metamorphosis: 2000,
     sacrifice: 1800,
     necromancy: 1600,

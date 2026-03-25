@@ -64,7 +64,7 @@ Object tracks support:
 4. Scrub timeline and add keyframes.
 5. Use Piece/track inspector to set piece square, easing, overlays, and sound IDs.
 6. Preview with Play/Pause.
-7. Click `Save Runtime` to persist in local storage.
+7. Click `Export Card` to download your card JSON for backup/sharing.
 8. Export:
    - `Export Card` for one card JSON
    - `Export All` for package JSON
@@ -110,7 +110,7 @@ Object tracks support:
 ### Missing card in game
 
 - Ensure card id matches game card id when overriding existing behavior.
-- Use `Save Runtime` after edits.
+- Re-export after edits to keep your latest card JSON backup.
 
 ## Dev Validation
 

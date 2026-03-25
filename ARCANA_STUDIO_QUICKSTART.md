@@ -50,9 +50,9 @@ Arcana Studio is a full-featured cutscene and animation editor for creating dyna
 3. Watch it loop or adjust timings as needed
 4. Click **"Rewind"** to return to the start
 
-### 6. Save Your Card
+### 6. Export Your Card
 
-Click **"Save Runtime"** to persist it to your browser's local storage. This makes it available for gameplay.
+Click **"Export Card"** to download your current card JSON for backup and sharing.
 
 ## Key Concepts
 
@@ -191,7 +191,6 @@ Select the easing in the Inspector's "Easing" dropdown.
 ### Export & Backup
 - Click **"Export Card"** to download a JSON file (backup/sharing)
 - Click **"Export Legacy"** for compatibility with older formats
-- Click **"Save Runtime"** to save to browser storage (used during gameplay)
 
 ## Troubleshooting
 

@@ -20,6 +20,7 @@ const logger = {
 // Game timing constants (milliseconds)
 const REVEAL_ACK_TIMEOUT_MS = 5000;
 const ACTION_TTL_MS = 10000;
+const CURSED_REMOVAL_ANIMATION_MS = 220;
 
 // Game configuration constants
 const INITIAL_DRAW_PLY = -1;
@@ -101,11 +102,13 @@ function sanitizeEdgeRankPawnsInFen(fen) {
     let changed = false;
     let next = '';
     for (const ch of expanded) {
-      if (edge === 'top' && ch === 'p') {
-        next += 'q';
-        changed = true;
-      } else if (edge === 'bottom' && ch === 'P') {
+      // Only sanitize pawns that are on their promotion rank:
+      // white pawn on rank 8 ('P') or black pawn on rank 1 ('p').
+      if (edge === 'top' && ch === 'P') {
         next += 'Q';
+        changed = true;
+      } else if (edge === 'bottom' && ch === 'p') {
+        next += 'q';
         changed = true;
       } else {
         next += ch;
@@ -142,6 +145,7 @@ function normalizeTimeControlMinutes(timeControl) {
   if (typeof timeControl === 'number' && Number.isFinite(timeControl) && timeControl > 0) return timeControl;
   if (typeof timeControl === 'string') {
     const key = timeControl.trim().toLowerCase();
+    if (key === 'bullet') return 5;
     if (key === 'blitz') return 10;
     if (key === 'rapid') return 30;
     if (key === 'classical') return 60;
@@ -149,6 +153,17 @@ function normalizeTimeControlMinutes(timeControl) {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return 30;
+}
+
+function getMovesForColor(chess, color) {
+  const activeTurn = chess.turn();
+  if (activeTurn === color) {
+    return chess.moves({ verbose: true });
+  }
+  const fenParts = chess.fen().split(' ');
+  fenParts[1] = color;
+  const temp = new Chess(fenParts.join(' '));
+  return temp.moves({ verbose: true });
 }
 
 /**
@@ -216,6 +231,26 @@ function getPiecesDiagonalFromBishop(chess, bishopSquare, color) {
   }
   
   return protectedSquares;
+}
+
+function syncBishopsBlessing(chess, gameState) {
+  const effects = gameState?.activeEffects;
+  if (!effects?.bishopsBlessing) return;
+
+  for (const color of ['w', 'b']) {
+    if (!Array.isArray(effects.bishopsBlessing[color])) continue;
+    const protectedSquares = [];
+    const board = chess.board();
+    for (let r = 0; r < 8; r++) {
+      for (let f = 0; f < 8; f++) {
+        const piece = board[r][f];
+        if (!piece || piece.type !== 'b' || piece.color !== color) continue;
+        const bishopSquare = String.fromCharCode(97 + f) + (8 - r);
+        protectedSquares.push(...getPiecesDiagonalFromBishop(chess, bishopSquare, color));
+      }
+    }
+    effects.bishopsBlessing[color] = [...new Set(protectedSquares)];
+  }
 }
 
 /**
@@ -297,6 +332,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     lastMoveTime: Date.now(), // when current turn started
     timeLossLoser: null, // socketId of player who lost on time
     lastMove: null,
+    lastMoveByColor: { w: null, b: null },
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
     lastDrawTurn: lastDrawTurn,  // Track turn number when each player last drew
@@ -1116,21 +1152,24 @@ export class GameManager {
       }
     }
 
-    // Double Strike: Validate second capture is a capture, ANY piece allowed (no same-piece restriction), allows adjacent targets
+    // Double Strike: second move must be a capture by a DIFFERENT piece.
     if (gameState.activeEffects.doubleStrikeActive?.color === moverColor) {
-      // Double Strike allows ANY piece to make the second capture
-      // No from-square restriction like Berserker Rage has
+      const firstKillerSquare = gameState.activeEffects.doubleStrikeActive.firstKillerSquare;
+      if (candidate.from === firstKillerSquare) {
+        throw new Error('Double Strike: second capture must be made by a different piece!');
+      }
       if (!candidate.captured) {
         throw new Error('Double Strike second move must be a capture!');
       }
-      // Unlike Berserker Rage, Double Strike ALLOWS adjacent captures
-      // (no non-adjacent validation here)
     }
 
     // Berserker Rage: Validate ONLY the same piece can capture again, NOT adjacent to first kill
     if (gameState.activeEffects.berserkerRageActive?.color === moverColor) {
-      const brFirstKillFrom = gameState.activeEffects.berserkerRageActive.firstKillFrom;
-      // Piece must be the same one that made the first kill (same starting square)
+      const brActive = gameState.activeEffects.berserkerRageActive;
+      const brFirstKillFrom = brActive.firstKillFrom || brActive.firstKillSquare;
+      const brFirstKillSquare = brActive.firstKillSquare || brActive.firstKillFrom;
+
+      // Piece must be the same one that made the first kill (current location after first capture)
       if (candidate.from !== brFirstKillFrom) {
         throw new Error('Berserker Rage: ONLY the piece that made the first kill can capture again!');
       }
@@ -1138,7 +1177,10 @@ export class GameManager {
       if (!candidate.captured) {
         throw new Error('Berserker Rage: second move MUST be a capture!');
       }
-      validateNonAdjacentCapture(gameState.activeEffects.berserkerRageActive, candidate.to, 'Berserker Rage');
+      // Enforce non-adjacent second capture to the first target square
+      if (brFirstKillSquare) {
+        validateNonAdjacentCapture({ firstKillSquare: brFirstKillSquare }, candidate.to, 'Berserker Rage');
+      }
     }
 
     // Check time freeze - automatically skip this player's turn
@@ -1314,29 +1356,9 @@ export class GameManager {
       }
     }
 
-    // Update Bishop's Blessing if the blessed bishop moved (recalculate protected pieces)
-    const myBlessing = gameState.activeEffects.bishopsBlessing[moverColor];
-    if (Array.isArray(myBlessing) && result.piece === 'b') {
-      // Check if any blessed piece was the one that just moved (now at result.to)
-      // Recalculate all protected diagonals
-      const protectedSquares = [];
-      const board = chess.board();
-      
-      // Find all bishops of this color and calculate their diagonals
-      for (let r = 0; r < 8; r++) {
-        for (let f = 0; f < 8; f++) {
-          const piece = board[r][f];
-          const sq = String.fromCharCode(97 + f) + (8 - r);
-          if (piece && piece.type === 'b' && piece.color === moverColor) {
-            // Get diagonal pieces from this bishop
-            const diagonalPieces = getPiecesDiagonalFromBishop(chess, sq, moverColor);
-            protectedSquares.push(...diagonalPieces);
-          }
-        }
-      }
-      
-      gameState.activeEffects.bishopsBlessing[moverColor] = [...new Set(protectedSquares)]; // Deduplicate
-    }
+    // Recompute dynamic bishop blessing protections after any move so pieces
+    // entering/leaving diagonals are updated immediately.
+    syncBishopsBlessing(chess, gameState);
 
     // Keep Iron Fortress shield markers aligned to the current pawn positions.
     if (!gameState.activeEffects.ironFortressShields) {
@@ -1461,8 +1483,19 @@ export class GameManager {
       if (cursed.square === result.to) {
         const piece = chess.get(result.to);
         if (piece && piece.type !== 'k') {
+          result.cursedData = {
+            from: result.from,
+            to: result.to,
+            piece: piece.type,
+            color: piece.color,
+          };
           chess.remove(result.to);
           result.cursed = true;
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('cursedSquareTriggered', result.cursedData);
+            }
+          }
         }
       }
     }
@@ -1473,7 +1506,10 @@ export class GameManager {
       to: result.to,
       san: result.san,
       captured: result.captured || null,
+      cursed: !!result.cursed,
     };
+    gameState.lastMoveByColor = gameState.lastMoveByColor || { w: null, b: null };
+    gameState.lastMoveByColor[result.color] = { ...gameState.lastMove };
 
     // Track captured piece by its color
     if (result.captured) {
@@ -1563,13 +1599,21 @@ export class GameManager {
         if (validDSPieces.includes(result.piece)) {
           gameState.activeEffects.doubleStrikeActive = {
             color: moverColor,
-            firstKillSquare: result.to
+            firstKillSquare: result.to,
+            firstKillerSquare: result.to,
           };
           gameState.activeEffects.doubleStrike[moverColor] = {
             active: true,
             firstKillSquare: result.to,
             usedSecondKill: false
           };
+
+          const followUpMoves = getMovesForColor(chess, moverColor);
+          const hasValidFollowUp = followUpMoves.some((m) => m.captured && m.from !== result.to);
+          if (!hasValidFollowUp) {
+            gameState.activeEffects.doubleStrikeActive = null;
+            gameState.activeEffects.doubleStrike[moverColor] = null;
+          }
         }
       }
 
@@ -1586,6 +1630,14 @@ export class GameManager {
           firstKillSquare: result.to,
           usedSecondKill: false
         };
+
+        const followUpMoves = getMovesForColor(chess, moverColor)
+          .filter((m) => m.captured && m.from === result.to)
+          .filter((m) => !getAdjacentSquares(result.to).includes(m.to));
+        if (followUpMoves.length === 0) {
+          gameState.activeEffects.berserkerRageActive = null;
+          gameState.activeEffects.berserkerRage[moverColor] = null;
+        }
       }
     }
 
@@ -1617,13 +1669,51 @@ export class GameManager {
                  !gameState.activeEffects.queensGambitUsed[moverColor] &&
                  result.piece === 'q'; // Queen must be the piece that moved
 
-    // Check if Double Strike is active (second attack ready)
-    // Do not grant extra-move if this move performed a promotion
-    const hasDoubleStrike = gameState.activeEffects.doubleStrikeActive?.color === moverColor && !result.promotion;
+    // Double Strike and Berserker state tracking
+    const dsEffect = gameState.activeEffects.doubleStrike?.[moverColor];
+    const brEffect = gameState.activeEffects.berserkerRage?.[moverColor];
 
-    // Check if Berserker Rage is active (after first capture, get another move)
-    // Also prevent berserker extra-move when the mover promoted on this move
-    const hasBerserkerRage = gameState.activeEffects.berserkerRageActive?.color === moverColor && !result.promotion;
+    const isDoubleStrikeSecondCapture = dsEffect?.active && dsEffect.usedSecondKill && gameState.activeEffects.doubleStrikeActive?.color === moverColor;
+    const isBerserkerRageSecondCapture = brEffect?.active && brEffect.usedSecondKill && gameState.activeEffects.berserkerRageActive?.color === moverColor;
+
+    if (isDoubleStrikeSecondCapture) {
+      // Second capture just resolved: return the capturing piece to original square and clear effect.
+      const returnFrom = result.to;
+      const returnTo = result.from;
+      const returnPiece = chess.get(returnFrom);
+      if (returnPiece && returnTo) {
+        // Notify clients to animate the capture and retreat sequence
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith(AI_PREFIX)) {
+            this.io.to(pid).emit('doubleStrikeReturn', {
+              from: returnFrom,
+              to: returnTo,
+            });
+          }
+        }
+
+        chess.remove(returnFrom);
+        chess.put(returnPiece, returnTo);
+        result.doubleStrikeReturn = { from: returnFrom, to: returnTo };
+        if (gameState.lastMove) {
+          gameState.lastMove.to = returnTo;
+        }
+      }
+      gameState.activeEffects.doubleStrikeActive = null;
+      if (gameState.activeEffects.doubleStrike) gameState.activeEffects.doubleStrike[moverColor] = null;
+    }
+
+    if (isBerserkerRageSecondCapture) {
+      // Second capture completed for Berserker Rage: clear effect and let turn end.
+      gameState.activeEffects.berserkerRageActive = null;
+      if (gameState.activeEffects.berserkerRage) gameState.activeEffects.berserkerRage[moverColor] = null;
+    }
+
+    // Check if Double Strike is active and not yet used second capture
+    const hasDoubleStrike = dsEffect?.active && !dsEffect.usedSecondKill && gameState.activeEffects.doubleStrikeActive?.color === moverColor && !result.promotion;
+
+    // Check if Berserker Rage is active and not yet used second capture
+    const hasBerserkerRage = brEffect?.active && !brEffect.usedSecondKill && gameState.activeEffects.berserkerRageActive?.color === moverColor && !result.promotion;
 
     // Only grant extra move if the game is not over (checkmate/stalemate)
     const gameIsOver = chess.isCheckmate() || chess.isStalemate() || chess.isDraw();
@@ -1635,12 +1725,45 @@ export class GameManager {
         gameState.activeEffects.queensGambitUsed[moverColor] = true;
       }
       if (hasDoubleStrike) {
-        // Clear double strike after second attack
-        gameState.activeEffects.doubleStrikeActive = null;
+        const dsEffect = gameState.activeEffects.doubleStrike?.[moverColor];
+        if (dsEffect?.usedSecondKill) {
+          // This is the second capture: return the capturing piece and clear effect.
+          const returnFrom = result.to;
+          const returnTo = result.from;
+          const returnPiece = chess.get(returnFrom);
+          if (returnPiece && returnTo) {
+            chess.remove(returnFrom);
+            chess.put(returnPiece, returnTo);
+            result.doubleStrikeReturn = { from: returnFrom, to: returnTo };
+            if (gameState.lastMove) {
+              gameState.lastMove.to = returnTo;
+            }
+          }
+          gameState.activeEffects.doubleStrikeActive = null;
+          if (gameState.activeEffects.doubleStrike) {
+            gameState.activeEffects.doubleStrike[moverColor] = null;
+          }
+        } else {
+          // First capture in double strike sequence: mark that second capture is pending.
+          if (dsEffect) {
+            dsEffect.usedSecondKill = true;
+          }
+        }
       }
       if (hasBerserkerRage) {
-        // Clear berserker rage after second move
-        gameState.activeEffects.berserkerRageActive = null;
+        const brEffect = gameState.activeEffects.berserkerRage?.[moverColor];
+        if (brEffect?.usedSecondKill) {
+          // Second capture has resolved, clear buffs.
+          gameState.activeEffects.berserkerRageActive = null;
+          if (gameState.activeEffects.berserkerRage) {
+            gameState.activeEffects.berserkerRage[moverColor] = null;
+          }
+        } else {
+          // First capture in berserker rage sequence; now require second capture.
+          if (brEffect) {
+            brEffect.usedSecondKill = true;
+          }
+        }
       }
       
       // chess.move() already swapped the active color in the FEN. We need to
@@ -1769,6 +1892,9 @@ export class GameManager {
     }
 
     // Broadcast personalised updated state to both players (mask lastMove under fog per viewer)
+    if (result.cursedData) {
+      await new Promise((resolve) => setTimeout(resolve, CURSED_REMOVAL_ANIMATION_MS));
+    }
     for (const pid of gameState.playerIds) {
       if (!pid.startsWith('AI-')) {
         const personalised = this.serialiseGameStateForViewer(gameState, pid);
@@ -1787,6 +1913,9 @@ export class GameManager {
     // If this is an AI game and still ongoing, make the AI move
     if (gameState.aiDifficulty && gameState.status === 'ongoing') {
       await this.performAIMove(gameState);
+      if (gameState?.lastMove?.cursed) {
+        await new Promise((resolve) => setTimeout(resolve, CURSED_REMOVAL_ANIMATION_MS));
+      }
       const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
       if (humanId) {
         const personalised = this.serialiseGameStateForViewer(gameState, humanId);
@@ -2186,13 +2315,26 @@ export class GameManager {
       }
     }
 
+    syncBishopsBlessing(chess, gameState);
+
     // Check cursed squares (don't destroy kings)
     for (const cursed of gameState.activeEffects?.cursedSquares || []) {
       if (cursed.square === result.to) {
         const piece = chess.get(result.to);
         if (piece && piece.type !== 'k') {
+          result.cursedData = {
+            from: result.from,
+            to: result.to,
+            piece: piece.type,
+            color: piece.color,
+          };
           chess.remove(result.to);
           result.cursed = true;
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('cursedSquareTriggered', result.cursedData);
+            }
+          }
         }
       }
     }
@@ -2202,7 +2344,10 @@ export class GameManager {
       to: result.to,
       san: result.san,
       captured: result.captured || null,
+      cursed: !!result.cursed,
     };
+    gameState.lastMoveByColor = gameState.lastMoveByColor || { w: null, b: null };
+    gameState.lastMoveByColor[result.color] = { ...gameState.lastMove };
 
     if (result.captured) {
       const capturedColor = result.color === 'w' ? 'b' : 'w';

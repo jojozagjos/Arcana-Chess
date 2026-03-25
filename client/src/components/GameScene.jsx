@@ -52,12 +52,15 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const [localTurnArcana, setLocalTurnArcana] = useState({ line_of_sight: false, map_fragments: false });
   const [peekCardDialog, setPeekCardDialog] = useState(null); // { cardCount, opponentId } when selecting card to peek
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
+  const [peekRevealFlipped, setPeekRevealFlipped] = useState(false);
+  const [peekSelectingIndex, setPeekSelectingIndex] = useState(null);
   const [filteredCycleDialog, setFilteredCycleDialog] = useState(null); // { arcanaId }
   const [filteredCycleHover, setFilteredCycleHover] = useState(null);
   // Hover threat sources: set of squares (e.g. new Set(['e5','d4'])) that attack a simulated destination
   const [hoverThreatSources, setHoverThreatSources] = useState(new Set());
   // Fog of war effect tracking - persist particles while fog is active
   const [activeFogEffects, setActiveFogEffects] = useState({}); // { 'w' or 'b': true/false }
+  const fogClearTimeoutRef = useRef(null);
   // Time control - client-side countdown display
   const [clientSideTimes, setClientSideTimes] = useState({}); // { socketId: remainingSeconds }
   const [combatLog, setCombatLog] = useState([]);
@@ -557,6 +560,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     return new Set(list.map((m) => m.square).filter(Boolean));
   }, [gameState?.activeEffects?.mirrorImages]);
 
+  const blockedEffectSquares = useMemo(() => {
+    const sanctuaries = (gameState?.activeEffects?.sanctuaries || []).map((s) => s?.square).filter(Boolean);
+    const cursedSquares = (gameState?.activeEffects?.cursedSquares || []).map((c) => c?.square).filter(Boolean);
+    return new Set([...sanctuaries, ...cursedSquares]);
+  }, [gameState?.activeEffects?.sanctuaries, gameState?.activeEffects?.cursedSquares]);
+
   // In-game music: start on mount (cleanup handled by App.jsx routing)
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -592,12 +601,19 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           setVisionMoves([]);
         }
       }
-    } else {
-      setVisionMoves([]);
-      // Clear any lingering client-side highlights when vision ends
-      setHighlightedSquares([]);
+      return;
     }
-  }, [hasVision, chess, myColor, opponentColorChar]);
+
+    // Vision is currently inactive (or unavailable), clear the opponent vision overlay.
+    setVisionMoves([]);
+
+    // Preserve private arcana highlights when they are intentionally active.
+    if (highlightedArcana === 'line_of_sight' || highlightedArcana === 'map_fragments' || highlightedArcana === 'quiet_thought') {
+      return;
+    }
+
+    setHighlightedSquares([]);
+  }, [hasVision, chess, myColor, opponentColorChar, highlightedArcana]);
 
   // Quiet Thought: persistent private highlights for 3 turns of the card user.
   useEffect(() => {
@@ -1007,8 +1023,15 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   // Track fog of war effects and display particles while active
   useEffect(() => {
+    if (fogClearTimeoutRef.current) {
+      clearTimeout(fogClearTimeoutRef.current);
+      fogClearTimeoutRef.current = null;
+    }
+
     if (!gameState?.activeEffects?.fogOfWar) {
-      setActiveFogEffects({});
+      fogClearTimeoutRef.current = setTimeout(() => {
+        setActiveFogEffects({});
+      }, 1600);
       return;
     }
 
@@ -1023,7 +1046,23 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       newFogEffects.b = true;
     }
 
-    setActiveFogEffects(newFogEffects);
+    if (newFogEffects.w || newFogEffects.b) {
+      setActiveFogEffects(newFogEffects);
+      return;
+    }
+
+    // Keep fog particles briefly after flags clear so they don't pop out
+    // before pieces/board visuals settle.
+    fogClearTimeoutRef.current = setTimeout(() => {
+      setActiveFogEffects({});
+    }, 1600);
+
+    return () => {
+      if (fogClearTimeoutRef.current) {
+        clearTimeout(fogClearTimeoutRef.current);
+        fogClearTimeoutRef.current = null;
+      }
+    };
   }, [gameState?.activeEffects?.fogOfWar]);
 
   // Load arcana visual effects module on demand when visuals or persistent effects are present
@@ -1174,6 +1213,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     };
     
     const handlePeekCardSelection = (data) => {
+      setPeekRevealFlipped(false);
+      setPeekSelectingIndex(null);
       setPeekCardDialog({ cardCount: data.cardCount, opponentId: data.opponentId });
     };
 
@@ -1184,7 +1225,9 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       // Skip animation if this revealKey was already animated
       if (recentlyRevealedPeekKeysRef.current.has(revealKey)) {
         setPeekCardDialog(null);
+        setPeekSelectingIndex(null);
         setPeekCardRevealed(data);
+        setPeekRevealFlipped(true);
         return;
       }
 
@@ -1193,7 +1236,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       // Trigger the animation by setting the revealed card
       setPeekCardDialog(null);
+      setPeekSelectingIndex(null);
+      setPeekRevealFlipped(false);
       setPeekCardRevealed(data);
+      const revealFlipTimeout = setTimeout(() => setPeekRevealFlipped(true), 24);
+      timeoutsRef.current.push(revealFlipTimeout);
 
       // Clean up the revealKey after a delay to allow re-use in future turns
       setTimeout(() => recentlyRevealedPeekKeysRef.current.delete(revealKey), 5000);
@@ -1253,6 +1300,49 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       setPendingMoveError(`Chain Lightning triggered${count ? `: ${count} piece${count > 1 ? 's' : ''} destroyed` : ''}`);
       const timeout = setTimeout(() => setPendingMoveError(''), 3000);
       timeoutsRef.current.push(timeout);
+    };
+
+    const handleCursedSquareTriggered = (data) => {
+      const from = data?.from;
+      const to = data?.to;
+      if (!from || !to) return;
+
+      setPiecesState((prev) => prev.map((p) => {
+        if (p.square === from) {
+          return { ...p, targetPosition: toWorldPos(to) };
+        }
+        return p;
+      }));
+
+      setActiveVisualArcana({
+        arcanaId: 'cursed_square',
+        params: { square: to },
+      });
+      const vfxTimeout = setTimeout(() => setActiveVisualArcana(null), 900);
+      timeoutsRef.current.push(vfxTimeout);
+    };
+
+    const handleDoubleStrikeReturn = (data) => {
+      if (!data || !data.from || !data.to) return;
+
+      // Animate piece from capture square, let it stay there briefly, then move back.
+      setPiecesState((prev) => prev.map((p) => {
+        if (p.square === data.to) {
+          return { ...p, targetPosition: toWorldPos(data.from) };
+        }
+        return p;
+      }));
+
+      const t1 = setTimeout(() => {
+        setPiecesState((prev) => prev.map((p) => {
+          if (p.square === data.to) {
+            return { ...p, targetPosition: toWorldPos(data.to) };
+          }
+          return p;
+        }));
+      }, 2000); // hold for 2 seconds before returning
+
+      timeoutsRef.current.push(t1);
     };
 
     const handleExtraMoveAvailable = (data) => {
@@ -1338,7 +1428,9 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     socket.on('rematchCancelled', handleRematchCancelled);
     socket.on('piecePoisoned', handlePiecePoisoned);
     socket.on('chainLightningTriggered', handleChainLightning);
+    socket.on('cursedSquareTriggered', handleCursedSquareTriggered);
     socket.on('extraMoveAvailable', handleExtraMoveAvailable);
+    socket.on('doubleStrikeReturn', handleDoubleStrikeReturn);
     socket.on('serverWarning', handleServerWarning);
     socket.on('squireSupportBounce', handleSquireSupportBounce);
     socket.on('sessionResumed', handleSessionResumed);
@@ -1355,7 +1447,9 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       socket.off('rematchCancelled', handleRematchCancelled);
       socket.off('piecePoisoned', handlePiecePoisoned);
       socket.off('chainLightningTriggered', handleChainLightning);
+      socket.off('cursedSquareTriggered', handleCursedSquareTriggered);
       socket.off('extraMoveAvailable', handleExtraMoveAvailable);
+      socket.off('doubleStrikeReturn', handleDoubleStrikeReturn);
       socket.off('serverWarning', handleServerWarning);
       socket.off('squireSupportBounce', handleSquireSupportBounce);
       socket.off('sessionResumed', handleSessionResumed);
@@ -1391,6 +1485,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (targetingMode) {
       const piece = chess.get(square);
       const { arcanaId, targetType, params, validSquares } = targetingMode;
+      if (blockedEffectSquares.has(square)) {
+        setPendingMoveError('That square already has a tile effect');
+        return;
+      }
       
       // Check if clicked square is in the valid squares list
       const validTarget = validSquares && validSquares.includes(square);
@@ -1489,7 +1587,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         { move },
         (res) => {
           if (!res || !res.ok) {
-            setPendingMoveError(res?.error || 'Move rejected');
+            const errMsg = res?.error || 'Move rejected';
+            if (typeof errMsg === 'string' && errMsg.toLowerCase().includes('sanctuary protects')) {
+              setPendingMoveError('');
+            } else {
+              setPendingMoveError(errMsg);
+            }
             // If move failed, ensure we don't treat the sound as consumed
             playedMoveKeysRef.current.delete(moveKey);
             // Clear selection/promotion UI so user can retry safely
@@ -1554,7 +1657,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       { move },
       (res) => {
         if (!res || !res.ok) {
-          setPendingMoveError(res?.error || 'Move rejected');
+          const errMsg = res?.error || 'Move rejected';
+          if (typeof errMsg === 'string' && errMsg.toLowerCase().includes('sanctuary protects')) {
+            setPendingMoveError('');
+          } else {
+            setPendingMoveError(errMsg);
+          }
           playedMoveKeysRef.current.delete(moveKey);
           // Clear selection/promotion UI on failure
           setPromotionDialog(null);
@@ -1999,6 +2107,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           legalTargets={settings.gameplay.showLegalMoves ? legalTargets : []}
           lastMove={settings.gameplay.highlightLastMove ? lastMove : null}
           pawnShields={gameState?.pawnShields}
+          blockedEffectSquares={blockedEffectSquares}
           onTileClick={handleTileClick}
           onTileHover={(file, rank, entering) => {
             if (!chess) return;
@@ -2629,19 +2738,38 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         <div style={styles.peekOverlay}>
           <div style={styles.peekPanel}>
             <h3 style={{marginTop:0}}>Choose a card to peek</h3>
+            <div style={styles.peekSubtitle}>Opponent hand size: {peekCardDialog.cardCount}</div>
             <div style={styles.peekGrid}>
               {Array.from({ length: peekCardDialog.cardCount }).map((_, i) => (
                 <div
                   key={i}
-                  style={styles.cardBack}
+                  style={{
+                    ...styles.cardBack,
+                    ...(peekSelectingIndex === i ? styles.cardBackSelected : {}),
+                  }}
                   onClick={() => {
-                    setPeekCardDialog(null);
-                    socket.emit('playerAction', { actionType: 'peekCardSelect', cardIndex: i }, (res) => {
-                      if (!res || !res.ok) setPendingMoveError(res?.error || 'Peek failed');
-                    });
+                    if (peekSelectingIndex !== null) return;
+                    setPeekSelectingIndex(i);
+                    const sendPeekTimeout = setTimeout(() => {
+                      socket.emit('playerAction', { actionType: 'peekCardSelect', cardIndex: i }, (res) => {
+                        if (!res || !res.ok) {
+                          setPendingMoveError(res?.error || 'Peek failed');
+                          setPeekSelectingIndex(null);
+                        }
+                      });
+                    }, 180);
+                    timeoutsRef.current.push(sendPeekTimeout);
                   }}
                 >
-                  <div style={styles.cardBackInner}>?</div>
+                  <div
+                    style={{
+                      ...styles.cardBackInner,
+                      ...(peekSelectingIndex === i ? styles.cardBackInnerSelected : {}),
+                    }}
+                  >
+                    ?
+                  </div>
+                  <div style={styles.cardBackLabel}>Card {i + 1}</div>
                 </div>
               ))}
             </div>
@@ -2653,12 +2781,43 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       )}
 
       {peekCardRevealed && (
-        <div style={styles.peekOverlay} onClick={() => setPeekCardRevealed(null)}>
+        <div
+          style={styles.peekOverlay}
+          onClick={() => {
+            setPeekCardRevealed(null);
+            setPeekRevealFlipped(false);
+          }}
+        >
           <div style={styles.revealedPanel} onClick={(e)=>e.stopPropagation()}>
             <h3 style={{marginTop:0}}>Peeked Card</h3>
-            <ArcanaCard arcana={peekCardRevealed.card} />
+            <div
+              style={{
+                ...styles.peekRevealedCardWrap,
+                transform: peekRevealFlipped ? 'rotateY(0deg) scale(1)' : 'rotateY(86deg) scale(0.92)',
+                opacity: peekRevealFlipped ? 1 : 0.35,
+              }}
+            >
+              <ArcanaCard arcana={peekCardRevealed.card} disableHover disableTooltip />
+            </div>
+            <div style={styles.peekMetaRow}>
+              <span style={{ ...styles.peekRarityBadge, color: getRarityColor(peekCardRevealed.card?.rarity || 'common') }}>
+                {(peekCardRevealed.card?.rarity || 'common').toUpperCase()}
+              </span>
+              <span style={styles.peekCardName}>{peekCardRevealed.card?.name || 'Unknown Arcana'}</span>
+            </div>
+            <p style={styles.peekDescriptionText}>
+              {peekCardRevealed.card?.description || 'No description available.'}
+            </p>
             <div style={{marginTop:12}}>
-              <button style={styles.button} onClick={() => setPeekCardRevealed(null)}>Close</button>
+              <button
+                style={styles.button}
+                onClick={() => {
+                  setPeekCardRevealed(null);
+                  setPeekRevealFlipped(false);
+                }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
@@ -2826,7 +2985,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   );
 }
 
-function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClick, onTileHover, hoverThreatSources, targetingMode, chess, myColor, visionMoves, highlightedSquares, highlightColor, highlightedArcana }) {
+function Board({ selectedSquare, legalTargets, lastMove, pawnShields, blockedEffectSquares, onTileClick, onTileHover, hoverThreatSources, targetingMode, chess, myColor, visionMoves, highlightedSquares, highlightColor, highlightedArcana }) {
   const tiles = [];
 
   const [hoveredSquare, setHoveredSquare] = React.useState(null);
@@ -2857,7 +3016,7 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, onTileClic
     const fileChar = 'abcdefgh'[fileIndex];
     const rankNum = 8 - rankIndex;
     const sq = `${fileChar}${rankNum}`;
-    return targetingMode.validSquares.includes(sq);
+    return targetingMode.validSquares.includes(sq) && !(blockedEffectSquares instanceof Set && blockedEffectSquares.has(sq));
   };
 
   const isHoverThreatSource = (fileIndex, rankIndex) => {
@@ -3109,7 +3268,6 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
     });
     return Array.from(groups.values());
   }, [availableArcana]);
-
   const getTargetDescription = (targetType) => {
     switch(targetType) {
       case 'pawn': return 'Select a pawn';
@@ -3135,7 +3293,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
       if (delta === 0) return;
       event.preventDefault();
-      row.scrollLeft -= delta;
+      row.scrollLeft += delta;
     };
 
     row.addEventListener('wheel', onWheel, { passive: false });
@@ -3148,8 +3306,17 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
     <div style={styles.arcanaBottomPanel}>
       <div style={styles.arcanaBottomHeader}>
         <div style={styles.arcanaHeaderTitle}>
-          <span>Arcana</span>
-          <span style={styles.arcanaCountPill}>{groupedCards.length}</span>
+          <span style={styles.arcanaHeaderTitleText}>Arcana</span>
+          <div style={styles.arcanaStatsContainer}>
+            <div style={styles.arcanaStatBlock}>
+              <span style={styles.arcanaStatLabel}>Stacks</span>
+              <span style={styles.arcanaStatValue}>{groupedCards.length}</span>
+            </div>
+            <div style={styles.arcanaStatBlock}>
+              <span style={styles.arcanaStatLabel}>Cards</span>
+              <span style={styles.arcanaStatValue}>{availableArcana.length}</span>
+            </div>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           <button
@@ -3671,13 +3838,14 @@ const styles = {
   },
   errorBanner: {
     position: 'absolute',
-    top: 78,
+    top: 100,
     left: 12,
     background: '#8f3131',
     padding: '6px 10px',
     borderRadius: 6,
     fontSize: '0.8rem',
     fontFamily: 'system-ui, sans-serif',
+    zIndex: 40,
   },
   replayOverlay: {
     position: 'absolute',
@@ -3908,7 +4076,16 @@ const styles = {
     borderRadius: 12,
     border: '1px solid rgba(136, 192, 208, 0.12)',
     color: '#e6eef6',
-    minWidth: 360,
+    minWidth: 'min(92vw, 760px)',
+    maxWidth: 760,
+    maxHeight: '82vh',
+    overflow: 'hidden',
+    boxShadow: '0 18px 48px rgba(0,0,0,0.58), 0 0 26px rgba(136,192,208,0.2)',
+  },
+  peekSubtitle: {
+    marginTop: -6,
+    opacity: 0.82,
+    fontSize: '0.9rem',
   },
   filteredCyclePanel: {
     background: 'linear-gradient(180deg, rgba(19,25,36,0.98), rgba(9,13,20,0.98))',
@@ -4012,26 +4189,52 @@ const styles = {
     color: '#bfd2e4',
   },
   peekGrid: {
-    display: 'flex',
-    gap: 12,
-    flexWrap: 'wrap',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(74px, 1fr))',
+    gap: 8,
     marginTop: 12,
+    maxHeight: '60vh',
+    overflowY: 'auto',
+    paddingRight: 4,
   },
   cardBack: {
-    width: 96,
-    height: 140,
-    background: 'linear-gradient(180deg,#21324a,#0f1720)',
-    borderRadius: 8,
+    width: '100%',
+    minWidth: 0,
+    height: 126,
+    background: 'linear-gradient(170deg, #22334d 0%, #162435 42%, #0f1720 100%)',
+    borderRadius: 10,
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
-    boxShadow: '0 6px 18px rgba(0,0,0,0.6)',
+    boxShadow: '0 8px 22px rgba(0,0,0,0.58)',
+    border: '1px solid rgba(137, 201, 235, 0.3)',
+    transition: 'transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s ease, border-color 0.2s ease, filter 0.2s ease',
+    transformStyle: 'preserve-3d',
   },
   cardBackInner: {
     color: '#bcd8ef',
     fontSize: 28,
     fontWeight: 700,
+    transition: 'transform 0.26s ease, opacity 0.2s ease',
+  },
+  cardBackSelected: {
+    transform: 'rotateY(180deg) scale(1.03)',
+    borderColor: 'rgba(158, 228, 255, 0.9)',
+    boxShadow: '0 0 0 2px rgba(118, 222, 255, 0.35), 0 16px 34px rgba(0,0,0,0.58)',
+    filter: 'brightness(1.08)',
+  },
+  cardBackInnerSelected: {
+    transform: 'rotateY(180deg)',
+    opacity: 0.2,
+  },
+  cardBackLabel: {
+    marginTop: 8,
+    fontSize: '0.66rem',
+    letterSpacing: '0.06em',
+    color: '#acd0ea',
+    textTransform: 'uppercase',
   },
   revealedPanel: {
     background: 'linear-gradient(180deg, rgba(30,36,44,0.98), rgba(12,14,18,0.98))',
@@ -4043,6 +4246,49 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
+    maxWidth: 'min(92vw, 420px)',
+    boxShadow: '0 16px 42px rgba(0,0,0,0.5), 0 0 22px rgba(136,192,208,0.14)',
+  },
+  peekRevealedCardWrap: {
+    transformStyle: 'preserve-3d',
+    transition: 'transform 620ms cubic-bezier(0.22, 1, 0.36, 1), opacity 320ms ease',
+    willChange: 'transform, opacity',
+  },
+  peekMetaRow: {
+    marginTop: 10,
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  peekRarityBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+    border: '1px solid currentColor',
+    padding: '3px 8px',
+    fontSize: '0.68rem',
+    fontWeight: 800,
+    letterSpacing: '0.06em',
+    background: 'rgba(13, 22, 33, 0.85)',
+  },
+  peekCardName: {
+    fontWeight: 700,
+    fontSize: '0.96rem',
+    color: '#f0f7ff',
+  },
+  peekDescriptionText: {
+    marginTop: 10,
+    marginBottom: 0,
+    width: '100%',
+    lineHeight: 1.45,
+    fontSize: '0.9rem',
+    color: '#d4e7f4',
+    background: 'rgba(10, 16, 24, 0.62)',
+    border: '1px solid rgba(136, 192, 208, 0.18)',
+    borderRadius: 8,
+    padding: '10px 12px',
   },
   menuCardContent: {
     padding: 16,
@@ -4213,7 +4459,40 @@ const styles = {
   arcanaHeaderTitle: {
     display: 'inline-flex',
     alignItems: 'center',
+    gap: 12,
+  },
+  arcanaHeaderTitleText: {
+    fontSize: '0.85rem',
+    fontWeight: 700,
+    color: '#d8e9f5',
+  },
+  arcanaStatsContainer: {
+    display: 'flex',
     gap: 8,
+    alignItems: 'center',
+  },
+  arcanaStatBlock: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '2px 5px',
+    borderRadius: 999,
+    background: 'rgba(255,255,255,0.08)',
+    border: '1px solid rgba(152, 176, 209, 0.35)',
+  },
+  arcanaStatLabel: {
+    fontSize: '0.72rem',
+    color: '#90a8c8',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+  },
+  arcanaStatValue: {
+    fontSize: '0.78rem',
+    fontWeight: 700,
+    color: '#e2f6ff',
+    padding: '1px 6px',
+    borderRadius: 999,
+    background: 'rgba(80, 149, 194, 0.72)',
   },
   arcanaCountPill: {
     display: 'inline-flex',
@@ -4260,6 +4539,7 @@ const styles = {
     boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
     zIndex: 100,
     pointerEvents: 'none',
+    overflow: 'hidden',
   },
   arcanaSelectedIndicator: {
     fontSize: '0.8rem',

@@ -81,6 +81,16 @@
   transform: translateY(-1px);
 }
 
+.danger-button {
+  border-color: rgba(255, 126, 126, 0.62) !important;
+  background: linear-gradient(180deg, #442024 0%, #34171b 100%) !important;
+  color: #ffe5e5 !important;
+}
+
+.danger-button:hover {
+  border-color: rgba(255, 170, 170, 0.9) !important;
+}
+
 .arcana-studio-layout {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 320px;

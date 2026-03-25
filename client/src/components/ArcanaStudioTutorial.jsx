@@ -10,7 +10,7 @@ const STEPS = [
       'Move/Rotate/Scale gizmos stay visible while the piece is selected; click empty ground to deselect.',
       'If the object has no keyframe yet, moving with gizmos auto-creates the first keyframe at the playhead.',
       'Add particles, overlays, and sounds on matching timestamps.',
-      'Preview, save to runtime, then export JSON for backup or sharing.',
+      'Preview your animation, then export JSON for backup or sharing.',
     ],
   },
   {

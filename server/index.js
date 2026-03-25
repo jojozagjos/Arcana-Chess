@@ -262,7 +262,8 @@ io.on('connection', (socket) => {
 
   socket.on('listLobbies', (payload, ack) => {
     try {
-      const lobbies = lobbyManager.getPublicLobbies();
+      const filters = payload?.filters || {};
+      const lobbies = lobbyManager.getPublicLobbies(filters);
       safeAck(ack, { ok: true, lobbies });
     } catch (err) {
       logger.error('listLobbies error', err);

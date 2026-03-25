@@ -162,7 +162,9 @@ export function CardBalancingToolV2({ onBack }) {
   
   // Highlighted squares for Line of Sight, Vision, Map Fragments, etc
   const [highlightedSquares, setHighlightedSquares] = useState([]);
+  const [highlightedArcana, setHighlightedArcana] = useState(null);
   const [highlightColor, setHighlightColor] = useState('#88c0d0');
+  const timeoutsRef = useRef([]);
   
   // Metamorphosis dialog state
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null);
@@ -179,6 +181,17 @@ export function CardBalancingToolV2({ onBack }) {
 
   // Show when a card/interaction ends the turn (Badge in UI)
   const [turnEndInfo, setTurnEndInfo] = useState(null);
+
+  const trackTimeout = (callback, delayMs) => {
+    const id = setTimeout(callback, delayMs);
+    timeoutsRef.current.push(id);
+    return id;
+  };
+
+  const clearManagedTimeouts = () => {
+    timeoutsRef.current.forEach((id) => clearTimeout(id));
+    timeoutsRef.current = [];
+  };
 
   const cinematicMotionBySquare = useMemo(() => {
     if (!activeVisualArcana?.arcanaId) return new Map();
@@ -258,6 +271,7 @@ export function CardBalancingToolV2({ onBack }) {
   };
 
   const resetTest = () => {
+    clearManagedTimeouts();
     setSelectedSquare(null);
     setTargetSquare(null);
     setTargetingMode(false);
@@ -305,6 +319,7 @@ export function CardBalancingToolV2({ onBack }) {
     setGrayscaleIntensity(0);
     setActiveVisualArcana(null);
     setHighlightedSquares([]);
+    setHighlightedArcana(null);
     setHighlightColor('#88c0d0');
     setValidTargetSquares([]);
     setValidationChecklist({ logic: false, visuals: false, sound: false, cutscene: false, server: false });
@@ -312,6 +327,10 @@ export function CardBalancingToolV2({ onBack }) {
     setServerTestResult(null);
     addLog('Test reset', 'info');
   };
+
+  useEffect(() => () => {
+    clearManagedTimeouts();
+  }, []);
 
   // Server validation: creates a test game, applies arcana, verifies behavior
   const SERVER_TEST_TIMEOUT_MS = 5000; // make configurable later via settings
@@ -368,15 +387,6 @@ export function CardBalancingToolV2({ onBack }) {
         addLog(`✗ Server validation failed: ${json.error || 'Unknown'}`, 'error');
         setServerTestResult({ success: false, error: json.error || 'Unknown' });
       }
-
-      // Timeout guard
-      setTimeout(() => {
-        if (serverTestActive) {
-          setServerTestActive(false);
-          addLog(`Server test timed out after ${SERVER_TEST_TIMEOUT_MS}ms`, 'error');
-          setServerTestResult({ success: false, error: 'Timeout' });
-        }
-      }, SERVER_TEST_TIMEOUT_MS);
 
     } catch (err) {
       setServerTestActive(false);
@@ -486,7 +496,7 @@ export function CardBalancingToolV2({ onBack }) {
 
       // Create abort controller for timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), SERVER_TEST_TIMEOUT_MS);
 
       const resp = await fetch('/api/test-card', {
         method: 'POST',
@@ -526,8 +536,7 @@ export function CardBalancingToolV2({ onBack }) {
             setHighlightedSquares(Array.isArray(squares) ? squares : []);
             setHighlightedArcana('line_of_sight');
             setHighlightColor('#88c0d0');
-            const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
-            timeoutsRef.current.push(t);
+            trackTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
             break;
           }
           case 'map_fragments': {
@@ -535,17 +544,16 @@ export function CardBalancingToolV2({ onBack }) {
             setHighlightedSquares(Array.isArray(squares) ? squares : []);
             setHighlightedArcana('map_fragments');
             setHighlightColor('#bf616a');
-            const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
-            timeoutsRef.current.push(t);
+            trackTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
             break;
           }
+          case 'threat_sight':
           case 'quiet_thought': {
             const squares = appliedParams.threats || [];
             setHighlightedSquares(Array.isArray(squares) ? squares : []);
-            setHighlightedArcana('quiet_thought');
+            setHighlightedArcana('threat_sight');
             setHighlightColor('#ff4444');
-            const t = setTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
-            timeoutsRef.current.push(t);
+            trackTimeout(() => { setHighlightedSquares([]); setHighlightedArcana(null); }, 6000);
             break;
           }
           case 'vision': {
@@ -553,8 +561,7 @@ export function CardBalancingToolV2({ onBack }) {
             if (Array.isArray(squares) && squares.length) {
               setHighlightedSquares(squares);
               setHighlightColor('#bf616a');
-              const t = setTimeout(() => setHighlightedSquares([]), 6000);
-              timeoutsRef.current.push(t);
+              trackTimeout(() => setHighlightedSquares([]), 6000);
             }
             break;
           }
@@ -618,7 +625,7 @@ export function CardBalancingToolV2({ onBack }) {
         const duration = getArcanaEffectDuration(card.id);
         const cutsceneDuration = card.visual?.cutscene ? (getCutsceneConfig(card.id)?.duration || 0) : 0;
         const clearMs = Math.max(duration || 3000, cutsceneDuration || 0);
-        setTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
+        trackTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
       };
 
       if (!effectsModule || Object.keys(effectsModule).length === 0) {
@@ -721,7 +728,7 @@ export function CardBalancingToolV2({ onBack }) {
         const duration = getArcanaEffectDuration(card.id);
         const cutsceneDuration = card?.visual?.cutscene ? (getCutsceneConfig(card.id)?.duration || 0) : 0;
         const clearMs = Math.max(duration || 3000, cutsceneDuration || 0);
-        setTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
+        trackTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
       };
 
       // Ensure effects module is loaded before triggering visuals (Balancing tool may lazy-load)
@@ -758,7 +765,7 @@ export function CardBalancingToolV2({ onBack }) {
       // Delay board state update until visual effect completes so pieces are visible during animation
       // Cards with destructive visuals (execution, etc) need to keep pieces visible until the effect finishes
       const visualDuration = getArcanaEffectDuration(card.id);
-      setTimeout(() => {
+      trackTimeout(() => {
         if (result.success) {
           setChess(testChess);
           setFen(testChess.fen());
@@ -794,7 +801,7 @@ export function CardBalancingToolV2({ onBack }) {
         }]);
         addLog(`Temporal Echo showing last move: ${lastMove.from} → ${lastMove.to}`, 'success');
         setValidationChecklist(prev => ({ ...prev, logic: true, visuals: true, cutscene: true }));
-        setTimeout(() => setCutsceneActive(false), getArcanaEffectDuration('temporal_echo'));
+        trackTimeout(() => setCutsceneActive(false), getArcanaEffectDuration('temporal_echo'));
         return;
       }
     }
@@ -804,7 +811,7 @@ export function CardBalancingToolV2({ onBack }) {
       setCutsceneActive(true);
       setGrayscaleIntensity(1);
       
-      setTimeout(() => {
+      trackTimeout(() => {
         const newChess = new Chess(chess.fen());
         if (moveHistory.length >= 2) {
           const restoreFen = moveHistory[moveHistory.length - 3]?.fen || TEST_SCENARIOS[scenario].fen;
@@ -838,7 +845,7 @@ export function CardBalancingToolV2({ onBack }) {
     const params = { square: payload.targetSquare || payload.square };
     setActiveVisualArcana({ arcanaId, params });
     const duration = getArcanaEffectDuration(arcanaId) || 3000;
-    setTimeout(() => setActiveVisualArcana(null), duration);
+    trackTimeout(() => setActiveVisualArcana(null), duration);
   };
 
   // Trigger an orchestrated cutscene wired to the local CameraCutscene and CutsceneOverlay
@@ -1097,7 +1104,7 @@ export function CardBalancingToolV2({ onBack }) {
           // Double Strike visual at capture square
           setActiveVisualArcana({ arcanaId: 'double_strike', params: { square: move.to, from: move.from, to: move.to } });
           const duration = getArcanaEffectDuration('double_strike') || 1500;
-          setTimeout(() => setActiveVisualArcana(null), duration);
+          trackTimeout(() => setActiveVisualArcana(null), duration);
         }
 
         // Activate pending Berserker Rage on first capture
@@ -1120,7 +1127,7 @@ export function CardBalancingToolV2({ onBack }) {
           // Berserker visual at capture square
           setActiveVisualArcana({ arcanaId: 'berserker_rage', params: { square: move.to, from: move.from, to: move.to } });
           const duration = getArcanaEffectDuration('berserker_rage') || 1500;
-          setTimeout(() => setActiveVisualArcana(null), duration);
+          trackTimeout(() => setActiveVisualArcana(null), duration);
         }
 
         // Focus Fire: consume on capture (server parity)
@@ -1157,7 +1164,7 @@ export function CardBalancingToolV2({ onBack }) {
               params: { origin: move.to, chained: chainedSquares, square: move.to }
             });
             const duration = getArcanaEffectDuration('chain_lightning') || 1400;
-            setTimeout(() => setActiveVisualArcana(null), duration);
+            trackTimeout(() => setActiveVisualArcana(null), duration);
           }
 
           nextEffects.chainLightning[move.color] = false;

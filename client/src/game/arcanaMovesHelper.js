@@ -47,6 +47,12 @@ export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
     customMoves.push(...stormMoves);
   }
 
+  // TEMPORAL ECHO: Add move(s) that follow your previous move's direction/distance pattern.
+  if (effects.temporalEcho?.color === myColorCode && effects.temporalEcho?.pattern) {
+    const temporalMoves = generateTemporalEchoMoves(chess, square, piece, myColorCode, effects.temporalEcho.pattern);
+    customMoves.push(...temporalMoves);
+  }
+
   // EN PASSANT MASTER: Pawns can capture adjacent enemy pawns (sideways/diagonal variant)
   if (effects.enPassantMaster?.[myColorCode] && piece.type === 'p') {
     const enPassantMasterMoves = generateEnPassantMasterMoves(chess, square, myColorCode);
@@ -56,7 +62,13 @@ export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
   // QUEEN'S GAMBIT: Handled differently (allows second move after first)
   // No custom moves here, just tracked in state
 
-  return customMoves;
+  const seen = new Set();
+  return customMoves.filter((m) => {
+    const key = `${m.from}-${m.to}-${m.promotion || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function generateSpectralMarchMoves(chess, square, color) {
@@ -360,6 +372,74 @@ function generateKnightOfStormsMoves(chess, square, color) {
         });
       }
     }
+  }
+
+  return moves;
+}
+
+function generateTemporalEchoMoves(chess, square, piece, color, pattern) {
+  if (!pattern || typeof pattern.fileDelta !== 'number' || typeof pattern.rankDelta !== 'number') {
+    return [];
+  }
+
+  const moves = [];
+  const fromFile = square.charCodeAt(0);
+  const fromRank = parseInt(square[1], 10);
+
+  const pFile = pattern.fileDelta;
+  const pRank = pattern.rankDelta;
+  const isPatternLinear = pFile === 0 || pRank === 0 || Math.abs(pFile) === Math.abs(pRank);
+
+  const addCandidate = (toFileCode, toRank) => {
+    if (toFileCode < 97 || toFileCode > 104 || toRank < 1 || toRank > 8) return;
+
+    // Do not allow pawn temporal moves to land directly on promotion rank.
+    if (piece.type === 'p') {
+      const ownPromotionRank = color === 'w' ? 8 : 1;
+      if (toRank === ownPromotionRank) return;
+    }
+
+    const toSquare = `${String.fromCharCode(toFileCode)}${toRank}`;
+    const targetPiece = chess.get(toSquare);
+    if (targetPiece && targetPiece.color === color) return;
+
+    const fileDelta = toFileCode - fromFile;
+    const rankDelta = toRank - fromRank;
+    const isSlidingMove = fileDelta === 0 || rankDelta === 0 || Math.abs(fileDelta) === Math.abs(rankDelta);
+
+    if (isSlidingMove && (Math.abs(fileDelta) > 1 || Math.abs(rankDelta) > 1)) {
+      const stepFile = fileDelta === 0 ? 0 : fileDelta / Math.abs(fileDelta);
+      const stepRank = rankDelta === 0 ? 0 : rankDelta / Math.abs(rankDelta);
+      let f = fromFile + stepFile;
+      let r = fromRank + stepRank;
+      while (f !== toFileCode || r !== toRank) {
+        const blockerSquare = `${String.fromCharCode(f)}${r}`;
+        if (chess.get(blockerSquare)) return;
+        f += stepFile;
+        r += stepRank;
+      }
+    }
+
+    moves.push({
+      from: square,
+      to: toSquare,
+      piece: piece.type,
+      color,
+      captured: targetPiece?.type,
+      flags: targetPiece ? 'c' : 'n',
+      san: `${piece.type.toUpperCase()}${targetPiece ? 'x' : ''}${toSquare}`,
+    });
+  };
+
+  if (isPatternLinear) {
+    const stepFile = pFile === 0 ? 0 : pFile / Math.abs(pFile);
+    const stepRank = pRank === 0 ? 0 : pRank / Math.abs(pRank);
+    const maxDistance = Math.max(Math.abs(pFile), Math.abs(pRank));
+    for (let distance = 1; distance <= maxDistance; distance++) {
+      addCandidate(fromFile + stepFile * distance, fromRank + stepRank * distance);
+    }
+  } else {
+    addCandidate(fromFile + pFile, fromRank + pRank);
   }
 
   return moves;

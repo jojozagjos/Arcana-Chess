@@ -5,6 +5,7 @@
 
 import { Chess } from 'chess.js';
 import { getAdjacentSquares } from '../arcana/arcanaUtils.js';
+import { applyArcana } from '../arcana/arcanaHandlers.js';
 
 // Helper to create a mock game state
 function createMockGameState(fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1') {
@@ -193,7 +194,7 @@ console.log('\n--- Sanctuary Tests ---');
 
 test('Sanctuary prevents captures on protected square', () => {
   const state = createMockGameState();
-  state.activeEffects.sanctuaries.push({ square: 'e4', turns: 2 });
+  state.activeEffects.sanctuaries.push({ square: 'e4', turns: 4 });
   
   const targetSquare = 'e4';
   const hasSanctuary = state.activeEffects.sanctuaries.some(s => s.square === targetSquare);
@@ -220,7 +221,7 @@ console.log('\n--- Cursed Square Tests ---');
 
 test('Cursed square destroys non-king pieces', () => {
   const state = createMockGameState('8/8/8/8/4P3/8/8/4K2k w - - 0 1');
-  state.activeEffects.cursedSquares.push({ square: 'e4', turns: 2 });
+  state.activeEffects.cursedSquares.push({ square: 'e4', turns: 4 });
   
   // Check if piece at e4 would be destroyed
   const piece = state.chess.get('e4');
@@ -281,7 +282,7 @@ test('Berserker Rage blocks adjacent captures (bloodlust restraint)', () => {
   state.activeEffects.berserkerRageActive = {
     color: 'w',
     firstKillSquare: 'e4',
-    firstKillFrom: 'd3'
+    firstKillFrom: 'e4'
   };
   
   const firstKill = 'e4';
@@ -290,7 +291,11 @@ test('Berserker Rage blocks adjacent captures (bloodlust restraint)', () => {
   
   assert(isAdjacent, 'e5 should be adjacent to e4');
   assert(state.activeEffects.berserkerRageActive.color === 'w', 'Berserker rage should restrict adjacent captures');
+
+  // explicit check that firstKillFrom is set to current piece square (after capture)
+  assert(state.activeEffects.berserkerRageActive.firstKillFrom === 'e4', 'Berserker Rage should require same piece from e4');
 });
+
 
 test('Extra move not granted on promotion', () => {
   // Simulating the check from gameManager.js
@@ -746,6 +751,198 @@ test('Effects expire after turn limit', () => {
   gameState.activeEffects.sanctuary[0].turnsRemaining--;
   
   assert(gameState.activeEffects.sanctuary[0].turnsRemaining === 0, 'Effect should expire');
+});
+
+// ============ LEGENDARY HANDLER REGRESSION TESTS ============
+
+console.log('\n--- Legendary Handler Regression Tests ---');
+
+test('Time Travel is rejected when move history is empty', () => {
+  const gameState = createMockGameState();
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'time_travel', name: 'Time Travel' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+  gameState.moveHistory = [];
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'time_travel', params: {} }], null, null);
+
+  assertEqual(applied.length, 0, 'Time Travel should not apply with empty history');
+  assertEqual(gameState.arcanaByPlayer[socketId].length, 1, 'Card should remain in hand on failed apply');
+  assertEqual(gameState.usedArcanaIdsByPlayer[socketId].length, 0, 'Failed apply should not mark card as used');
+});
+
+test('Time Travel applies and rewinds when move history exists', () => {
+  const gameState = createMockGameState();
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'time_travel', name: 'Time Travel' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const initialFen = gameState.chess.fen();
+  gameState.chess.move('e4');
+  gameState.moveHistory = [initialFen];
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'time_travel', params: {} }], null, null);
+
+  assertEqual(applied.length, 1, 'Time Travel should apply when history exists');
+  assertEqual(applied[0].params.rewoundCount, 1, 'Expected one board snapshot to be rewound');
+  assertEqual(gameState.chess.fen(), initialFen, 'Board should rewind to the saved snapshot');
+});
+
+test('Promotion Ritual rejects non-pawn target', () => {
+  const gameState = createMockGameState();
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'promotion_ritual', name: 'Promotion Ritual' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'promotion_ritual', params: { targetSquare: 'e1' } }], null, null);
+
+  assertEqual(applied.length, 0, 'Promotion Ritual should reject non-pawn targets');
+  assertEqual(gameState.arcanaByPlayer[socketId].length, 1, 'Card should remain in hand on invalid target');
+});
+
+test('Promotion Ritual promotes a valid pawn target', () => {
+  const gameState = createMockGameState('4k3/4P3/8/8/8/8/8/4K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'promotion_ritual', name: 'Promotion Ritual' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'promotion_ritual', params: { targetSquare: 'e7' } }], null, null);
+  const promoted = gameState.chess.get('e7');
+
+  assertEqual(applied.length, 1, 'Promotion Ritual should apply on valid pawn target');
+  assert(promoted && promoted.type === 'q' && promoted.color === 'w', 'Pawn should be promoted to a white queen');
+});
+
+test('Chaos Theory returns from/to mapping in shuffle payload', () => {
+  const gameState = createMockGameState('4k3/ppp5/8/8/4P3/3N4/3P4/4K2R w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'chaos_theory', name: 'Chaos Theory' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  let applied = [];
+  let lastError = null;
+  for (let i = 0; i < 6; i++) {
+    try {
+      applied = applyArcana(socketId, gameState, [{ arcanaId: 'chaos_theory', params: {} }], null, null);
+      if (applied.length === 1) break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (applied.length !== 1 && lastError) throw lastError;
+  assertEqual(applied.length, 1, 'Chaos Theory should apply');
+  const shuffled = applied[0]?.params?.shuffled || [];
+  assert(Array.isArray(shuffled), 'Chaos Theory should return a shuffled array');
+  assert(shuffled.length > 0, 'Chaos Theory should shuffle at least one piece per side');
+  for (const move of shuffled) {
+    assert(typeof move.from === 'string' && typeof move.to === 'string', 'Shuffled entries must include from/to squares');
+  }
+});
+
+test('Chaos Theory remaps tracked square effects for moved pieces', () => {
+  const gameState = createMockGameState('4k3/ppp5/8/8/4P3/3N4/3P4/4K2R w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'chaos_theory', name: 'Chaos Theory' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  gameState.activeEffects.poisonedPieces.push({ square: 'e4', turnsLeft: 12, poisonedBy: 'b' });
+  gameState.activeEffects.mirrorImages.push({ square: 'd2', type: 'p', color: 'w', turnsLeft: 6 });
+  gameState.activeEffects.knightOfStorms = { w: 'd3', b: null };
+
+  let applied = [];
+  let lastError = null;
+  for (let i = 0; i < 6; i++) {
+    try {
+      applied = applyArcana(socketId, gameState, [{ arcanaId: 'chaos_theory', params: {} }], null, null);
+      if (applied.length === 1) break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (applied.length !== 1 && lastError) throw lastError;
+  assertEqual(applied.length, 1, 'Chaos Theory should apply');
+
+  const shuffled = applied[0]?.params?.shuffled || [];
+  const remap = (square) => {
+    const moved = shuffled.find((entry) => entry.from === square);
+    return moved ? moved.to : square;
+  };
+
+  assertEqual(gameState.activeEffects.poisonedPieces[0].square, remap('e4'), 'Poison tracking should follow shuffled piece');
+  assertEqual(gameState.activeEffects.mirrorImages[0].square, remap('d2'), 'Mirror tracking should follow shuffled piece');
+  assertEqual(gameState.activeEffects.knightOfStorms.w, remap('d3'), 'Knight of Storms marker should follow shuffled piece');
+});
+
+test('Map Fragments returns top-ranked enemy move hints', () => {
+  const gameState = createMockGameState('4k3/8/8/8/4q3/8/4Q3/4K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'map_fragments', name: 'Map Fragments' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'map_fragments', params: {} }], { color: 'w' }, null);
+
+  assertEqual(applied.length, 1, 'Map Fragments should apply');
+  const params = applied[0].params || {};
+  assert(Array.isArray(params.predictedMoves), 'Map Fragments should include predictedMoves metadata');
+  assert(params.predictedMoves.length >= 1 && params.predictedMoves.length <= 3, 'Map Fragments should return up to 3 move hints');
+  assert(Array.isArray(params.predictedSquares), 'Map Fragments should include predictedSquares list');
+  assertEqual(params.predictedMoves[0].to, 'e2', 'Top ranked hint should prioritize capturing the enemy queen');
+  assertEqual(params.predictedSquares[0], params.predictedMoves[0].to, 'First predicted square should match top move target');
+});
+
+test('Temporal Echo uses the mover color last move when available', () => {
+  const gameState = createMockGameState();
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'temporal_echo', name: 'Temporal Echo' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+  gameState.lastMove = { from: 'a7', to: 'a5' }; // Opponent global last move
+  gameState.lastMoveByColor = {
+    w: { from: 'e2', to: 'e4' },
+    b: { from: 'a7', to: 'a5' },
+  };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'temporal_echo', params: {} }], { color: 'w' }, null);
+
+  assertEqual(applied.length, 1, 'Temporal Echo should apply when mover has own last move');
+  assertEqual(gameState.activeEffects.temporalEcho.color, 'w', 'Temporal Echo should bind to mover color');
+  assertEqual(gameState.activeEffects.temporalEcho.pattern.fileDelta, 0, 'Expected file delta from white last move');
+  assertEqual(gameState.activeEffects.temporalEcho.pattern.rankDelta, 2, 'Expected rank delta from white last move');
+});
+
+test('Necromancy revives non-pawn when no pawn captured', () => {
+  const gameState = createMockGameState('4k3/8/8/8/8/8/8/4K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'necromancy', name: 'Necromancy' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+  gameState.capturedByColor.w = [{ type: 'n', by: 'b', at: 'c3' }];
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'necromancy', params: {} }], { color: 'w' }, null);
+
+  assertEqual(applied.length, 1, 'Necromancy should apply with non-pawn captures available');
+  const board = gameState.chess.board();
+  let foundKnight = false;
+  for (let r = 0; r < 8; r++) {
+    for (let f = 0; f < 8; f++) {
+      const piece = board[r][f];
+      if (piece && piece.type === 'n' && piece.color === 'w') foundKnight = true;
+    }
+  }
+  assert(foundKnight, 'Necromancy should place a revived non-pawn piece');
+});
+
+test('Royal Swap keeps swapped pawn as pawn on king square', () => {
+  const gameState = createMockGameState('4k3/8/8/8/8/8/4P3/4K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'royal_swap', name: 'Royal Swap' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'royal_swap', params: { targetSquare: 'e2' } }], { color: 'w' }, null);
+
+  assertEqual(applied.length, 1, 'Royal Swap should apply with own pawn target');
+  const kingNow = gameState.chess.get('e2');
+  const pawnNow = gameState.chess.get('e1');
+  assert(kingNow && kingNow.type === 'k' && kingNow.color === 'w', 'King should move to the target pawn square');
+  assert(pawnNow && pawnNow.type === 'p' && pawnNow.color === 'w', 'Swapped piece on king square should remain a pawn');
 });
 
 // ============ SUMMARY ============

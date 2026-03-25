@@ -15,8 +15,6 @@ import { squareToPosition } from './sharedHelpers.jsx';
  */
 export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, controlsRef }) {
   const { camera } = useThree();
-  // Get controls from ref to ensure we always get the current instance
-  const controls = controlsRef?.current;
   const savedCameraState = useRef(null);
   const animationProgress = useRef(0);
   const isAnimating = useRef(false);
@@ -34,6 +32,19 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
   const inSequence = useRef(false);
   const holdPositionRef = useRef(false);
   const sequenceEndRef = useRef(false);
+
+  const unlockControls = useCallback(() => {
+    if (controlsRef?.current) {
+      controlsRef.current.enabled = true;
+    }
+  }, [controlsRef]);
+
+  const finishCutscene = useCallback(() => {
+    unlockControls();
+    if (onCutsceneEnd) {
+      onCutsceneEnd();
+    }
+  }, [unlockControls, onCutsceneEnd]);
   
   // Easing functions
   const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -87,7 +98,7 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     if (sequenceStart || !inSequence.current || !sequenceBaseState.current) {
       sequenceBaseState.current = {
         position: camera.position.clone(),
-        lookAt: controls?.target?.clone() || new THREE.Vector3(0, 0, 0),
+        lookAt: controlsRef?.current?.target?.clone() || new THREE.Vector3(0, 0, 0),
       };
     }
     if (sequenceStart) {
@@ -97,7 +108,7 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     // Save current camera state before this shot
     savedCameraState.current = {
       position: camera.position.clone(),
-      lookAt: controls?.target?.clone() || new THREE.Vector3(0, 0, 0),
+      lookAt: controlsRef?.current?.target?.clone() || new THREE.Vector3(0, 0, 0),
     };
     
     // Calculate target position (above and looking at the effect square)
@@ -117,7 +128,7 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     }
     
     startPosition.current.copy(camera.position);
-    startLookAt.current.copy(controls?.target || new THREE.Vector3(0, 0, 0));
+    startLookAt.current.copy(controlsRef?.current?.target || new THREE.Vector3(0, 0, 0));
     
     // Start animation
     phase.current = 'moving_to';
@@ -130,21 +141,25 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
     returnEasingName.current = cutsceneTarget.returnEasing || 'easeInOutCubic';
     
     // Disable orbit controls during cutscene
-    if (controls) {
-      controls.enabled = false;
+    if (controlsRef?.current) {
+      controlsRef.current.enabled = false;
     }
     
     return () => {
-      // Re-enable controls on unmount
-      if (controls) {
-        controls.enabled = true;
-      }
+      unlockControls();
     };
-  }, [cutsceneTarget, camera, controls, getDefaultCameraPosition]);
+  }, [cutsceneTarget, camera, controlsRef, getDefaultCameraPosition, unlockControls]);
+
+  useEffect(() => {
+    if (!cutsceneTarget && phase.current === 'idle' && !isAnimating.current) {
+      unlockControls();
+    }
+  }, [cutsceneTarget, unlockControls]);
   
   // Animation frame handler
   useFrame((_, delta) => {
     if (!isAnimating.current || phase.current === 'idle') return;
+    const controls = controlsRef?.current;
     
     if (phase.current === 'moving_to') {
       animationProgress.current += (delta * 1000) / moveDurationMs.current;
@@ -178,6 +193,7 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
           }
           phase.current = 'idle';
           isAnimating.current = false;
+          finishCutscene();
           return;
         }
         phase.current = 'returning';
@@ -231,11 +247,9 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
         if (controls) {
           controls.enabled = true;
         }
-        
+
         // Notify parent that cutscene ended
-        if (onCutsceneEnd) {
-          onCutsceneEnd();
-        }
+        finishCutscene();
       }
     }
   });

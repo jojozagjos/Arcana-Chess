@@ -121,12 +121,22 @@ export class LobbyManager {
     this.leaveLobby(socketId);
   }
 
-  getPublicLobbies() {
+  getPublicLobbies(filters = {}) {
+    const requestedMode = String(filters?.gameMode || '').trim();
+    const requestedTimeControl = String(filters?.timeControl || '').trim();
+    const filterMode = requestedMode && requestedMode !== 'any' ? requestedMode : null;
+    const filterTimeControl = requestedTimeControl && requestedTimeControl !== 'any' ? requestedTimeControl : null;
+
     // Return all lobbies with derived fields expected by clients
     // (client expects `status` and `playerCount` for quick-match filtering)
     return [...this.lobbies.values()]
       // Exclude lobbies that contain AI players (no need to show AI games in public list)
       .filter(lobby => !Array.isArray(lobby.players) || !lobby.players.some(id => typeof id === 'string' && id.startsWith('AI-')))
+      .filter((lobby) => {
+        if (filterMode && lobby.gameMode !== filterMode) return false;
+        if (filterTimeControl && lobby.timeControl !== filterTimeControl) return false;
+        return true;
+      })
       .map((lobby) => {
       const playerCount = Array.isArray(lobby.players) ? lobby.players.length : 0;
       const status = playerCount < 2 ? 'waiting' : 'full';

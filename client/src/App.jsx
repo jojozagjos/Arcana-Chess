@@ -27,6 +27,7 @@ export function App() {
   const [devMode, setDevMode] = useState(false);
   const [quickMatchStatus, setQuickMatchStatus] = useState('');
   const [quickMatchLoading, setQuickMatchLoading] = useState(false);
+  const [quickMatchFilters, setQuickMatchFilters] = useState({ gameMode: 'any', timeControl: 'any' });
 
   useEffect(() => {
     if (screen === 'main-menu') {
@@ -332,6 +333,65 @@ export function App() {
 
   // Using external IntroScreen component (from ./components/IntroScreen.jsx)
 
+  const handleQuickMatch = async (filters = quickMatchFilters) => {
+    try {
+      if (quickMatchLoading) return; // prevent spamming
+      setQuickMatchLoading(true);
+      const MIN_SEARCH_MS = 1500; // ensure searching text stays visible briefly
+      setQuickMatchStatus('Searching for matching public games...');
+      const start = Date.now();
+      const normalizedFilters = {
+        gameMode: filters?.gameMode || 'any',
+        timeControl: filters?.timeControl || 'any',
+      };
+      socket.emit('listLobbies', { filters: normalizedFilters }, (res) => {
+        const elapsed = Date.now() - start;
+        const finishAndClear = (statusMsg, clearAfterMs = 3000) => {
+          setQuickMatchStatus(statusMsg);
+          setTimeout(() => {
+            setQuickMatchStatus('');
+            setQuickMatchLoading(false);
+          }, clearAfterMs);
+        };
+
+        const run = () => {
+          if (res && res.ok && res.lobbies && res.lobbies.length > 0) {
+            const availableLobby = res.lobbies.find(
+              (lobby) => !lobby.isPrivate && lobby.status === 'waiting' && lobby.playerCount < 2
+            );
+            if (availableLobby) {
+              setQuickMatchStatus('Found open game - joining...');
+              socket.emit('joinLobby', { lobbyId: availableLobby.id }, (joinRes) => {
+                if (joinRes && joinRes.ok) {
+                  setQuickMatchStatus('');
+                  setQuickMatchLoading(false);
+                  setQuickJoinedLobby(joinRes.lobby);
+                  setScreen('join-game');
+                } else {
+                  console.error('Failed to join lobby:', joinRes?.error);
+                  finishAndClear('Failed to join the found game.');
+                }
+              });
+            } else {
+              finishAndClear('No matching open public games found.');
+            }
+          } else {
+            finishAndClear('No matching open public games found.');
+          }
+        };
+        const delay = Math.max(0, MIN_SEARCH_MS - elapsed);
+        if (delay > 0) setTimeout(run, delay); else run();
+      });
+    } catch (err) {
+      console.error('Quick match error:', err);
+      setQuickMatchStatus('Error searching for games.');
+      setTimeout(() => {
+        setQuickMatchStatus('');
+        setQuickMatchLoading(false);
+      }, 3000);
+    }
+  };
+
   return (
     <div style={{ width: '100%', height: '100%', backgroundColor: '#05060a', color: 'white' }}>
       {screen === 'intro' && (
@@ -349,63 +409,11 @@ export function App() {
             mode="root"
             onPlayOnlineHost={() => setScreen('host-game')}
             onPlayOnlineJoin={() => setScreen('join-game')}
-            onQuickMatch={async () => {
-              try {
-                if (quickMatchLoading) return; // prevent spamming
-                setQuickMatchLoading(true);
-                const MIN_SEARCH_MS = 1500; // ensure searching text stays visible briefly
-                setQuickMatchStatus('Searching for open public games...');
-                const start = Date.now();
-                socket.emit('listLobbies', {}, (res) => {
-                  const elapsed = Date.now() - start;
-                  const finishAndClear = (statusMsg, clearAfterMs = 3000) => {
-                    setQuickMatchStatus(statusMsg);
-                    setTimeout(() => {
-                      setQuickMatchStatus('');
-                      setQuickMatchLoading(false);
-                    }, clearAfterMs);
-                  };
-
-                  const run = () => {
-                    if (res && res.ok && res.lobbies && res.lobbies.length > 0) {
-                      const availableLobby = res.lobbies.find(
-                        (lobby) => !lobby.isPrivate && lobby.status === 'waiting' && lobby.playerCount < 2
-                      );
-                      if (availableLobby) {
-                        setQuickMatchStatus('Found open game — joining...');
-                        socket.emit('joinLobby', { lobbyId: availableLobby.id }, (joinRes) => {
-                          if (joinRes && joinRes.ok) {
-                            setQuickMatchStatus('');
-                            setQuickMatchLoading(false);
-                            // store joined lobby and navigate to join screen so the lobby UI is shown
-                            setQuickJoinedLobby(joinRes.lobby);
-                            setScreen('join-game');
-                          } else {
-                            console.error('Failed to join lobby:', joinRes?.error);
-                            finishAndClear('Failed to join the found game.');
-                          }
-                        });
-                      } else {
-                        finishAndClear('No open public games found.');
-                      }
-                    } else {
-                      finishAndClear('No open public games found.');
-                    }
-                  };
-                  const delay = Math.max(0, MIN_SEARCH_MS - elapsed);
-                  if (delay > 0) setTimeout(run, delay); else run();
-                });
-              } catch (err) {
-                console.error('Quick match error:', err);
-                setQuickMatchStatus('Error searching for games.');
-                setTimeout(() => {
-                  setQuickMatchStatus('');
-                  setQuickMatchLoading(false);
-                }, 3000);
-              }
-            }}
+            onQuickMatch={handleQuickMatch}
             quickMatchStatus={quickMatchStatus}
             quickMatchLoading={quickMatchLoading}
+            quickMatchFilters={quickMatchFilters}
+            onQuickMatchFiltersChange={setQuickMatchFilters}
             onTutorial={() => setScreen('tutorial')}
             onViewArcana={() => setScreen('arcana')}
             onSettings={() => setScreen('settings')}

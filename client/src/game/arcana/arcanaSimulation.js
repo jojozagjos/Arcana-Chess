@@ -30,6 +30,81 @@ function getMovesForColor(chess, color) {
   }
 }
 
+const MAP_FRAGMENT_PIECE_VALUES = {
+  p: 1,
+  n: 3,
+  b: 3,
+  r: 5,
+  q: 9,
+  k: 100,
+};
+
+function scoreMapFragmentMove(move) {
+  if (!move) return -Infinity;
+
+  let score = 0;
+  const movingValue = MAP_FRAGMENT_PIECE_VALUES[move.piece] || 0;
+  const capturedValue = MAP_FRAGMENT_PIECE_VALUES[move.captured] || 0;
+
+  if (move.captured) {
+    score += 130 + capturedValue * 100 - movingValue * 8;
+  }
+
+  if (move.promotion) {
+    score += 220 + (MAP_FRAGMENT_PIECE_VALUES[move.promotion] || 0) * 25;
+  }
+
+  if (typeof move.san === 'string') {
+    if (move.san.includes('#')) score += 1200;
+    else if (move.san.includes('+')) score += 240;
+  }
+
+  if (['d4', 'e4', 'd5', 'e5'].includes(move.to)) {
+    score += 38;
+  } else if (['c3', 'd3', 'e3', 'f3', 'c4', 'f4', 'c5', 'f5', 'c6', 'd6', 'e6', 'f6'].includes(move.to)) {
+    score += 16;
+  }
+
+  if (['n', 'b'].includes(move.piece) && /^[cf]/.test(move.to)) {
+    score += 8;
+  }
+
+  return score;
+}
+
+function getTopMapFragmentMoves(chess, colorChar, limit = 3) {
+  const opponentColor = colorChar === 'w' ? 'b' : 'w';
+  const opponentMoves = getMovesForColor(chess, opponentColor);
+  if (!Array.isArray(opponentMoves) || opponentMoves.length === 0) return [];
+
+  const ranked = opponentMoves.map((move) => ({
+    from: move.from,
+    to: move.to,
+    piece: move.piece,
+    captured: move.captured || null,
+    promotion: move.promotion || null,
+    san: move.san || null,
+    score: scoreMapFragmentMove(move),
+  }));
+
+  ranked.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.to !== b.to) return a.to.localeCompare(b.to);
+    return `${a.from}${a.to}`.localeCompare(`${b.from}${b.to}`);
+  });
+
+  const topBySquare = [];
+  const seen = new Set();
+  for (const move of ranked) {
+    if (seen.has(move.to)) continue;
+    seen.add(move.to);
+    topBySquare.push(move);
+    if (topBySquare.length >= limit) break;
+  }
+
+  return topBySquare;
+}
+
 /**
  * Get all friendly pieces on all 4 diagonals from a bishop position
  * Used by Bishop's Blessing to protect diagonal pieces
@@ -247,6 +322,11 @@ export function getTargetTypeForArcana(arcanaId) {
 export function getValidTargetSquares(chess, arcanaId, colorChar, gameState = {}) {
   const targetType = getTargetTypeForArcana(arcanaId);
   if (!targetType) return []; // Card doesn't need targeting
+
+  const occupiedEffectSquares = new Set([
+    ...((gameState.activeEffects?.sanctuaries || []).map((s) => s?.square).filter(Boolean)),
+    ...((gameState.activeEffects?.cursedSquares || []).map((c) => c?.square).filter(Boolean)),
+  ]);
   
   const validSquares = [];
   const board = chess.board();
@@ -345,12 +425,14 @@ export function getValidTargetSquares(chess, arcanaId, colorChar, gameState = {}
           
         case 'square':
           // Any square is valid
-          validSquares.push(square);
+          if (!occupiedEffectSquares.has(square)) {
+            validSquares.push(square);
+          }
           break;
           
         case 'emptySquare':
           // Only empty squares
-          if (!piece) {
+          if (!piece && !occupiedEffectSquares.has(square)) {
             validSquares.push(square);
           }
           break;
@@ -376,6 +458,11 @@ export function validateArcanaTarget(chess, arcanaId, square, colorChar, gameSta
   if (!arcanaId) return false;
   const type = getTargetTypeForArcana(arcanaId);
   if (!type) return true; // no target needed
+
+  const occupiedEffectSquares = new Set([
+    ...((gameState.activeEffects?.sanctuaries || []).map((s) => s?.square).filter(Boolean)),
+    ...((gameState.activeEffects?.cursedSquares || []).map((c) => c?.square).filter(Boolean)),
+  ]);
 
   const piece = chess.get(square);
   
@@ -404,9 +491,9 @@ export function validateArcanaTarget(chess, arcanaId, square, colorChar, gameSta
       const poisonedPieces = gameState.activeEffects?.poisonedPieces || [];
       return poisonedPieces.some(p => p.square === square);
     case 'square':
-      return true;
+      return !occupiedEffectSquares.has(square);
     case 'emptySquare':
-      return !chess.get(square);
+      return !chess.get(square) && !occupiedEffectSquares.has(square);
     default:
       return false;
   }
@@ -595,10 +682,16 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
 
       case 'sanctuary':
         if (params.targetSquare) {
+          const blocked = (gameState.activeEffects?.sanctuaries || []).some((s) => s?.square === params.targetSquare)
+            || (gameState.activeEffects?.cursedSquares || []).some((c) => c?.square === params.targetSquare);
+          if (blocked) {
+            result.message = `Sanctuary: ${params.targetSquare} already has a tile effect`;
+            break;
+          }
           gameState.activeEffects.sanctuaries = gameState.activeEffects.sanctuaries || [];
-          gameState.activeEffects.sanctuaries.push({ square: params.targetSquare, turns: 2 });
+          gameState.activeEffects.sanctuaries.push({ square: params.targetSquare, turns: 4 });
           result.success = true;
-          result.message = `Sanctuary: ${params.targetSquare} is safe for 2 turns`;
+          result.message = `Sanctuary: ${params.targetSquare} is safe for 4 turns`;
           result.visualEffect = 'sanctuary';
           result.soundEffect = 'arcana:sanctuary';
           result.highlightSquares = [params.targetSquare];
@@ -727,7 +820,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
               color: colorChar,
             };
             result.success = true;
-            result.message = 'Temporal Echo: Next piece can repeat the last move pattern';
+            result.message = 'Temporal Echo: Your pieces keep normal moves and gain extra moves in your last move direction (up to same distance) this turn';
             result.visualEffect = 'temporal_echo';
             result.soundEffect = 'arcana:temporal_echo';
           }
@@ -857,24 +950,48 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
       // === RESURRECTION / TRANSFORMATION ===
       case 'necromancy':
         gameState.capturedByColor = gameState.capturedByColor || { w: [], b: [] };
-        const pawnsToRevive = (gameState.capturedByColor[colorChar] || []).filter(p => p.type === 'p');
+        const capturedForColor = gameState.capturedByColor[colorChar] || [];
+        const pawnsToRevive = capturedForColor.filter((p) => p?.type === 'p');
         if (pawnsToRevive.length > 0) {
-          const rank = colorChar === 'w' ? '2' : '7';
+          const preferredRank = colorChar === 'w' ? '2' : '7';
+          const fallbackRank = colorChar === 'w' ? '1' : '8';
           const revived = [];
-          for (let i = 0; i < Math.min(2, pawnsToRevive.length); i++) {
-            for (const f of 'abcdefgh') {
-              const sq = f + rank;
-              if (!chess.get(sq)) {
-                chess.put({ type: 'p', color: colorChar }, sq);
-                revived.push(sq);
-                break;
+
+          const placePiece = (type) => {
+            for (const rank of [preferredRank, fallbackRank]) {
+              for (const f of 'abcdefgh') {
+                const sq = f + rank;
+                if (!chess.get(sq)) {
+                  chess.put({ type, color: colorChar }, sq);
+                  revived.push({ square: sq, piece: type });
+                  return true;
+                }
               }
             }
+            return false;
+          };
+
+          // Always revive one pawn if available.
+          if (placePiece('p')) {
+            const pawnIdx = capturedForColor.findIndex((p) => p?.type === 'p');
+            if (pawnIdx !== -1) capturedForColor.splice(pawnIdx, 1);
           }
+
+          // Then revive one random non-pawn when available.
+          const nonPawns = capturedForColor.filter((p) => p?.type && p.type !== 'p');
+          if (nonPawns.length > 0) {
+            const selected = nonPawns[Math.floor(Math.random() * nonPawns.length)];
+            if (placePiece(selected.type)) {
+              const idx = capturedForColor.findIndex((p) => p?.type === selected.type);
+              if (idx !== -1) capturedForColor.splice(idx, 1);
+            }
+          }
+
           result.success = revived.length > 0;
-          result.message = `Necromancy: Revived ${revived.length} pawn(s)`;
+          result.message = `Necromancy: Revived ${revived.length} piece(s)`;
           result.visualEffect = 'necromancy';
           result.soundEffect = 'arcana:necromancy';
+          result.highlightSquares = revived.map((entry) => entry.square);
         } else {
           result.message = 'Necromancy: No captured pawns to revive';
         }
@@ -999,7 +1116,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
                 square: freeSquare,
                 type: piece.type,
                 color: colorChar,
-                turnsLeft: 3,
+                turnsLeft: 12,
               });
               result.success = true;
               result.message = `Mirror Image: Created duplicate at ${freeSquare}`;
@@ -1070,21 +1187,15 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         break;
 
       case 'map_fragments':
-        const opponentColorM = colorChar === 'w' ? 'b' : 'w';
-        const opponentMovesM = getMovesForColor(chess, opponentColorM);
-        const captureTargets = opponentMovesM.filter(m => m.captured).map(m => m.to);
-        const centerTargets = opponentMovesM.filter(m => ['e4', 'e5', 'd4', 'd5'].includes(m.to)).map(m => m.to);
-        let likelySquares = [...new Set([...captureTargets, ...centerTargets])].slice(0, 3);
-        if (likelySquares.length < 3) {
-          const other = opponentMovesM.map(m => m.to).filter(sq => !likelySquares.includes(sq));
-          likelySquares = [...likelySquares, ...other].slice(0, 3);
-        }
+        const topMoves = getTopMapFragmentMoves(chess, colorChar, 3);
+        const likelySquares = topMoves.map((move) => move.to);
         result.highlightSquares = likelySquares;
         result.highlightColor = '#bf616a';
         result.success = true;
-        result.message = `Map Fragments: Predicted ${likelySquares.length} enemy targets`;
+        result.message = `Map Fragments: Predicted ${likelySquares.length} strongest enemy moves`;
         result.visualEffect = 'map_fragments';
         result.soundEffect = 'arcana:map_fragments';
+        result.predictedMoves = topMoves;
         break;
 
       case 'quiet_thought':
@@ -1145,14 +1256,20 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
 
       case 'cursed_square':
         if (params.targetSquare) {
+          const blocked = (gameState.activeEffects?.sanctuaries || []).some((s) => s?.square === params.targetSquare)
+            || (gameState.activeEffects?.cursedSquares || []).some((c) => c?.square === params.targetSquare);
+          if (blocked) {
+            result.message = `Cursed Square: ${params.targetSquare} already has a tile effect`;
+            break;
+          }
           gameState.activeEffects.cursedSquares = gameState.activeEffects.cursedSquares || [];
           gameState.activeEffects.cursedSquares.push({
             square: params.targetSquare,
-            turns: 2,  // Lasts for 2 turns
+            turns: 4,  // Lasts for 4 turns
             setter: colorChar,
           });
           result.success = true;
-          result.message = `Cursed Square: ${params.targetSquare} will destroy any piece landing there for 2 turns`;
+          result.message = `Cursed Square: ${params.targetSquare} will destroy any piece landing there for 4 turns`;
           result.visualEffect = 'cursed_square';
           result.soundEffect = 'arcana:cursed_square';
           result.highlightSquares = [params.targetSquare];

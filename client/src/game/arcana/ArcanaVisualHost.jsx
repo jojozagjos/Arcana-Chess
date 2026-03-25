@@ -109,6 +109,13 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
         Effects.PoisonedPieceEffect ? <Effects.PoisonedPieceEffect key={`poison-${p.square || 'unknown'}-${p.poisonedBy || 'x'}-${i}`} square={p.square} turnsLeft={p.turnsLeft} /> : null
       ))}
 
+      {/* Mirror image duration indicators */}
+      {active.mirrorImages && active.mirrorImages.map((m, i) => (
+        Effects.MirrorImageDurationEffect
+          ? <Effects.MirrorImageDurationEffect key={`mirror-${m.square || 'unknown'}-${i}`} square={m.square} turnsLeft={m.turnsLeft} />
+          : null
+      ))}
+
       {/* Squire Support indicators */}
       {active.squireSupport && active.squireSupport.map((s, i) => (
         Effects.SquireSupportEffect && (!viewerColorCode || !s.ownerColor || s.ownerColor === viewerColorCode)
@@ -131,10 +138,10 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       {pawnShields?.b && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.b.square) ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
       
       {/* Iron Fortress shields - show only for currently active fortress color */}
-      {Effects.ShieldGlowEffect && active.ironFortress?.w && active.ironFortressShields?.w?.map((sq, i) => (
+      {Effects.ShieldGlowEffect && active.ironFortress?.w && (!viewerColorCode || viewerColorCode === 'w') && active.ironFortressShields?.w?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-w-${i}`} square={sq} />
       ))}
-      {Effects.ShieldGlowEffect && active.ironFortress?.b && active.ironFortressShields?.b?.map((sq, i) => (
+      {Effects.ShieldGlowEffect && active.ironFortress?.b && (!viewerColorCode || viewerColorCode === 'b') && active.ironFortressShields?.b?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-b-${i}`} square={sq} />
       ))}
     </group>

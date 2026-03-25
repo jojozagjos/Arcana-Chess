@@ -149,7 +149,7 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
           </mesh>
         ))}
       </group>
-      
+
       {/* Base glow ring */}
       <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.4, 0.55, 32]} />
@@ -294,21 +294,52 @@ export function PoisonedPieceEffect({ square, turnsLeft, fadeOpacity = 1 }) {
         </mesh>
       )}
       
-      {/* Base pool */}
-      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.4, 32]} />
-        <meshStandardMaterial
-          emissive={baseColor}
-          emissiveIntensity={1}
-          color={baseColor}
-          transparent
-          depthWrite={false}
-          opacity={0.25 * fadeOpacity}
-        />
-      </mesh>
-      
       {/* GPU particle poison bubbles */}
       <ParticlePoison color={baseColor} intensity={urgency} count={30} />
+    </group>
+  );
+}
+
+export function MirrorImageDurationEffect({ square, turnsLeft = 0, fadeOpacity = 1 }) {
+  if (!square || !Number.isFinite(turnsLeft) || turnsLeft <= 0) return null;
+
+  const [x, , z] = squareToPosition(square);
+  const turnsDisplay = Math.ceil(turnsLeft / 2);
+  const urgency = turnsLeft <= 2 ? 2.4 : 1.2;
+
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[0, 0.9, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.15, 0.2, 28]} />
+        <meshStandardMaterial
+          emissive="#66c7ff"
+          emissiveIntensity={2.6 * urgency}
+          color="#66c7ff"
+          transparent
+          depthWrite={false}
+          opacity={0.55 * fadeOpacity}
+        />
+      </mesh>
+
+      <group position={[0, 0.92, 0]}>
+        {[...Array(turnsDisplay)].map((_, i) => {
+          const angle = (i / turnsDisplay) * Math.PI * 2 - Math.PI / 2;
+          const radius = 0.085;
+          return (
+            <mesh key={i} position={[Math.cos(angle) * radius, 0.02, Math.sin(angle) * radius]}>
+              <sphereGeometry args={[0.024, 8, 8]} />
+              <meshStandardMaterial
+                emissive="#d7f4ff"
+                emissiveIntensity={4.8}
+                color="#d7f4ff"
+                transparent
+                depthWrite={false}
+                opacity={0.9 * fadeOpacity}
+              />
+            </mesh>
+          );
+        })}
+      </group>
     </group>
   );
 }
@@ -554,76 +585,89 @@ export function SquireSupportAnimationEffect({ square, onComplete }) {
 // ============================================================================
 
 export function FogOfWarEffect({ onComplete }) {
-  const [progress, setProgress] = useState(0);
+  const [age, setAge] = useState(0);
   const groupRef = useRef();
-  
+
+  const fadeInDuration = 1.2; // seconds
+  const visibleDuration = 5.5; // seconds, ensures longer full fog presence
+  const fadeOutDuration = 1.0; // seconds
+
   // Generate cloud particles - reduced density for readability and perf
   const clouds = useMemo(() => {
     return [...Array(48)].map(() => ({
       x: (Math.random() - 0.5) * 12,
       z: (Math.random() - 0.5) * 12,
       y: 0.1 + Math.random() * 0.8,
-      scale: 0.4 + Math.random() * 0.6,
-      speed: 0.15 + Math.random() * 0.25,
+      scale: 0.3 + Math.random() * 0.4, // smaller clouds
+      speed: 0.05 + Math.random() * 0.12,
       phase: Math.random() * Math.PI * 2,
     }));
   }, []);
-  
-  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 500);
+
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, fadeOutDuration * 1000);
 
   useFrame((state, delta) => {
-    setProgress(prev => {
-      const next = prev + delta * 0.5;
-      if (next >= 1) {
-        if (!finishing) triggerFinish();
+    setAge((prev) => {
+      const next = prev + delta;
+      if (!finishing && next >= fadeInDuration + visibleDuration) {
+        triggerFinish();
       }
-      return Math.min(next, 1);
+      return next;
     });
-    // No rotation - removed the rotating group
   });
-  
+
   if (completed) return null;
+
+  const fadeInProgress = Math.min(age / fadeInDuration, 1);
 
   return (
     <group ref={groupRef}>
       {clouds.map((cloud, i) => (
-        <FogCloud key={i} {...cloud} progress={progress} hasComplete={!!onComplete} finishT={finishT} />
+        <FogCloud
+          key={i}
+          {...cloud}
+          fadeInProgress={fadeInProgress}
+          fading={finishing}
+          finishT={finishT}
+        />
       ))}
       {/* Ground fog plane removed - just particles now */}
     </group>
   );
 }
 
-function FogCloud({ x, z, y, scale, speed, phase, progress, hasComplete, finishT = 0, fadeOpacity = 1 }) {
+function FogCloud({ x, z, y, scale, speed, phase, fadeInProgress, fading, finishT = 0, fadeOpacity = 1 }) {
   const ref = useRef();
-  
+
   useFrame((state) => {
     if (ref.current) {
       const t = state.clock.elapsedTime;
       ref.current.position.x = x + Math.sin(t * speed + phase) * 0.8;
       ref.current.position.z = z + Math.cos(t * speed + phase) * 0.8;
       ref.current.position.y = y + Math.sin(t * speed * 2 + phase) * 0.15;
-      
-      // Slightly reduced opacity and smaller shimmer for clarity
-      const baseOpacity = hasComplete ? 0.15 * (1 - progress) : 0.15;
-      ref.current.material.opacity = ((baseOpacity * (1 - finishT)) + Math.sin(t + phase) * 0.03 * (1 - finishT)) * fadeOpacity;
+
+      const shimmer = Math.sin(t + phase) * 0.045;
+      const baseOpacity = 0.08 + shimmer; // generally more transparent
+      const fadeOutFactor = fading ? Math.max(0, 1 - finishT) : 1;
+      ref.current.material.opacity = Math.max(0, baseOpacity * fadeInProgress * fadeOutFactor) * fadeOpacity;
     }
   });
-  
+
   return (
     <mesh ref={ref} position={[x, y, z]}>
-      <sphereGeometry args={[scale, 8, 8]} />
+      <sphereGeometry args={[scale, 10, 10]} />
       <meshStandardMaterial
         emissive="#17202a"
-        emissiveIntensity={0.2}
-        color="#1f2a44"
+        emissiveIntensity={0.3}
+        color="#ffffff"
         transparent
         depthWrite={false}
-        opacity={0.15 * fadeOpacity}
+        opacity={0.0} // driven by FogCloud frame logic
       />
     </mesh>
   );
 }
+
 
 // ============================================================================
 // SOFT PUSH EFFECT - Gentle force wave
@@ -1399,7 +1443,7 @@ function OverdriveSegmentRibbon({ from, to, idx, ageRef, lifeSeconds, fadeOpacit
 }
 
 // Iron Fortress Effect
-export function IronFortressEffect({ onComplete }) {
+export function IronFortressEffect({ onComplete, actorColor = 'w' }) {
   const [progress, setProgress] = useState(0);
   const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 400);
   
@@ -1412,16 +1456,20 @@ export function IronFortressEffect({ onComplete }) {
       return Math.min(next, 1);
     });
   });
-  
-  // Create fortress walls around pawn starting ranks
+
   if (completed) return null;
+
+  const normalizedColor = actorColor === 'b' || actorColor === 'black' ? 'b' : 'w';
+  // World coordinates: white side is positive Z (rank 1/2), black side is negative Z (rank 7/8)
+  const baseZ = normalizedColor === 'w' ? 2.5 : -2.5;
+
   return (
     <group>
       {/* Stone walls rising */}
       {[-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5].map((x, i) => (
         <mesh
           key={i}
-          position={[x, easeOutCubic(progress) * 0.4, -2.5]}
+          position={[x, easeOutCubic(progress) * 0.4, baseZ]}
           scale={[0.8, easeOutCubic(progress), 0.2]}
         >
           <boxGeometry args={[1, 0.8, 1]} />
@@ -1435,9 +1483,9 @@ export function IronFortressEffect({ onComplete }) {
           />
         </mesh>
       ))}
-      
+
       {/* Magical shimmer */}
-      <mesh position={[0, 0.3, -2.5]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0.3, baseZ]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[8, 1]} />
         <meshStandardMaterial
           emissive="#b0bec5"
@@ -1446,7 +1494,6 @@ export function IronFortressEffect({ onComplete }) {
           transparent
           depthWrite={false}
           opacity={(1 - progress) * 0.4 * (1 - finishT)}
-          
         />
       </mesh>
     </group>
@@ -2524,81 +2571,96 @@ export function BerserkerRageEffect({ square, from, to, onComplete }) {
 
 export function SanctuaryEffect({ square, onComplete }) {
   const [progress, setProgress] = useState(0);
-  const groupRef = useRef();
+  const particleRefs = useRef([]);
+
+  const particles = useMemo(() => {
+    return [...Array(14)].map((_, i) => ({
+      angle: (i / 14) * Math.PI * 2,
+      radius: 0.1 + (i % 4) * 0.07,
+      riseSpeed: 0.55 + (i % 5) * 0.11,
+      bob: 0.03 + (i % 3) * 0.01,
+      phase: Math.random() * Math.PI * 2,
+      drift: (i % 2 === 0 ? 1 : -1) * (0.12 + (i % 4) * 0.03),
+    }));
+  }, []);
+
   if (!square || typeof square !== 'string') {
     return null;
   }
 
   const [x, , z] = squareToPosition(square);
-  
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 500);
 
   useFrame((state, delta) => {
-    setProgress(prev => {
-      const next = prev + delta / 2;
+    setProgress((prev) => {
+      const next = prev + delta * 1.05;
       if (next >= 1) {
         if (!finishing) triggerFinish();
         return 1;
       }
       return next;
     });
-    
-    if (groupRef.current) {
-      groupRef.current.rotation.y += delta * 0.5 * (1 - finishT * 0.5);
-    }
+
+    const t = state.clock.elapsedTime;
+    particleRefs.current.forEach((ref, i) => {
+      if (!ref) return;
+      const p = particles[i];
+      const riseLoop = (t * p.riseSpeed + p.phase) % 1;
+      const localY = 0.05 + riseLoop * 0.42;
+      const drift = Math.sin((t + p.phase) * p.drift) * 0.03;
+      const px = Math.cos(p.angle) * (p.radius + drift);
+      const pz = Math.sin(p.angle) * (p.radius + drift);
+      ref.position.set(px, localY, pz);
+      ref.scale.setScalar(0.75 + 0.25 * Math.sin(t * 4 + p.phase));
+      if (ref.material) {
+        const fade = Math.sin(riseLoop * Math.PI);
+        ref.material.opacity = Math.max(0.04, Math.pow(fade, 1.2) * live);
+      }
+    });
   });
-  
-  const opacity = (progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1) * (1 - finishT);
-  
+
+  if (completed) return null;
+
+  const pulse = 0.9 + Math.sin(progress * Math.PI * 4) * 0.1;
+  const live = 1 - finishT;
+
   return (
-    <group position={[x, 0, z]} ref={groupRef}>
-      {/* Golden sanctuary dome */}
-      <mesh position={[0, 0.4, 0]}>
-        <sphereGeometry args={[0.5, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+    <group position={[x, 0, z]}>
+      <mesh position={[0, 0.058, 0]}>
+        <boxGeometry args={[0.94, 0.012, 0.94]} />
         <meshStandardMaterial
-          emissive="#ffd700"
-          emissiveIntensity={2}
-          color="#ffeb3b"
-          transparent
-          opacity={opacity * 0.3}
-          
+          color="#ffe28a"
+          emissive="#ffd55e"
+          emissiveIntensity={3.4 * live * pulse}
+          metalness={0.05}
+          roughness={0.5}
         />
       </mesh>
-      
-      {/* Base ring */}
-      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.4, 0.5, 32]} />
+
+      <mesh position={[0, 0.067, 0]}>
+        <boxGeometry args={[0.76, 0.008, 0.76]} />
         <meshStandardMaterial
-          emissive="#ffd700"
-          emissiveIntensity={3}
-          color="#ffeb3b"
-          transparent
-          opacity={opacity * 0.6}
+          color="#fff4bf"
+          emissive="#e9e9e9"
+          emissiveIntensity={2.6 * live}
+          metalness={0.05}
+          roughness={0.55}
         />
       </mesh>
-      
-      {/* Rising particles */}
-      {[...Array(12)].map((_, i) => {
-        const angle = (i / 12) * Math.PI * 2;
-        const r = 0.35;
-        const rise = (progress + i * 0.1) % 1;
-        
-        return (
-          <mesh
-            key={i}
-            position={[Math.cos(angle) * r, rise * 0.8, Math.sin(angle) * r]}
-          >
-            <sphereGeometry args={[0.02, 8, 8]} />
-            <meshStandardMaterial
-              emissive="#ffd700"
-              emissiveIntensity={3}
-              color="#ffeb3b"
-              transparent
-              opacity={opacity * (1 - rise)}
-            />
-          </mesh>
-        );
-      })}
+
+      {particles.map((_, i) => (
+        <mesh key={`sanctuary-rise-${i}`} ref={(ref) => { particleRefs.current[i] = ref; }}>
+          <octahedronGeometry args={[0.026, 0]} />
+          <meshStandardMaterial
+            color="#fff6ce"
+            emissive="#fff0a5"
+            emissiveIntensity={2.9 * live}
+            transparent
+            opacity={0.7}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -2610,58 +2672,71 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
   }
 
   const [x, , z] = squareToPosition(square);
-  const ringRef = useRef();
-  const glowRef = useRef();
-  
+  const pulseRef = useRef();
+  const particleRefs = useRef([]);
+  const particles = useMemo(() => {
+    return [...Array(10)].map((_, i) => ({
+      angle: (i / 10) * Math.PI * 2,
+      radius: 0.08 + (i % 3) * 0.09,
+      rise: 0.45 + (i % 4) * 0.12,
+      phase: Math.random() * Math.PI * 2,
+    }));
+  }, []);
+
   useFrame((state) => {
     const t = state.clock.elapsedTime;
-    if (ringRef.current) {
-      ringRef.current.material.opacity = (0.3 + Math.sin(t * 2) * 0.15) * fadeOpacity;
+    if (pulseRef.current) {
+      const scale = 1.0 + 0.04 * Math.sin(t * 2.1);
+      pulseRef.current.scale.setScalar(scale);
+      if (pulseRef.current.material) {
+        pulseRef.current.material.emissiveIntensity = (3.4 + Math.sin(t * 2.5) * 0.6) * fadeOpacity;
+      }
     }
-    if (glowRef.current) {
-      glowRef.current.material.opacity = (0.2 + Math.sin(t * 1.5) * 0.1) * fadeOpacity;
-    }
+    particleRefs.current.forEach((ref, i) => {
+      if (!ref) return;
+      const p = particles[i];
+      const riseLoop = (t * p.rise + p.phase) % 1;
+      ref.position.set(
+        Math.cos(p.angle) * p.radius,
+        0.05 + riseLoop * 0.28,
+        Math.sin(p.angle) * p.radius,
+      );
+      if (ref.material) {
+        const fade = Math.sin(riseLoop * Math.PI);
+        ref.material.opacity = Math.max(0.04, Math.pow(fade, 1.25) * fadeOpacity);
+      }
+    });
   });
-  
+
   return (
-    <group position={[x, 0.12, z]}>
-      {/* Persistent ground glow */}
-      <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} ref={glowRef}>
-        <circleGeometry args={[0.48, 32]} />
+    <group position={[x, 0.02, z]}>
+      <mesh ref={pulseRef} position={[0, 0.038, 0]}>
+        <boxGeometry args={[0.92, 0.01, 0.92]} />
         <meshStandardMaterial
-          emissive="#ffd700"
-          emissiveIntensity={2.6}
-          color="#ffeb3b"
+          emissive="#9b7700"
+          emissiveIntensity={3.6}
+          color="#f1ee17"
+          metalness={0.05}
+          roughness={0.5}
           transparent
-          opacity={0.45 * fadeOpacity}
-          depthTest={false}
           depthWrite={false}
+          opacity={0.34 * fadeOpacity}
         />
       </mesh>
-      {/* Animated ring */}
-      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.35, 0.45, 32]} />
-        <meshStandardMaterial
-          emissive="#ffd700"
-          emissiveIntensity={3.4}
-          color="#ffeb3b"
-          transparent
-          opacity={0.6 * fadeOpacity}
-          depthTest={false}
-          depthWrite={false}
-        />
-      </mesh>
-      {/* Elevated halo remains visible even when a piece occupies the square. */}
-      <mesh position={[0, 1.1, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.34, 0.03, 12, 40]} />
-        <meshBasicMaterial
-          color="#ffe670"
-          transparent
-          opacity={0.78 * fadeOpacity}
-          depthTest={false}
-          depthWrite={false}
-        />
-      </mesh>
+
+      {particles.map((_, i) => (
+        <mesh key={`sanctuary-indicator-rise-${i}`} ref={(ref) => { particleRefs.current[i] = ref; }}>
+          <octahedronGeometry args={[0.02, 0]} />
+          <meshStandardMaterial
+            color="#ccb021"
+            emissive="#b88f17"
+            emissiveIntensity={2.3 * fadeOpacity}
+            transparent
+            opacity={0.7}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -2672,122 +2747,170 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
 
 export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
   const [progress, setProgress] = useState(0);
-  const groupRef = useRef();
-  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 400);
-  
-  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
-  
+  const particleRefs = useRef([]);
+  const { finishing, finishT, triggerFinish } = useFinishFade(onComplete, 450);
+  const particles = useMemo(() => {
+    return [...Array(14)].map((_, i) => ({
+      angle: (i / 14) * Math.PI * 2,
+      radius: 0.1 + (i % 4) * 0.07,
+      riseSpeed: 0.55 + (i % 5) * 0.13,
+      phase: Math.random() * Math.PI * 2,
+      drift: (i % 2 === 0 ? 1 : -1) * (0.12 + (i % 4) * 0.03),
+    }));
+  }, []);
+
+  if (!square || typeof square !== 'string') return null;
+  const [x, , z] = squareToPosition(square);
+
   useFrame((state, delta) => {
     setProgress(prev => {
-      const next = prev + delta / 2;
+      const next = prev + delta * 1.2;
       if (next >= 1) {
         if (!finishing) triggerFinish();
         return 1;
       }
       return next;
     });
-    
-    if (groupRef.current) {
-      groupRef.current.rotation.y -= delta * 0.8 * (1 - finishT * 0.5);
-    }
+
+    const t = state.clock.elapsedTime;
+    particleRefs.current.forEach((ref, i) => {
+      if (!ref) return;
+      const p = particles[i];
+      const riseLoop = (t * p.riseSpeed + p.phase) % 1;
+      const drift = Math.sin((t + p.phase) * p.drift) * 0.03;
+      ref.position.set(
+        Math.cos(p.angle) * (p.radius + drift),
+        0.05 + riseLoop * 0.42,
+        Math.sin(p.angle) * (p.radius + drift),
+      );
+      ref.scale.setScalar(0.72 + 0.28 * Math.sin(t * 4 + p.phase));
+      if (ref.material) {
+        const fade = Math.sin(riseLoop * Math.PI);
+        ref.material.opacity = Math.max(0.04, Math.pow(fade, 1.35) * (1 - finishT) * fadeOpacity);
+      }
+    });
   });
-  
-  const opacity = ((progress < 0.1 ? progress * 10 : progress > 0.8 ? (1 - progress) * 5 : 1) * (1 - finishT)) * fadeOpacity;
-  
+
+  const pulse = 0.9 + Math.sin(progress * Math.PI * 4) * 0.1;
+  const glow = (0.45 + 0.45 * pulse) * (1 - finishT) * fadeOpacity;
+
   return (
-    <group position={[x, 0, z]} ref={groupRef}>
-      {/* Dark ring on ground - non-emissive */}
-      <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.2, 0.45, 32]} />
+    <group position={[x, 0, z]}>
+      <mesh position={[0, 0.058, 0]}>
+        <boxGeometry args={[0.94, 0.012, 0.94]} />
         <meshStandardMaterial
-          color="#4a0000"
+          color="#5e1717"
+          emissive="#8c1a1a"
+          emissiveIntensity={3.2 * glow}
+          metalness={0.02}
+          roughness={0.7}
           transparent
-          opacity={opacity * 0.4}
           depthWrite={false}
+          opacity={0.72 * glow}
         />
       </mesh>
-      
-      {/* Thin cursed particles rising */}
-      {[...Array(12)].map((_, i) => {
-        const angle = (i / 12) * Math.PI * 2;
-        const r = 0.25 * Math.random() + 0.08;
-        const rise = ((progress * 2 + i * 0.06) % 1);
-        
-        return (
-          <mesh
-            key={i}
-            position={[Math.cos(angle + progress * 2.5) * r, rise * 0.4, Math.sin(angle + progress * 2.5) * r]}
-          >
-            <sphereGeometry args={[0.012, 4, 4]} />
-            <meshStandardMaterial
-              color="#8b0000"
-              transparent
-              opacity={opacity * (1 - rise) * 0.6}
-              depthWrite={false}
-            />
-          </mesh>
-        );
-      })}
+
+      <mesh position={[0, 0.067, 0]}>
+        <boxGeometry args={[0.76, 0.008, 0.76]} />
+        <meshStandardMaterial
+          color="#7d1f1f"
+          emissive="#a62525"
+          emissiveIntensity={2.7 * glow}
+          metalness={0.02}
+          roughness={0.72}
+          transparent
+          depthWrite={false}
+          opacity={0.2 * glow}
+        />
+      </mesh>
+
+      {particles.map((_, i) => (
+        <mesh key={`cursed-rise-${i}`} ref={(ref) => { particleRefs.current[i] = ref; }}>
+          <dodecahedronGeometry args={[0.024, 0]} />
+          <meshStandardMaterial
+            color="#dac9c9"
+            emissive="#c7bdbd"
+            emissiveIntensity={2.8 * (1 - finishT)}
+            transparent
+            opacity={0.7}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
 
 // Persistent cursed square indicator
 export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1 }) {
-  const [x, , z] = square ? squareToPosition(square) : [0, 0, 0];
-  const ringRef = useRef();
-  const glowRef = useRef();
+  if (!square || typeof square !== 'string') return null;
+  const [x, , z] = squareToPosition(square);
+  const pulseRef = useRef();
+  const particleRefs = useRef([]);
+  const particles = useMemo(() => {
+    return [...Array(10)].map((_, i) => ({
+      angle: (i / 10) * Math.PI * 2,
+      radius: 0.08 + (i % 3) * 0.09,
+      rise: 0.45 + (i % 4) * 0.13,
+      phase: Math.random() * Math.PI * 2,
+    }));
+  }, []);
 
   useFrame((state) => {
     const t = state.clock.elapsedTime;
-    if (ringRef.current) {
-      ringRef.current.rotation.z = t * 0.5;
-      ringRef.current.material.opacity = (0.3 + Math.sin(t * 3) * 0.1) * fadeOpacity;
+    if (pulseRef.current) {
+      const scale = 1 + Math.sin(t * 2.1) * 0.05;
+      pulseRef.current.scale.setScalar(scale);
+      if (pulseRef.current.material) {
+        pulseRef.current.material.emissiveIntensity = (2.6 + Math.sin(t * 2.4) * 0.7) * fadeOpacity;
+      }
     }
-    if (glowRef.current) {
-      glowRef.current.material.opacity = (0.25 + Math.sin(t * 2) * 0.1) * fadeOpacity;
-    }
+
+    particleRefs.current.forEach((ref, i) => {
+      if (!ref) return;
+      const p = particles[i];
+      const riseLoop = (t * p.rise + p.phase) % 1;
+      ref.position.set(
+        Math.cos(p.angle) * p.radius,
+        0.05 + riseLoop * 0.28,
+        Math.sin(p.angle) * p.radius,
+      );
+      if (ref.material) {
+        const fade = Math.sin(riseLoop * Math.PI);
+        ref.material.opacity = Math.max(0.04, Math.pow(fade, 1.3) * fadeOpacity);
+      }
+    });
   });
 
   return (
-    <group position={[x, 0.12, z]}>
-      {/* Persistent dark ground effect */}
-      <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]} ref={glowRef}>
-        <circleGeometry args={[0.48, 32]} />
+    <group position={[x, 0.02, z]}>
+      <mesh ref={pulseRef} position={[0, 0.038, 0]}>
+        <boxGeometry args={[0.92, 0.01, 0.92]} />
         <meshStandardMaterial
-          emissive="#7a0018"
-          emissiveIntensity={2.2}
-          color="#4a0000"
+          color="#641919"
+          emissive="#8f2376"
+          emissiveIntensity={2.6}
+          metalness={0.02}
+          roughness={0.72}
           transparent
-          opacity={0.42 * fadeOpacity}
-          depthTest={false}
           depthWrite={false}
+          opacity={0.32 * fadeOpacity}
         />
       </mesh>
-      {/* Animated ring */}
-      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.35, 0.42, 6]} />
-        <meshStandardMaterial
-          emissive="#ff1744"
-          emissiveIntensity={2.8}
-          color="#8b0000"
-          transparent
-          opacity={0.62 * fadeOpacity}
-          depthTest={false}
-          depthWrite={false}
-        />
-      </mesh>
-      {/* Elevated cursed crown for occupied squares. */}
-      <mesh position={[0, 1.05, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.34, 0.028, 10, 32]} />
-        <meshBasicMaterial
-          color="#ff335c"
-          transparent
-          opacity={0.72 * fadeOpacity}
-          depthTest={false}
-          depthWrite={false}
-        />
-      </mesh>
+
+      {particles.map((_, i) => (
+        <mesh key={`cursed-indicator-rise-${i}`} ref={(ref) => { particleRefs.current[i] = ref; }}>
+          <dodecahedronGeometry args={[0.02, 0]} />
+          <meshStandardMaterial
+            color="#ce71bc"
+            emissive="#b63f98"
+            emissiveIntensity={2.2 * fadeOpacity}
+            transparent
+            opacity={0.7}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }

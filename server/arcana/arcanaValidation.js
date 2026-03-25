@@ -213,7 +213,29 @@ function validateTemporalEcho(chess, from, to, piece, pattern) {
   const fileDelta = toFile - fromFile;
   const rankDelta = toRank - fromRank;
 
-  if (fileDelta !== pattern.fileDelta || rankDelta !== pattern.rankDelta) {
+  const pFile = pattern.fileDelta;
+  const pRank = pattern.rankDelta;
+  const isPatternLinear = pFile === 0 || pRank === 0 || Math.abs(pFile) === Math.abs(pRank);
+
+  if (isPatternLinear) {
+    const isMoveLinear = fileDelta === 0 || rankDelta === 0 || Math.abs(fileDelta) === Math.abs(rankDelta);
+    if (!isMoveLinear) return null;
+
+    const patternStepFile = pFile === 0 ? 0 : pFile / Math.abs(pFile);
+    const patternStepRank = pRank === 0 ? 0 : pRank / Math.abs(pRank);
+    const moveStepFile = fileDelta === 0 ? 0 : fileDelta / Math.abs(fileDelta);
+    const moveStepRank = rankDelta === 0 ? 0 : rankDelta / Math.abs(rankDelta);
+
+    if (moveStepFile !== patternStepFile || moveStepRank !== patternStepRank) {
+      return null;
+    }
+
+    const patternDistance = Math.max(Math.abs(pFile), Math.abs(pRank));
+    const moveDistance = Math.max(Math.abs(fileDelta), Math.abs(rankDelta));
+    if (moveDistance < 1 || moveDistance > patternDistance) {
+      return null;
+    }
+  } else if (fileDelta !== pFile || rankDelta !== pRank) {
     return null;
   }
 
