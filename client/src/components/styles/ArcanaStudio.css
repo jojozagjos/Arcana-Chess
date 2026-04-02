@@ -400,6 +400,32 @@
   pointer-events: none;
 }
 
+.overlay-nudge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.overlay-nudge-grid button {
+  border: 1px solid rgba(118, 170, 235, 0.34);
+  background: rgba(18, 33, 52, 0.85);
+  color: #def0ff;
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.overlay-nudge-grid button:hover {
+  border-color: rgba(154, 212, 255, 0.78);
+  background: rgba(25, 44, 69, 0.95);
+}
+
+.overlay-nudge-grid button:last-child {
+  grid-column: span 2;
+}
+
 .overlay-preview-node {
   position: absolute;
   white-space: pre-wrap;

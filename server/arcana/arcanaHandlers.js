@@ -496,15 +496,15 @@ function applyShieldPawn({ chess, gameState, moverColor, moveResult, params }) {
   if (targetSquare) {
     const targetPiece = chess.get(targetSquare);
     if (targetPiece && targetPiece.type === 'p' && targetPiece.color === moverColor) {
-      // shieldType 'pawn' means the pawn itself is protected
-      gameState.pawnShields[moverColor] = { square: targetSquare, shieldType: 'pawn' };
-      return { params: { square: targetSquare, color: moverColor } };
+      // shieldType 'pawn' means the pawn itself is protected for 1 enemy turn (= 2 plies)
+      gameState.pawnShields[moverColor] = { square: targetSquare, shieldType: 'pawn', turns: 2 };
+      return { params: { square: targetSquare, color: moverColor, turns: 2 } };
     }
   } else if (moveResult && moveResult.piece === 'p') {
     const shieldColor = moveResult.color;
     const shieldSquare = moveResult.to;
-    gameState.pawnShields[shieldColor] = { square: shieldSquare, shieldType: 'pawn' };
-    return { params: { square: shieldSquare, color: shieldColor } };
+    gameState.pawnShields[shieldColor] = { square: shieldSquare, shieldType: 'pawn', turns: 2 };
+    return { params: { square: shieldSquare, color: shieldColor, turns: 2 } };
   }
   return null;
 }
@@ -721,6 +721,9 @@ function applyRoyalSwap({ chess, moverColor, params }) {
       chess.remove(kingSquare);
       chess.remove(params.targetSquare);
       chess.put({ type: 'k', color: moverColor }, params.targetSquare);
+
+      // Keep the swapped piece as a pawn. Promotion still only occurs when
+      // that pawn later reaches the opponent back rank through normal rules.
       chess.put({ type: targetPiece.type, color: moverColor }, kingSquare);
       return {
         params: {
@@ -924,6 +927,8 @@ function applyNecromancy({ gameState, moverColor }) {
     return {
       params: {
         revived,
+        revivedSquares: revived,
+        rebornSquare: revived[0] || null,
         revivedPawn: revivedPawns.length > 0,
         revivedOther: revivedOther.length > 0,
       },
@@ -1063,10 +1068,13 @@ function getMovesForColor(chess, color) {
   const fenParts = fen.split(' ');
   fenParts[1] = color; // Set turn to requested color
   
-  const tempChess = new Chess(fenParts.join(' '));
-  const moves = tempChess.moves({ verbose: true });
-  
-  return moves;
+  try {
+    const tempChess = new Chess();
+    tempChess.load(fenParts.join(' '));
+    return tempChess.moves({ verbose: true });
+  } catch {
+    return [];
+  }
 }
 
 const MAP_FRAGMENT_PIECE_VALUES = {

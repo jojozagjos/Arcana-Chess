@@ -44,7 +44,8 @@
   text-shadow: 0 4px 12px rgba(0, 0, 0, 0.9), 0 0 14px rgba(189, 145, 255, 0.48), 0 0 28px rgba(117, 70, 220, 0.26);
   letter-spacing: 0.08em;
   font-weight: 300;
-  margin-bottom: 0;
+  margin: 0 auto;
+  width: max-content;
 }
 
 .continue-text {
@@ -57,9 +58,17 @@
   pointer-events: none; /* clicks handled by overlay */
   padding: 6px 10px;
   border: none;
-  transition: none;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.6s ease-in-out, transform 0.6s ease-in-out;
   position: relative;
   bottom: 0;
+}
+
+.continue-visible {
+  /* Use transition-based fade for reliability across browsers */
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .liquid-reveal {
@@ -79,13 +88,13 @@
 }
 
 .title-settled {
-  animation: titleSettle 0.38s ease-out forwards, titleGlow 2.3s ease-in-out 0.38s infinite alternate;
+  animation: titleGlow 2.3s ease-in-out 0.38s infinite alternate;
 }
 
 .continue-pulse {
-  animation: continueEnter 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards, continuePulse 2.2s ease-in-out 1.8s infinite;
+  /* Start pulsing after the fade-in completes (delay matches transition) */
+  animation: continuePulse 2.2s ease-in-out 0.7s infinite;
 }
-
 .fade-in {
   animation: fadeIn 1.5s ease-in-out forwards;
 }

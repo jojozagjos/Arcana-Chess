@@ -32,7 +32,12 @@ export const socket = io(SERVER_URL, {
 
 socket.on('reconnect_failed', () => {
   console.error('Socket reconnection failed: maximum reconnection attempts exhausted.');
-  if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-    window.alert('Connection to the server was lost and could not be restored. Please check your network and refresh the page.');
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('arcana-notice', {
+      detail: {
+        tone: 'error',
+        message: 'Connection to the server was lost and could not be restored. Please check your network and refresh the page.',
+      },
+    }));
   }
 });

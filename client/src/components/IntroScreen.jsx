@@ -196,16 +196,13 @@ export function IntroScreen({ onContinue }) {
           <div className="creator-text liquid-fade-out">Made by Joseph Slade</div>
         )}
 
-        {textPhase === 'title' && (
-          <div className="game-title liquid-reveal title-glow">Arcana Chess</div>
+        {(textPhase === 'title' || textPhase === 'continue') && (
+          <div className={`game-title ${textPhase === 'title' ? 'liquid-reveal title-glow' : ''} ${textPhase === 'continue' ? 'title-settled' : ''}`}>
+            Arcana Chess
+          </div>
         )}
 
-        {textPhase === 'continue' && (
-          <>
-            <div className="game-title title-settled">Arcana Chess</div>
-            <div className="continue-text continue-pulse">(Click to Continue)</div>
-          </>
-        )}
+        <div className={`continue-text ${textPhase === 'continue' ? 'continue-visible continue-pulse' : ''}`}>(Click to Continue)</div>
       </div>
     </div>
   );

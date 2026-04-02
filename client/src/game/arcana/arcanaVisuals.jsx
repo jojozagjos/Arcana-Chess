@@ -2000,6 +2000,86 @@ export function AstralRebirthEffect({ square, onComplete }) {
   );
 }
 
+// Necromancy Effect - darker soul bloom with green-violet necrotic particles
+export function NecromancyEffect({ square, revivedSquares = [], onComplete }) {
+  const focusSquare = square || revivedSquares[0] || null;
+  if (!focusSquare) return null;
+
+  const [x, , z] = squareToPosition(focusSquare);
+  const [progress, setProgress] = useState(0);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 520);
+
+  useFrame((state, delta) => {
+    setProgress((prev) => {
+      const next = prev + delta * 0.72;
+      if (next >= 1 && !finishing) triggerFinish();
+      return Math.min(next, 1);
+    });
+  });
+
+  if (completed) return null;
+
+  const ringScale = 0.35 + easeOutCubic(progress) * 1.15;
+
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[0, 0.42, 0]}>
+        <sphereGeometry args={[0.5 + progress * 0.35, 24, 24]} />
+        <meshStandardMaterial
+          emissive="#66bb6a"
+          emissiveIntensity={2.8 * (1 - finishT)}
+          color="#c8e6c9"
+          transparent
+          depthWrite={false}
+          opacity={0.28 * (1 - progress * 0.25) * (1 - finishT)}
+        />
+      </mesh>
+
+      {[...Array(32)].map((_, i) => {
+        const angle = (i / 32) * Math.PI * 2 - progress * Math.PI * 2.4;
+        const radius = 0.2 + Math.sin(progress * Math.PI) * 0.6;
+        const height = (i / 32) * 1.4;
+        return (
+          <mesh key={i} position={[Math.cos(angle) * radius, height * (1 - progress), Math.sin(angle) * radius]}>
+            <sphereGeometry args={[0.035, 8, 8]} />
+            <meshStandardMaterial
+              emissive={i % 2 === 0 ? '#aed581' : '#9ccc65'}
+              emissiveIntensity={3.5 * (1 - finishT)}
+              color={i % 2 === 0 ? '#dcedc8' : '#c5e1a5'}
+              transparent
+              depthWrite={false}
+              opacity={(1 - progress * 0.5) * 0.9 * (1 - finishT)}
+            />
+          </mesh>
+        );
+      })}
+
+      <mesh position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[ringScale, ringScale, 1]}>
+        <ringGeometry args={[0.22, 0.72, 32]} />
+        <meshStandardMaterial
+          emissive="#7cb342"
+          emissiveIntensity={2 * (1 - progress)}
+          color="#c5e1a5"
+          transparent
+          depthWrite={false}
+          opacity={0.55 * (1 - progress * 0.65) * (1 - finishT)}
+        />
+      </mesh>
+
+      <mesh position={[0, 1.15, 0]}>
+        <octahedronGeometry args={[0.1, 0]} />
+        <meshStandardMaterial
+          emissive="#dcedc8"
+          emissiveIntensity={4}
+          color="#f1f8e9"
+          transparent
+          opacity={0.85 * (1 - finishT)}
+        />
+      </mesh>
+    </group>
+  );
+}
+
 // Mind Control Effect - Purple aura
 export function MindControlEffect({ square, onComplete }) {
   if (!square) return null;

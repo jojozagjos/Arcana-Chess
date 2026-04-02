@@ -930,7 +930,7 @@ test('Necromancy revives non-pawn when no pawn captured', () => {
   assert(foundKnight, 'Necromancy should place a revived non-pawn piece');
 });
 
-test('Royal Swap keeps swapped pawn as pawn on king square', () => {
+test('Royal Swap keeps pawn as pawn on own back rank', () => {
   const gameState = createMockGameState('4k3/8/8/8/8/8/4P3/4K3 w - - 0 1');
   const socketId = 'player1';
   gameState.arcanaByPlayer[socketId] = [{ id: 'royal_swap', name: 'Royal Swap' }];
@@ -942,7 +942,7 @@ test('Royal Swap keeps swapped pawn as pawn on king square', () => {
   const kingNow = gameState.chess.get('e2');
   const pawnNow = gameState.chess.get('e1');
   assert(kingNow && kingNow.type === 'k' && kingNow.color === 'w', 'King should move to the target pawn square');
-  assert(pawnNow && pawnNow.type === 'p' && pawnNow.color === 'w', 'Swapped piece on king square should remain a pawn');
+  assert(pawnNow && pawnNow.type === 'p' && pawnNow.color === 'w', 'Pawn swapped to own back rank should stay a pawn');
 });
 
 // ============ SUMMARY ============

@@ -28,6 +28,7 @@ export function App() {
   const [quickMatchStatus, setQuickMatchStatus] = useState('');
   const [quickMatchLoading, setQuickMatchLoading] = useState(false);
   const [quickMatchFilters, setQuickMatchFilters] = useState({ gameMode: 'any', timeControl: 'any' });
+  const [globalNotice, setGlobalNotice] = useState(null);
 
   useEffect(() => {
     if (screen === 'main-menu') {
@@ -68,8 +69,28 @@ export function App() {
       return;
     }
 
-    window.alert('Incorrect password.');
+    setGlobalNotice({ tone: 'warning', message: 'Incorrect dev mode password.' });
   };
+
+  useEffect(() => {
+    const handleNotice = (event) => {
+      const detail = event?.detail || {};
+      if (!detail.message) return;
+      setGlobalNotice({
+        tone: detail.tone || 'info',
+        message: detail.message,
+      });
+    };
+
+    window.addEventListener('arcana-notice', handleNotice);
+    return () => window.removeEventListener('arcana-notice', handleNotice);
+  }, []);
+
+  useEffect(() => {
+    if (!globalNotice) return undefined;
+    const timer = setTimeout(() => setGlobalNotice(null), globalNotice.tone === 'error' ? 9000 : 5000);
+    return () => clearTimeout(timer);
+  }, [globalNotice]);
 
   // Ensure audio defaults include mute flag if loaded settings are missing it
   useEffect(() => {
@@ -394,6 +415,41 @@ export function App() {
 
   return (
     <div style={{ width: '100%', height: '100%', backgroundColor: '#05060a', color: 'white' }}>
+      {globalNotice && (
+        <div style={{
+          position: 'fixed',
+          top: 14,
+          right: 14,
+          zIndex: 2000,
+          maxWidth: 'min(420px, calc(100vw - 28px))',
+          border: '1px solid rgba(136, 193, 255, 0.35)',
+          borderRadius: 12,
+          padding: '12px 14px',
+          background: globalNotice.tone === 'error' ? 'rgba(62, 18, 22, 0.96)' : globalNotice.tone === 'warning' ? 'rgba(64, 46, 12, 0.96)' : 'rgba(12, 24, 38, 0.96)',
+          color: '#f2f7ff',
+          boxShadow: '0 16px 34px rgba(0, 0, 0, 0.38)',
+        }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: '0.95rem', lineHeight: 1.35 }}>{globalNotice.message}</div>
+            <button
+              type="button"
+              onClick={() => setGlobalNotice(null)}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: '#f2f7ff',
+                cursor: 'pointer',
+                fontSize: '1rem',
+                lineHeight: 1,
+                padding: 0,
+              }}
+              aria-label="Dismiss notice"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
       {screen === 'intro' && (
         <IntroScreen
           onContinue={() => {

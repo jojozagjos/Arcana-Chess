@@ -8,7 +8,9 @@ import { soundManager } from '../game/soundManager.js';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 
 // Load particle overlay for 2D effects
-import { ParticleOverlay } from '../game/arcana/ParticleOverlay.jsx';
+const ParticleOverlay = React.lazy(() =>
+  import('../game/arcana/ParticleOverlay.jsx').then((m) => ({ default: m.default ?? m.ParticleOverlay }))
+);
 
 // Load ShieldGlowEffect lazily to match other dynamic imports and enable code-splitting
 const ShieldGlowEffect = React.lazy(() =>
@@ -738,6 +740,7 @@ export function Tutorial({ onBack }) {
                     size="small"
                     isSelected={selectedCard?.id === DEMO_CARD.id}
                     onClick={() => handleCardClick(DEMO_CARD)}
+                    disableTooltip={true}
                   />
                   {hoveredCard === DEMO_CARD.id && (
                     <div style={{

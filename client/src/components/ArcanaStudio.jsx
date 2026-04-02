@@ -925,8 +925,10 @@ export function ArcanaStudio({ onBack }) {
   const [status, setStatus] = useState('Ready');
   const [isDirty, setIsDirty] = useState(false);
   const [dragKey, setDragKey] = useState(null);
+  const [overlayDrag, setOverlayDrag] = useState(null);
   const suppressDeselectUntilRef = useRef(0);
   const draftSnapshotRef = useRef('');
+  const overlayStageRef = useRef(null);
 
   const laneRefs = useRef({});
   const playbackFrameRef = useRef(null);
@@ -994,6 +996,8 @@ export function ArcanaStudio({ onBack }) {
 
     const timer = setTimeout(() => {
       saveArcanaStudioCardsMap(cards);
+      draftSnapshotRef.current = JSON.stringify(cards || {});
+      setIsDirty(false);
     }, 400);
 
     return () => clearTimeout(timer);
@@ -1065,6 +1069,32 @@ export function ArcanaStudio({ onBack }) {
       window.removeEventListener('pointerup', onPointerUp);
     };
   }, [dragKey, selectedCard.durationMs]);
+
+  useEffect(() => {
+    if (!overlayDrag) return undefined;
+
+    const onPointerMove = (event) => {
+      const stageEl = overlayStageRef.current;
+      if (!stageEl) return;
+      const rect = stageEl.getBoundingClientRect();
+      const x = clamp(((event.clientX - rect.left) / Math.max(1, rect.width)) * 100, 0, 100);
+      const y = clamp(((event.clientY - rect.top) / Math.max(1, rect.height)) * 100, 0, 100);
+      updateKeyField('overlay', overlayDrag.trackId, overlayDrag.keyId, { x, y }, false);
+    };
+
+    const onPointerUp = () => {
+      setOverlayDrag(null);
+      setStatus('Moved overlay keyframe');
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [overlayDrag]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -1350,6 +1380,80 @@ export function ArcanaStudio({ onBack }) {
     updateKeyField('camera', selection.trackId, selection.keyId, patch, false);
   }
 
+  function resolveOverlayKeyId(track) {
+    if (!track) return null;
+
+    if (selection?.trackType === 'overlay' && selection?.trackId === track.id && selection?.keyId) {
+      return selection.keyId;
+    }
+
+    const keys = [...(track.keys || [])];
+    if (keys.length === 0) {
+      const keyId = uid('ovk');
+      updateSelectedCard((card) => {
+        const list = [...(card.tracks?.overlays || [])];
+        const idx = list.findIndex((entry) => entry.id === track.id);
+        if (idx < 0) return card;
+
+        const nextTrack = { ...list[idx], keys: [...(list[idx].keys || [])] };
+        nextTrack.keys.push({
+          id: keyId,
+          timeMs: Math.round(playheadMs),
+          x: 50,
+          y: 50,
+          opacity: 1,
+          scale: 1,
+          rotation: 0,
+          easing: 'easeInOutCubic',
+          bezier: [0.25, 0.1, 0.25, 1],
+          text: null,
+        });
+        list[idx] = nextTrack;
+
+        return {
+          ...card,
+          tracks: {
+            ...card.tracks,
+            overlays: list,
+          },
+        };
+      }, 'Added overlay keyframe');
+      return keyId;
+    }
+
+    const nearest = keys.reduce((best, key) => {
+      if (!best) return key;
+      const a = Math.abs((best.timeMs || 0) - playheadMs);
+      const b = Math.abs((key.timeMs || 0) - playheadMs);
+      return b < a ? key : best;
+    }, null);
+
+    return nearest?.id || null;
+  }
+
+  function startOverlayDrag(event, track) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!track) return;
+
+    const keyId = resolveOverlayKeyId(track);
+    if (!keyId) return;
+
+    const keyFrame = (track.keys || []).find((key) => key.id === keyId);
+    if (keyFrame?.locked) return;
+
+    const stageEl = overlayStageRef.current;
+    if (stageEl) {
+      const rect = stageEl.getBoundingClientRect();
+      const x = clamp(((event.clientX - rect.left) / Math.max(1, rect.width)) * 100, 0, 100);
+      const y = clamp(((event.clientY - rect.top) / Math.max(1, rect.height)) * 100, 0, 100);
+      updateKeyField('overlay', track.id, keyId, { x, y }, false);
+    }
+
+    setSelection({ trackType: 'overlay', trackId: track.id, keyId });
+    setOverlayDrag({ trackId: track.id, keyId });
+  }
+
   function exportCard() {
     downloadJson(`${selectedId}.arcana-studio.json`, selectedCard);
     draftSnapshotRef.current = JSON.stringify(cards || {});
@@ -1622,8 +1726,9 @@ export function ArcanaStudio({ onBack }) {
                 />
               </Canvas>
 
-              <div className="arcana-overlay-stage">
+              <div className="arcana-overlay-stage" ref={overlayStageRef}>
                 {screenOverlays.map(({ track, sample }) => {
+                  const isSelected = selection?.trackType === 'overlay' && selection?.trackId === track.id;
                   const style = {
                     left: `${sample.x}%`,
                     top: `${sample.y}%`,
@@ -1635,13 +1740,24 @@ export function ArcanaStudio({ onBack }) {
                     fontWeight: track.style?.weight || 700,
                     textAlign: track.style?.align || 'center',
                     background: track.style?.background || 'transparent',
+                    pointerEvents: 'auto',
+                    userSelect: 'none',
+                    cursor: (track.keys || []).find((key) => key.id === resolveOverlayKeyId(track))?.locked ? 'not-allowed' : (overlayDrag?.trackId === track.id ? 'grabbing' : 'grab'),
+                    outline: isSelected ? '1px solid rgba(122, 208, 255, 0.9)' : '1px dashed rgba(122, 208, 255, 0.25)',
+                    outlineOffset: 2,
+                  };
+
+                  const interactiveProps = {
+                    onPointerDown: (event) => startOverlayDrag(event, track),
+                    onDoubleClick: () => selectTrack('overlay', track.id),
+                    title: 'Drag to reposition overlay keyframe',
                   };
 
                   if (track.type === 'image' && track.style?.imageUrl) {
-                    return <img key={track.id} className="overlay-preview-node" alt={track.name} src={track.style.imageUrl} style={style} />;
+                    return <img key={track.id} className="overlay-preview-node" alt={track.name} src={track.style.imageUrl} style={style} {...interactiveProps} />;
                   }
 
-                  return <div key={track.id} className="overlay-preview-node" style={style}>{sample.text || track.content}</div>;
+                  return <div key={track.id} className="overlay-preview-node" style={style} {...interactiveProps}>{sample.text || track.content}</div>;
                 })}
               </div>
             </div>
@@ -1948,6 +2064,16 @@ export function ArcanaStudio({ onBack }) {
                           <input value={selectedKey.text ?? ''} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { text: event.target.value })} />
                         </label>
                         <label>
+                          Lock Overlay
+                          <select
+                            value={selectedKey.locked ? 'on' : 'off'}
+                            onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { locked: event.target.value === 'on' })}
+                          >
+                            <option value="off">Off</option>
+                            <option value="on">On</option>
+                          </select>
+                        </label>
+                        <label>
                           X (%)
                           <input type="number" value={selectedKey.x ?? 50} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: Number(event.target.value) || 0 })} />
                         </label>
@@ -1967,6 +2093,16 @@ export function ArcanaStudio({ onBack }) {
                           Rotation (deg)
                           <input type="number" step="0.1" value={selectedKey.rotation ?? 0} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { rotation: Number(event.target.value) || 0 })} />
                         </label>
+                        <div className="overlay-nudge-grid">
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: clamp((selectedKey.x ?? 50) - 1, 0, 100) }, false)}>◀ 1</button>
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: clamp((selectedKey.x ?? 50) + 1, 0, 100) }, false)}>1 ▶</button>
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { y: clamp((selectedKey.y ?? 50) - 1, 0, 100) }, false)}>▲ 1</button>
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { y: clamp((selectedKey.y ?? 50) + 1, 0, 100) }, false)}>1 ▼</button>
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: 50, y: 50 }, false)}>Center</button>
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: 10, y: 10 }, false)}>Top Left</button>
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: 90, y: 10 }, false)}>Top Right</button>
+                          <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: 50, y: 90 }, false)}>Bottom Center</button>
+                        </div>
                       </>
                     ) : null}
 

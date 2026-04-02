@@ -24,6 +24,121 @@ import { createArcanaStudioRuntimeSession, normalizeArcanaStudioEventActions, sc
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
 // ArcanaVisualHost renders all effects using the shared arcanaVisuals module
 
+function createSafeChessClone(sourceChess) {
+  if (!sourceChess) return null;
+
+  const clone = new Chess();
+  try {
+    safeLoadFen(clone, sourceChess.fen());
+    return clone;
+  } catch {
+    return null;
+  }
+}
+
+function safeLoadFen(chess, fen) {
+  if (!chess || !fen || typeof fen !== 'string') throw new Error('Invalid FEN');
+
+  const parts = fen.split(' ');
+  if (!parts[0]) throw new Error('Invalid FEN');
+
+  const ranks = parts[0].split('/');
+  if (ranks.length !== 8) {
+    chess.load(fen);
+    return fen;
+  }
+
+  const expandRank = (rank) => {
+    let out = '';
+    for (const ch of rank) {
+      if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
+      else out += ch;
+    }
+    return out;
+  };
+
+  const compressRank = (expanded) => {
+    let out = '';
+    let empty = 0;
+    for (const ch of expanded) {
+      if (ch === '.') {
+        empty += 1;
+      } else {
+        if (empty > 0) {
+          out += String(empty);
+          empty = 0;
+        }
+        out += ch;
+      }
+    }
+    if (empty > 0) out += String(empty);
+    return out;
+  };
+
+  const getBackRankSquares = () => {
+    const squares = [];
+    const topRank = expandRank(ranks[0]);
+    const bottomRank = expandRank(ranks[7]);
+    for (let file = 0; file < 8; file++) {
+      if (topRank[file] === 'p') squares.push(`${'abcdefgh'[file]}8`);
+      if (bottomRank[file] === 'P') squares.push(`${'abcdefgh'[file]}1`);
+    }
+    return squares;
+  };
+
+  const replaceBackRankPawns = () => {
+    const topExpanded = expandRank(ranks[0]);
+    const bottomExpanded = expandRank(ranks[7]);
+    let nextTop = '';
+    let nextBottom = '';
+    let changed = false;
+
+    for (let i = 0; i < 8; i++) {
+      const topCh = topExpanded[i];
+      const bottomCh = bottomExpanded[i];
+      if (topCh === 'p') {
+        nextTop += 'n';
+        changed = true;
+      } else {
+        nextTop += topCh;
+      }
+      if (bottomCh === 'P') {
+        nextBottom += 'N';
+        changed = true;
+      } else {
+        nextBottom += bottomCh;
+      }
+    }
+
+    if (!changed) return null;
+    const surrogateRanks = [...ranks];
+    surrogateRanks[0] = compressRank(nextTop);
+    surrogateRanks[7] = compressRank(nextBottom);
+    return [surrogateRanks.join('/'), ...parts.slice(1)].join(' ');
+  };
+
+  try {
+    chess.load(fen);
+    return fen;
+  } catch (err) {
+    const backRankSquares = getBackRankSquares();
+    if (!backRankSquares.length) throw err;
+
+    const surrogateFen = replaceBackRankPawns();
+    if (!surrogateFen) throw err;
+
+    chess.load(surrogateFen);
+    for (const square of backRankSquares) {
+      const rank = square[1];
+      const color = rank === '1' ? 'w' : 'b';
+      chess.remove(square);
+      chess.put({ type: 'p', color }, square);
+    }
+
+    return surrogateFen;
+  }
+}
+
 export function GameScene({ gameState, initialReplayPayload, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const [showMenu, setShowMenu] = useState(false);
   // Panels are always visible in the in-game menu (no collapse)
@@ -124,7 +239,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (!gameState?.fen) return null;
     const c = new Chess();
     try {
-      c.load(gameState.fen);
+      safeLoadFen(c, gameState.fen);
     } catch {
       return null;
     }
@@ -589,12 +704,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         setVisionMoves(moves.map(m => m.to));
       } else {
         // Create temporary chess to see opponent's potential moves
-        const tempChess = new Chess(chess.fen());
+        const tempChess = createSafeChessClone(chess);
+        if (!tempChess) {
+          setVisionMoves([]);
+          return;
+        }
         // Flip turn to opponent
         const fenParts = tempChess.fen().split(' ');
         fenParts[1] = opponentColorChar;
         try {
-          tempChess.load(fenParts.join(' '));
+          safeLoadFen(tempChess, fenParts.join(' '));
           const moves = tempChess.moves({ verbose: true });
           setVisionMoves(moves.map(m => m.to));
         } catch {
@@ -639,11 +758,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (!kingSquare) return;
 
     const opp = myColorCode === 'w' ? 'b' : 'w';
-    const temp = new Chess(chess.fen());
+    const temp = createSafeChessClone(chess);
+    if (!temp) return;
     const fenParts = temp.fen().split(' ');
     fenParts[1] = opp;
     try {
-      temp.load(fenParts.join(' '));
+      safeLoadFen(temp, fenParts.join(' '));
     } catch {
       return;
     }
@@ -1174,6 +1294,49 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       if (!isMyCard) return; // Don't show opponent's card highlights
       
       switch (arcanaId) {
+        case 'necromancy': {
+          const revivedSquares = Array.isArray(params?.revivedSquares)
+            ? params.revivedSquares
+            : Array.isArray(params?.revived)
+              ? params.revived
+              : [];
+          if (revivedSquares.length > 0) {
+            setActiveVisualArcana({
+              arcanaId: 'necromancy',
+              params: {
+                square: revivedSquares[0],
+                revivedSquares,
+              },
+            });
+          }
+          break;
+        }
+        case 'astral_rebirth': {
+          const revivedSquares = Array.isArray(params?.revivedSquares)
+            ? params.revivedSquares
+            : Array.isArray(params?.revived)
+              ? params.revived
+              : [];
+          const focusSquare = params?.rebornSquare || revivedSquares[0] || params?.square || null;
+          if (focusSquare) {
+            setActiveVisualArcana({
+              arcanaId: 'astral_rebirth',
+              params: {
+                square: focusSquare,
+                rebornSquare: focusSquare,
+                revivedSquares,
+              },
+            });
+          }
+          break;
+        }
+        case 'time_freeze': {
+          setActiveVisualArcana({
+            arcanaId: 'time_freeze',
+            params: { frozenColor: params?.frozenColor || null },
+          });
+          break;
+        }
         case 'line_of_sight': {
           const squares = params?.legalMoves || [];
           setHighlightedSquares(Array.isArray(squares) ? squares : []);
@@ -2139,7 +2302,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
             // Simulate the move on a fresh chess instance and collect enemy moves that target the destination
             try {
-              const temp = new Chess(chess.fen());
+              const temp = createSafeChessClone(chess);
+              if (!temp) {
+                setHoverThreatSources(new Set());
+                return;
+              }
               // Try move; if promotion required, simulate with a queen as fallback
               let mv = temp.move({ from: selectedSquare, to: sq });
               if (!mv) {
@@ -2396,7 +2563,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
               if (!canUseCard(arcanaId, gameStateForUsability, myColorCode)) {
                 let errorMsg = `Cannot use this card`;
                 if (arcanaId === 'necromancy') {
-                  errorMsg = 'No captured pawns to revive';
+                  errorMsg = 'No captured pieces to revive';
                 } else if (arcanaId === 'astral_rebirth') {
                   errorMsg = 'No captured pieces to revive';
                 }

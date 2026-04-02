@@ -134,10 +134,123 @@ function sanitizeEdgeRankPawnsInFen(fen) {
   return parts.join(' ');
 }
 
+function getOwnBackRankPawnsFromFen(fen) {
+  if (!fen || typeof fen !== 'string') return [];
+  const parts = fen.split(' ');
+  if (!parts[0]) return [];
+
+  const ranks = parts[0].split('/');
+  if (ranks.length !== 8) return [];
+
+  const expandRank = (rank) => {
+    let out = '';
+    for (const ch of rank) {
+      if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
+      else out += ch;
+    }
+    return out;
+  };
+
+  const squares = [];
+  const topRank = expandRank(ranks[0]); // rank 8
+  const bottomRank = expandRank(ranks[7]); // rank 1
+
+  for (let file = 0; file < 8; file++) {
+    if (topRank[file] === 'p') squares.push(`${'abcdefgh'[file]}8`);
+    if (bottomRank[file] === 'P') squares.push(`${'abcdefgh'[file]}1`);
+  }
+
+  return squares;
+}
+
+function replaceOwnBackRankPawnsInFen(fen, replacement = { white: 'N', black: 'n' }) {
+  if (!fen || typeof fen !== 'string') return fen;
+  const parts = fen.split(' ');
+  if (!parts[0]) return fen;
+
+  const ranks = parts[0].split('/');
+  if (ranks.length !== 8) return fen;
+
+  const expandRank = (rank) => {
+    let out = '';
+    for (const ch of rank) {
+      if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
+      else out += ch;
+    }
+    return out;
+  };
+
+  const compressRank = (expanded) => {
+    let out = '';
+    let empty = 0;
+    for (const ch of expanded) {
+      if (ch === '.') {
+        empty += 1;
+      } else {
+        if (empty > 0) {
+          out += String(empty);
+          empty = 0;
+        }
+        out += ch;
+      }
+    }
+    if (empty > 0) out += String(empty);
+    return out;
+  };
+
+  const topExpanded = expandRank(ranks[0]); // rank 8
+  const bottomExpanded = expandRank(ranks[7]); // rank 1
+
+  let nextTop = '';
+  let nextBottom = '';
+  let changed = false;
+
+  for (let i = 0; i < 8; i++) {
+    const topCh = topExpanded[i];
+    const bottomCh = bottomExpanded[i];
+    if (topCh === 'p') {
+      nextTop += replacement.black;
+      changed = true;
+    } else {
+      nextTop += topCh;
+    }
+    if (bottomCh === 'P') {
+      nextBottom += replacement.white;
+      changed = true;
+    } else {
+      nextBottom += bottomCh;
+    }
+  }
+
+  if (!changed) return fen;
+
+  ranks[0] = compressRank(nextTop);
+  ranks[7] = compressRank(nextBottom);
+  parts[0] = ranks.join('/');
+  return parts.join(' ');
+}
+
 function safeLoadFen(chess, fen) {
   const safeFen = sanitizeEdgeRankPawnsInFen(fen);
-  chess.load(safeFen);
-  return safeFen;
+  try {
+    chess.load(safeFen);
+    return safeFen;
+  } catch (err) {
+    const ownBackRankPawns = getOwnBackRankPawnsFromFen(safeFen);
+    if (!ownBackRankPawns.length) throw err;
+
+    const surrogateFen = replaceOwnBackRankPawnsInFen(safeFen);
+    chess.load(surrogateFen);
+
+    for (const square of ownBackRankPawns) {
+      const rank = square[1];
+      const color = rank === '1' ? WHITE_CHAR : BLACK_CHAR;
+      chess.remove(square);
+      chess.put({ type: 'p', color }, square);
+    }
+
+    return surrogateFen;
+  }
 }
 
 function normalizeTimeControlMinutes(timeControl) {
@@ -162,7 +275,8 @@ function getMovesForColor(chess, color) {
   }
   const fenParts = chess.fen().split(' ');
   fenParts[1] = color;
-  const temp = new Chess(fenParts.join(' '));
+  const temp = new Chess();
+  safeLoadFen(temp, fenParts.join(' '));
   return temp.moves({ verbose: true });
 }
 
@@ -408,6 +522,42 @@ export class GameManager {
     }
   }
 
+  // Swap active side in FEN without executing a move, then reload safely.
+  _swapTurn(chess, gameState = null) {
+    const fenParts = chess.fen().split(' ');
+    fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+    if (fenParts.length > 3) fenParts[3] = '-';
+    safeLoadFen(chess, fenParts.join(' '));
+
+    if (gameState) {
+      const nextTurn = chess.turn();
+      gameState.currentTurnSocket = findPlayerIdByColor(gameState.playerColors, nextTurn);
+      if (gameState.timePerPlayer) {
+        gameState.lastMoveTime = Date.now();
+      }
+    }
+  }
+
+  // If AI logic fails while AI is to move, force-turn-pass to prevent permanent softlocks.
+  _failSafePassAITurn(gameState) {
+    const chess = gameState?.chess;
+    if (!chess || !gameState?.playerIds || !gameState?.playerColors) return false;
+
+    const aiSocketId = gameState.playerIds.find((id) => id.startsWith(AI_PREFIX));
+    if (!aiSocketId) return false;
+
+    const aiColorName = gameState.playerColors[aiSocketId];
+    const aiTurnChar = aiColorName === WHITE ? WHITE_CHAR : BLACK_CHAR;
+    if (chess.turn() !== aiTurnChar) return false;
+
+    this._swapTurn(chess, gameState);
+    if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+    gameState.plyCount += 1;
+    this.decrementEffects(gameState);
+    this.broadcastGameUpdate(gameState);
+    return true;
+  }
+
   /**
    * Get the captured square for a move (handles en passant special case)
    * @param {Object} move - Chess.js move object
@@ -461,12 +611,10 @@ export class GameManager {
     // If the reveal required the turn to end, perform the swap now
     if (pending?.turnShouldEnd) {
       try {
-        const fen = chess.fen();
-        const fenParts = fen.split(' ');
-        fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
-        // Clear en-passant square when swapping without a real move to avoid invalid FEN
-        if (fenParts.length > 3) fenParts[3] = '-';
-        safeLoadFen(chess, fenParts.join(' '));
+        this._swapTurn(chess, gameState);
+        if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+        gameState.plyCount += 1;
+        this.decrementEffects(gameState);
 
         // Broadcast updated game state to players
         for (const pid of gameState.playerIds) {
@@ -742,9 +890,42 @@ export class GameManager {
     const gameState = this.games.get(gameId);
     if (!gameState) throw new Error('Game not found');
 
+    // Prevent extra actions while this player's reveal is still pending.
+    if (gameState.pendingReveal && gameState.pendingReveal.playerId === socket.id) {
+      throw new Error('Please wait for the card reveal to finish');
+    }
+
     const { move, arcanaUsed, actionType } = payload || {};
 
     if (gameState.status !== STATUS_ONGOING) throw new Error('Game is not active');
+
+    // Time Freeze skips the frozen player's entire turn (move, draw, or arcana).
+    // Apply this before action-type handling so no branch can bypass it.
+    const playerColorName = gameState.playerColors?.[socket.id];
+    const playerColorChar = playerColorName === WHITE ? WHITE_CHAR : BLACK_CHAR;
+    if (playerColorChar && gameState.activeEffects?.timeFrozen?.[playerColorChar] && gameState.chess.turn() === playerColorChar) {
+      gameState.activeEffects.timeFrozen[playerColorChar] = false;
+      this._swapTurn(gameState.chess, gameState);
+      if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+      gameState.plyCount += 1;
+      this.decrementEffects(gameState);
+
+      this.broadcastGameUpdate(gameState);
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith(AI_PREFIX)) {
+          this.io.to(pid).emit('turnSkipped', {
+            skippedPlayer: socket.id,
+            reason: 'Time Freeze',
+          });
+        }
+      }
+
+      if (gameState.aiDifficulty && gameState.status === STATUS_ONGOING) {
+        await this.performAIMove(gameState);
+      }
+
+      return { ok: true, turnSkipped: true, reason: 'Time Freeze' };
+    }
 
     // Reentrancy guard to prevent double-apply from rapid duplicate emits
     if (gameState._busy) {
@@ -852,6 +1033,9 @@ export class GameManager {
       // Increment ply counter (drawing a card counts as a turn action)
       gameState.plyCount++;
       
+      // Decrement effects after drawing (drawing counts as a player turn for effect expiration)
+      this.decrementEffects(gameState);
+      
       // Emit to both players (redacted to opponent)
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
@@ -872,6 +1056,7 @@ export class GameManager {
       // Clear any previous timer
       if (gameState.pendingReveal.timeoutId) clearTimeout(gameState.pendingReveal.timeoutId);
       gameState.pendingReveal.playerId = socket.id;
+      gameState.pendingReveal.turnShouldEnd = false;
       gameState.pendingReveal.timeoutId = setTimeout(async () => {
         // Fallback: finalize reveal processing even if client didn't ack
         try {
@@ -1181,32 +1366,6 @@ export class GameManager {
       if (brFirstKillSquare) {
         validateNonAdjacentCapture({ firstKillSquare: brFirstKillSquare }, candidate.to, 'Berserker Rage');
       }
-    }
-
-    // Check time freeze - automatically skip this player's turn
-    if (gameState.activeEffects.timeFrozen[moverColor]) {
-      gameState.activeEffects.timeFrozen[moverColor] = false;
-      
-      // Automatically swap turn to opponent
-      const fen = chess.fen();
-      const fenParts = fen.split(' ');
-      fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
-      if (fenParts.length > 3) fenParts[3] = '-'; // Clear en-passant
-      safeLoadFen(chess, fenParts.join(' '));
-      
-      // Emit game update and turn skipped notification
-      this.broadcastGameUpdate(gameState);
-      for (const pid of gameState.playerIds) {
-        if (!pid.startsWith(AI_PREFIX)) {
-          this.io.to(pid).emit('turnSkipped', {
-            skippedPlayer: socket.id,
-            reason: 'Time Freeze'
-          });
-        }
-      }
-      
-      // Return special response indicating turn was skipped
-      return { ok: true, turnSkipped: true, reason: 'Time Freeze' };
     }
 
     // Save FEN to history for time_travel
@@ -1987,6 +2146,10 @@ export class GameManager {
       } catch (_) {
         // Ignore emit failures; continue to clear pending flag
       }
+      const passed = this._failSafePassAITurn(gameState);
+      if (passed) {
+        logger.warn('AI move failed, applied fail-safe turn pass to prevent softlock');
+      }
       gameState.pendingAI = false;
       return null;
     }
@@ -1995,6 +2158,14 @@ export class GameManager {
   async _performAIMoveLogic(gameState) {
     const chess = gameState.chess;
     if (gameState.status !== 'ongoing') return;
+
+    const aiSocketId = gameState.playerIds.find((id) => id.startsWith('AI-'));
+    if (!aiSocketId) return;
+    const aiColorName = gameState.playerColors?.[aiSocketId];
+    const aiTurnChar = aiColorName === WHITE ? WHITE_CHAR : BLACK_CHAR;
+    if (chess.turn() !== aiTurnChar) {
+      return;
+    }
 
     // AI Difficulty settings - affects move selection and arcana usage
     // NOTE: Drawing is FAIR and RANDOM across all difficulties (not affect by difficulty)
@@ -2034,7 +2205,6 @@ export class GameManager {
     const moverColor = chess.turn();
     const opponentColor = moverColor === 'w' ? 'b' : 'w';
     const shield = gameState.pawnShields[opponentColor];
-    const aiSocketId = gameState.playerIds.find(id => id.startsWith('AI-'));
     
     // Debug logging for check situations
     if (chess.isCheck()) {
@@ -2044,7 +2214,7 @@ export class GameManager {
     // === AI ARCANA LOGIC (only in Ascendant mode) ===
     if (gameState.ascended && gameState.mode === 'Ascendant' && aiSocketId) {
       const aiCards = gameState.arcanaByPlayer[aiSocketId] || [];
-      const usedInstanceIds = gameState.usedArcanaIdsByPlayer[aiSocketId] || [];
+      const usedInstanceIds = gameState.usedArcanaInstanceIdsByPlayer?.[aiSocketId] || [];
       const availableCards = aiCards.filter((card) => !usedInstanceIds.includes(card.instanceId));
       
       // Check if AI already used a card this turn
@@ -2190,10 +2360,17 @@ export class GameManager {
           
           // If card ends turn, return after the delay
           if (usageResult.endsTurn) {
-            const fen = chess.fen();
-            const fenParts = fen.split(' ');
-            fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
-            safeLoadFen(chess, fenParts.join(' '));
+            this._swapTurn(chess, gameState);
+            if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+            gameState.plyCount += 1;
+            this.decrementEffects(gameState);
+            gameState.aiUsedCardThisTurn = false;
+
+            const humanId = gameState.playerIds.find(id => !id.startsWith('AI-'));
+            if (humanId) {
+              const personalised = this.serialiseGameStateForViewer(gameState, humanId);
+              this.io.to(humanId).emit('gameUpdated', personalised);
+            }
             return;
           }
         }
@@ -2254,24 +2431,45 @@ export class GameManager {
       candidateMoves = allMoves;
     }
 
-    // Better move selection based on difficulty
+    // Better move selection based on difficulty using one-ply tactical simulation.
     let selectedMove;
     if (Math.random() < settings.randomness) {
       // Random move (easier AI)
       selectedMove = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
     } else {
-      // Prioritize moves (harder AI)
-      // Sort by: captures > checks > center control > random
-      const scoredMoves = candidateMoves.map(m => {
+      const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+
+      const scoreMove = (m) => {
+        const moveInput = { from: m.from, to: m.to };
+        if (m.promotion) moveInput.promotion = m.promotion;
+
+        const tempChess = new Chess(sanitizeEdgeRankPawnsInFen(chess.fen()));
+        const played = tempChess.move(moveInput);
+        if (!played) return -9999;
+
         let score = 0;
-        if (m.captured) {
-          const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
-          score += (pieceValues[m.captured] || 1) * 10;
+        if (m.captured) score += (pieceValues[m.captured] || 1) * 12;
+        if ((played.san || '').includes('+')) score += 6;
+        if ((played.san || '').includes('#')) score += 2000;
+        if (['d4', 'd5', 'e4', 'e5'].includes(m.to)) score += 2;
+
+        const movedPiece = tempChess.get(m.to);
+        if (movedPiece) {
+          const oppMoves = tempChess.moves({ verbose: true });
+          const immediateRecapture = oppMoves.some((om) => om.captured && om.to === m.to);
+          if (immediateRecapture) {
+            score -= (pieceValues[movedPiece.type] || 1) * 10;
+          }
         }
-        if (m.san.includes('+')) score += 5; // Check
-        if (m.san.includes('#')) score += 1000; // Checkmate
-        if (['d4', 'd5', 'e4', 'e5'].includes(m.to)) score += 2; // Center control
-        return { move: m, score };
+
+        const mobility = tempChess.moves({ verbose: true }).length;
+        score += Math.min(6, mobility * 0.1);
+
+        return score;
+      };
+
+      const scoredMoves = candidateMoves.map(m => {
+        return { move: m, score: scoreMove(m) };
       }).sort((a, b) => b.score - a.score);
       
       if (!scoredMoves.length) {
@@ -2685,9 +2883,15 @@ export class GameManager {
     
     // Apply the arcana. Include the instanceId for stricter server validation.
     const arcanaUsed = [{ arcanaId: card.id, instanceId: card.instanceId, params }];
-    const appliedArcana = this.applyArcana
-      ? this.applyArcana(aiSocketId, gameState, arcanaUsed, null)
-      : applyArcana(aiSocketId, gameState, arcanaUsed, null, this.io);
+    let appliedArcana = [];
+    try {
+      appliedArcana = this.applyArcana
+        ? this.applyArcana(aiSocketId, gameState, arcanaUsed, null)
+        : applyArcana(aiSocketId, gameState, arcanaUsed, null, this.io);
+    } catch (err) {
+      logger.warn('AI arcana application failed:', card?.id, err?.message || err);
+      return { success: false };
+    }
     
     if (appliedArcana.length > 0) {
       return { success: true, endsTurn: turnEndingCards.includes(card.id) };
@@ -2876,7 +3080,20 @@ export class GameManager {
     // Expire shields: a shield set by color C should persist through the opponent's
     // turn (so C's piece is protected) and clear once it's C's turn again.
     // currentTurn is already computed above.
-    gameState.pawnShields[currentTurn] = null;
+    // Also decrement turns counter if present (for new turn-based shields)
+    for (const c of ['w', 'b']) {
+      if (gameState.pawnShields[c]) {
+        if (gameState.pawnShields[c].turns !== undefined) {
+          gameState.pawnShields[c].turns--;
+          if (gameState.pawnShields[c].turns <= 0) {
+            gameState.pawnShields[c] = null;
+          }
+        } else if (currentTurn === c) {
+          // Legacy: clear when it becomes the owner's turn again
+          gameState.pawnShields[c] = null;
+        }
+      }
+    }
   }
 
   forfeitGame(socket, payload) {

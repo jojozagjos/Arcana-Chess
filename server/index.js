@@ -317,10 +317,10 @@ io.on('connection', (socket) => {
   });
 
   // Client notifies server when the card reveal overlay animation is finished
-  socket.on('arcanaRevealComplete', (payload, ack) => {
+  socket.on('arcanaRevealComplete', async (payload, ack) => {
     try {
       const playerId = payload?.playerId || socket.id;
-      gameManager.handleArcanaRevealComplete(playerId);
+      await gameManager.handleArcanaRevealComplete(playerId);
       safeAck(ack, { ok: true });
     } catch (err) {
       logger.error('arcanaRevealComplete error', err);
@@ -431,6 +431,26 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     logger.info('Socket disconnected', socket.id);
     const cid = socket.data?.clientId;
+
+    const activeGameId = gameManager.socketToGame.get(socket.id);
+    const activeGame = activeGameId ? gameManager.games.get(activeGameId) : null;
+    const isActiveMatch = !!activeGame && activeGame.status === 'ongoing';
+
+    // Active matches end immediately on disconnect (tab close counts as forfeit).
+    if (isActiveMatch) {
+      if (cid) clientIdToSocketId.delete(cid);
+      const result = lobbyManager.leaveLobby(socket.id);
+      if (result) {
+        if (result.closed) {
+          io.to(result.lobbyId).emit('lobbyClosed', { reason: 'Player disconnected' });
+        } else if (result.lobby) {
+          io.to(result.lobby.id).emit('lobbyUpdated', result.lobby);
+        }
+      }
+      gameManager.handleDisconnect(socket.id);
+      return;
+    }
+
     if (!cid) {
       const result = lobbyManager.leaveLobby(socket.id);
       if (result) {

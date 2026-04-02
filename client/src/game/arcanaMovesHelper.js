@@ -235,31 +235,17 @@ function generateSharpshooterMoves(chess, square, color) {
       const targetPiece = chess.get(targetSquare);
       
       if (!targetPiece) {
-        // Empty square - add normal move only if no blockers before this
-        // Check if path is clear
-        let pathClear = true;
-        for (let checkStep = 1; checkStep < step; checkStep++) {
-          const checkFile = file + (df * checkStep);
-          const checkRank = rank + (dr * checkStep);
-          const checkSquare = String.fromCharCode(97 + checkFile) + checkRank;
-          if (chess.get(checkSquare)) {
-            pathClear = false;
-            break;
-          }
-        }
-        
-        if (pathClear) {
-          moves.push({
-            from: square,
-            to: targetSquare,
-            piece: 'b',
-            color,
-            flags: 'n',
-            san: `B${targetSquare}`,
-          });
-        }
+        // Empty square - WITH SHARPSHOOTER, add move regardless of blockers (pierce through!)
+        moves.push({
+          from: square,
+          to: targetSquare,
+          piece: 'b',
+          color,
+          flags: 'n',
+          san: `B${targetSquare}`,
+        });
       } else if (targetPiece.color !== color) {
-        // Enemy piece - can ALWAYS capture (ignoring blockers)
+        // Enemy piece - CAN capture (sharpshooter ignores blockers)
         moves.push({
           from: square,
           to: targetSquare,
@@ -269,12 +255,10 @@ function generateSharpshooterMoves(chess, square, color) {
           flags: 'c',
           san: `Bx${targetSquare}`,
         });
-        // Continue to find more enemies on this diagonal (all are capturable)
+        // Continue to find more enemies on this diagonal (all are capturable through blockers)
       } else {
-        // Friendly piece - can't move here or beyond in normal direction
-        // But can still capture enemies beyond it
-        // So don't break, just don't add this square as a move
-        // Continue checking for enemies beyond
+        // Friendly piece blocks landing on this square but does not stop line-of-sight for sharpshooter.
+        continue;
       }
     }
   }

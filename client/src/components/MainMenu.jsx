@@ -152,29 +152,19 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
-                  <span>v1.3.7  Studio + Dev Tool Hardening</span>
-                  <span className="update-log-date">Mar 21, 2026</span>
+                  <span>v1.3.8  Multiplayer + Intro + Arcana Fixes</span>
+                  <span className="update-log-date">Apr 2, 2026</span>
                 </div>
                 <ul className="update-log-list">
-                  <li>Arcana Studio now persists local draft changes and restores them on reopen instead of dropping session progress.</li>
-                  <li>Arcana Studio now surfaces unsaved local changes and warns on page unload when edits are pending.</li>
-                  <li>Arcana Studio import now validates JSON payload shape before applying a card and surfaces cleaner import failures.</li>
-                  <li>Arcana Studio now supports deleting selected non-core tracks directly from timeline controls.</li>
-                  <li>Card Balancing Tool fixed reveal/highlight runtime state references that could throw during server-applied intel cards.</li>
-                  <li>Card Balancing Tool now tracks and clears transient timers consistently to prevent stale visual callbacks after reset/unmount.</li>
-                  <li>Threat Sight highlight handling in the balancing tool now matches the Quiet Thought rename.</li>
-                  <li>Map Fragments now ranks and shows the 3 strongest predicted enemy move targets instead of generic region picks.</li>
-                  <li>Arcana hand stack visuals were reworked for clearer duplicate-card readability.</li>
-                  <li>Peek Card selection now fits more cards in the overlay while preserving card identity feedback and reveal animation.</li>
-                  <li>Sanctuary-protected capture rejections are now suppressed from popup notifications to reduce UI noise.</li>
-                  <li>Quiet Thought was renamed to Threat Sight for clearer intent.</li>
-                  <li>Peek Card selection panel now gives clearer card identity and selected-card feedback before reveal.</li>
-                  <li>Sanctuary persistent visuals were overhauled with stronger halos, rotating rings, and elevated marker clarity.</li>
-                  <li>Cursed Square persistent visuals were overhauled with animated embers, stronger danger aura, and a turn counter marker.</li>
-                  <li>Camera cutscene control recovery was hardened to prevent camera controls staying locked on interrupted sequences.</li>
-                  <li>Temporal Echo now uses the mover's own last move pattern (not the opponent's last move).</li>
-                  <li>Necromancy revive logic now supports partial revives when no pawn is available.</li>
-                  <li>Mirror Image duration visuals include a blue turns-left counter and match 6-turn duration timing.</li>
+                  <li>Fixed a multiplayer turn-lock scenario where clients could get stuck on "Opponent move" after Royal Swap and similar state updates.</li>
+                  <li>Hardened client board sync with a safe FEN load path so valid arcana board states no longer stall render updates.</li>
+                  <li>Royal Swap now preserves pawn identity on back-rank swaps without desyncing board state between server and client.</li>
+                  <li>Necromancy and Astral Rebirth revive flow was corrected so revive targets resolve consistently and trigger the right visual response.</li>
+                  <li>Server revive payloads now include clearer square data for client-side post-cast highlighting and effect playback.</li>
+                  <li>Timed effect turn accounting was tightened so effect durations keep advancing with normal turn progression.</li>
+                  <li>Intro sequence title timing was stabilized so the game title does not appear too early or shift when continue text appears.</li>
+                  <li>Intro creator credit alignment and continue prompt presentation were polished for cleaner first-load readability.</li>
+                  <li>Main menu update log panel now has improved overflow scrolling behavior for long patch-note lists.</li>
                 </ul>
               </div>
 
@@ -183,7 +173,7 @@ export function MainMenu({
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
               <span className="update-log-pill-dot" />
-              <span>v1.3.7</span>
+              <span>v1.3.8</span>
               <span className="update-log-pill-label">What's new</span>
             </button>
           )}

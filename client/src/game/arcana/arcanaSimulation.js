@@ -1507,9 +1507,10 @@ export function canUseCard(arcanaId, gameState = {}, playerColor = 'w') {
   // Cards that check card usability based on game state
   switch (arcanaId) {
     case 'necromancy': {
-      // Can only use if there are captured pawns the current player can revive
-      const pawnsToRevive = (gameState.capturedByColor?.[playerColor] || []).filter(p => p.type === 'p');
-      return pawnsToRevive.length > 0;
+      // Server allows Necromancy as long as there is at least one captured piece.
+      // It revives a pawn if available and may also revive a non-pawn.
+      const captured = gameState.capturedByColor?.[playerColor] || [];
+      return captured.length > 0;
     }
     case 'astral_rebirth': {
       // Can only use if there are captured pieces the current player can revive

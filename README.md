@@ -47,7 +47,7 @@ npm run build
 The Vite build artifacts are placed for serving; see `server/public/` for production assets used by the server.
 
 ## Tests & Verification
-This repo contains a verification matrix and several manual test items under `VERIFICATION_MATRIX.md` and `FINAL_IMPLEMENTATION_REPORT.md`.
+This repo contains the main completion report in [COMPLETION_REPORT.md](COMPLETION_REPORT.md) and the test checklist in [md_files/TEST_CHECKLIST.md](md_files/TEST_CHECKLIST.md).
 
 Key runtime checks to perform locally:
 - VFX timing overlap test — ensure card animations do not overlap or double-trigger.
