@@ -26,6 +26,11 @@
   cursor: default;
 }
 
+.intro-text-overlay.overlay-exiting {
+  opacity: 0;
+  transition: opacity 0.45s ease-out;
+}
+
 .game-title {
   font-size: 4.8rem;
   color: #ffffff;
@@ -94,6 +99,12 @@
 .continue-pulse {
   /* Start pulsing after the fade-in completes (delay matches transition) */
   animation: continuePulse 2.2s ease-in-out 0.7s infinite;
+}
+
+.continue-exit {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.4s ease-out, transform 0.4s ease-out;
 }
 .fade-in {
   animation: fadeIn 1.5s ease-in-out forwards;

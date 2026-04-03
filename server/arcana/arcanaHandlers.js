@@ -638,6 +638,11 @@ function getPiecesDiagonalFromBishop(chess, bishopSquare, color) {
 
 function applyTimeFreeze({ gameState, moverColor }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  if (!gameState.activeEffects.timeFreezeArcanaLock) {
+    gameState.activeEffects.timeFreezeArcanaLock = { w: false, b: false };
+  }
+  // Casting Time Freeze resets any stale lock and primes a full-turn skip.
+  gameState.activeEffects.timeFreezeArcanaLock[opponentColor] = false;
   gameState.activeEffects.timeFrozen[opponentColor] = true;
   return { params: { frozenColor: opponentColor } };
 }

@@ -230,6 +230,47 @@ function replaceOwnBackRankPawnsInFen(fen, replacement = { white: 'N', black: 'n
   return parts.join(' ');
 }
 
+function getFenPieceAtSquare(fen, square) {
+  if (!fen || !square || square.length !== 2) return null;
+  const parts = fen.split(' ');
+  const placement = parts[0];
+  if (!placement) return null;
+  const rows = placement.split('/');
+  if (rows.length !== 8) return null;
+
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1], 10);
+  if (file < 0 || file > 7 || rank < 1 || rank > 8) return null;
+
+  const row = rows[8 - rank];
+  let col = 0;
+  for (const ch of row) {
+    if (/[1-8]/.test(ch)) {
+      col += parseInt(ch, 10);
+      continue;
+    }
+    if (col === file) {
+      return {
+        type: ch.toLowerCase(),
+        color: ch === ch.toLowerCase() ? 'b' : 'w',
+      };
+    }
+    col += 1;
+  }
+  return null;
+}
+
+function hasPawnLeftStartingSquareBefore(gameState, square, colorChar) {
+  const history = Array.isArray(gameState?.moveHistory) ? gameState.moveHistory : [];
+  for (const fen of history) {
+    const piece = getFenPieceAtSquare(fen, square);
+    if (!piece || piece.type !== 'p' || piece.color !== colorChar) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function safeLoadFen(chess, fen) {
   const safeFen = sanitizeEdgeRankPawnsInFen(fen);
   try {
@@ -457,6 +498,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       ironFortressShields: { w: [], b: [] },
       bishopsBlessing: { w: [], b: [] }, // [protected squares on diagonals]
       timeFrozen: { w: false, b: false },
+      timeFreezeArcanaLock: { w: false, b: false },
       cursedSquares: [],  // [{ square, turns, setter }]
       sanctuaries: [],    // [{ square, turns }]
       fogOfWar: { w: false, b: false },
@@ -791,6 +833,10 @@ export class GameManager {
         ])
       ),
       playerColors: gameState.playerColors,
+      capturedByColor: {
+        w: Array.isArray(gameState.capturedByColor?.w) ? [...gameState.capturedByColor.w] : [],
+        b: Array.isArray(gameState.capturedByColor?.b) ? [...gameState.capturedByColor.b] : [],
+      },
       lastMove: gameState.lastMove,
       pawnShields: gameState.pawnShields,
       activeEffects: gameState.activeEffects,
@@ -905,6 +951,10 @@ export class GameManager {
     const playerColorChar = playerColorName === WHITE ? WHITE_CHAR : BLACK_CHAR;
     if (playerColorChar && gameState.activeEffects?.timeFrozen?.[playerColorChar] && gameState.chess.turn() === playerColorChar) {
       gameState.activeEffects.timeFrozen[playerColorChar] = false;
+      if (!gameState.activeEffects.timeFreezeArcanaLock) {
+        gameState.activeEffects.timeFreezeArcanaLock = { w: false, b: false };
+      }
+      gameState.activeEffects.timeFreezeArcanaLock[playerColorChar] = true;
       this._swapTurn(gameState.chess, gameState);
       if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
       gameState.plyCount += 1;
@@ -974,6 +1024,9 @@ export class GameManager {
       const playerTurnChar = playerColor === 'white' ? 'w' : 'b';
       if (currentTurn !== playerTurnChar) {
         throw new Error('You can only draw a card on your turn');
+      }
+      if (gameState.activeEffects?.timeFreezeArcanaLock?.[playerTurnChar]) {
+        throw new Error('Time Freeze residue: make a board move before drawing Arcana');
       }
       // Disallow drawing after using an arcana card in the same turn
       if (gameState.arcanaUsedThisTurn && gameState.arcanaUsedThisTurn[socket.id]) {
@@ -1082,6 +1135,9 @@ export class GameManager {
       const playerTurnChar = playerColor === 'white' ? 'w' : 'b';
       if (currentTurn !== playerTurnChar) {
         throw new Error('You can only use arcana on your turn');
+      }
+      if (gameState.activeEffects?.timeFreezeArcanaLock?.[playerTurnChar]) {
+        throw new Error('Time Freeze residue: make a board move before using Arcana');
       }
 
       // Limit to 1 arcana card per turn
@@ -1252,6 +1308,15 @@ export class GameManager {
 
     if (!candidate) {
       throw new Error('Illegal move');
+    }
+
+    if (candidate.piece === 'p') {
+      const fromRank = parseInt(candidate.from[1], 10);
+      const toRank = parseInt(candidate.to[1], 10);
+      const isTwoSquareAdvance = Math.abs(toRank - fromRank) === 2;
+      if (isTwoSquareAdvance && hasPawnLeftStartingSquareBefore(gameState, candidate.from, moverColor)) {
+        throw new Error('Pawn can move two squares only on its first move');
+      }
     }
 
     // Castle Breaker: prevent castling if opponent used this card (turns > 0 means active)
@@ -1449,6 +1514,10 @@ export class GameManager {
     // Increment stable ply counter (used for draw cooldown)
     if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
     gameState.plyCount++;
+
+    if (gameState.activeEffects?.timeFreezeArcanaLock?.[moverColor]) {
+      gameState.activeEffects.timeFreezeArcanaLock[moverColor] = false;
+    }
 
     // Check if a king was captured (should end game immediately)
     const kingCaptured = result.captured === 'k';
@@ -2908,6 +2977,7 @@ export class GameManager {
         ironFortressShields: { w: [], b: [] },
         bishopsBlessing: { w: null, b: null },
         timeFrozen: { w: false, b: false },
+        timeFreezeArcanaLock: { w: false, b: false },
         cursedSquares: [],
         sanctuaries: [],
         fogOfWar: { w: false, b: false },

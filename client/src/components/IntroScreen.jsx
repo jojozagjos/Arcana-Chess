@@ -113,6 +113,7 @@ export function IntroScreen({ onContinue }) {
   const [textPhase, setTextPhase] = useState('none'); // 'none', 'creator', 'fading', 'title', 'continue'
   const [scenePhase, setScenePhase] = useState('falling'); // 'falling', 'wait', 'fadeout'
   const [opacity, setOpacity] = useState(1);
+  const [isExiting, setIsExiting] = useState(false);
   const fadeIntervalRef = useRef(null);
 
   useEffect(() => {
@@ -146,9 +147,10 @@ export function IntroScreen({ onContinue }) {
   }, []);
 
   const handleContinue = () => {
+    if (isExiting) return;
     // Start fade out
+    setIsExiting(true);
     setScenePhase('fadeout');
-    setTextPhase('none');
     
     // Fade opacity
     let currentOpacity = 1;
@@ -168,7 +170,7 @@ export function IntroScreen({ onContinue }) {
   };
 
   return (
-    <div className="intro-screen-3d" onClick={textPhase === 'continue' ? handleContinue : undefined}>
+    <div className="intro-screen-3d" onClick={textPhase === 'continue' && !isExiting ? handleContinue : undefined}>
       {/* 3D Canvas (pointer events disabled so clicks pass through to parent) */}
       <Canvas
         camera={{ position: [0, 0, 8], fov: 60 }}
@@ -187,7 +189,7 @@ export function IntroScreen({ onContinue }) {
       </Canvas>
 
       {/* Text Overlays */}
-      <div className={`intro-text-overlay ${textPhase === 'continue' ? 'overlay-active' : ''}`}>
+      <div className={`intro-text-overlay ${textPhase === 'continue' ? 'overlay-active' : ''} ${isExiting ? 'overlay-exiting' : ''}`}>
         {textPhase === 'creator' && (
           <div className="creator-text liquid-reveal creator-glow">Made by Joseph Slade</div>
         )}
@@ -202,7 +204,7 @@ export function IntroScreen({ onContinue }) {
           </div>
         )}
 
-        <div className={`continue-text ${textPhase === 'continue' ? 'continue-visible continue-pulse' : ''}`}>(Click to Continue)</div>
+        <div className={`continue-text ${textPhase === 'continue' ? 'continue-visible continue-pulse' : ''} ${isExiting ? 'continue-exit' : ''}`}>(Click to Continue)</div>
       </div>
     </div>
   );

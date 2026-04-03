@@ -85,7 +85,7 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
               roughness={0.35}
             />
           </mesh>
-          <mesh position={[0, 0.11, 0]}>
+          <mesh position={[0, 0, 0]}>
             <sphereGeometry args={[0.04, 12, 10]} />
             <meshStandardMaterial
               color="#f0d6ff"

@@ -64,7 +64,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Time Freeze',
     rarity: 'legendary',
     category: 'defense',
-    description: 'Skip opponent\'s next turn entirely.',
+    description: 'Skip opponent\'s next turn entirely. On their following turn, they must make a board move before using or drawing Arcana.',
     visual: { particles: true, animation: true, cutscene: false },
     soundKey: 'arcana:time_freeze',
   },
