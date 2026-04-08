@@ -2709,8 +2709,8 @@ export function SanctuaryEffect({ square, onComplete }) {
       <mesh position={[0, 0.058, 0]}>
         <boxGeometry args={[0.94, 0.012, 0.94]} />
         <meshStandardMaterial
-          color="#ffe28a"
-          emissive="#ffd55e"
+          color="#d1a100"
+          emissive="#b8860b"
           emissiveIntensity={3.4 * live * pulse}
           metalness={0.05}
           roughness={0.5}
@@ -2793,14 +2793,12 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
       <mesh ref={pulseRef} position={[0, 0.038, 0]}>
         <boxGeometry args={[0.92, 0.01, 0.92]} />
         <meshStandardMaterial
-          emissive="#9b7700"
+          emissive="#8a5f00"
           emissiveIntensity={3.6}
-          color="#f1ee17"
+          color="#c58f00"
           metalness={0.05}
           roughness={0.5}
-          transparent
           depthWrite={false}
-          opacity={0.34 * fadeOpacity}
         />
       </mesh>
 
@@ -2884,9 +2882,7 @@ export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
           emissiveIntensity={3.2 * glow}
           metalness={0.02}
           roughness={0.7}
-          transparent
           depthWrite={false}
-          opacity={0.72 * glow}
         />
       </mesh>
 
@@ -2898,9 +2894,7 @@ export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
           emissiveIntensity={2.7 * glow}
           metalness={0.02}
           roughness={0.72}
-          transparent
           depthWrite={false}
-          opacity={0.2 * glow}
         />
       </mesh>
 
@@ -2967,14 +2961,12 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
       <mesh ref={pulseRef} position={[0, 0.038, 0]}>
         <boxGeometry args={[0.92, 0.01, 0.92]} />
         <meshStandardMaterial
-          color="#641919"
-          emissive="#8f2376"
+          color="#5a1414"
+          emissive="#8f1f1f"
           emissiveIntensity={2.6}
           metalness={0.02}
           roughness={0.72}
-          transparent
           depthWrite={false}
-          opacity={0.32 * fadeOpacity}
         />
       </mesh>
 
@@ -2988,6 +2980,132 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
             transparent
             opacity={0.7}
             depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+// Legendary fallback effect - gold crown burst used when a card has no dedicated visual component
+export function LegendaryEffect({ square, onComplete }) {
+  const focusSquare = square || 'd4';
+  const [x, , z] = squareToPosition(focusSquare);
+  const [progress, setProgress] = useState(0);
+  const crownRef = useRef();
+  const sparkRefs = useRef([]);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 650);
+
+  const sparks = useMemo(() => {
+    return [...Array(18)].map((_, i) => ({
+      angle: (i / 18) * Math.PI * 2,
+      radius: 0.45 + (i % 4) * 0.08,
+      height: 0.2 + (i % 3) * 0.12,
+      phase: Math.random() * Math.PI * 2,
+    }));
+  }, []);
+
+  useFrame((state, delta) => {
+    setProgress((prev) => {
+      const next = prev + delta * 0.9;
+      if (next >= 1 && !finishing) {
+        triggerFinish();
+        return 1;
+      }
+      return next;
+    });
+
+    if (crownRef.current) {
+      crownRef.current.rotation.y += delta * 0.8;
+      crownRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.2) * 0.05;
+    }
+
+    sparkRefs.current.forEach((ref, i) => {
+      if (!ref) return;
+      const spark = sparks[i];
+      const t = state.clock.elapsedTime * 1.6 + spark.phase + progress * 2;
+      const orbit = spark.radius + Math.sin(t * 2) * 0.08;
+      ref.position.set(
+        Math.cos(spark.angle + t) * orbit,
+        spark.height + Math.sin(t * 1.7) * 0.05,
+        Math.sin(spark.angle + t) * orbit,
+      );
+    });
+  });
+
+  if (completed) return null;
+
+  const live = (1 - finishT) * (0.45 + progress * 0.55);
+
+  return (
+    <group ref={crownRef} position={[x, 0, z]}>
+      <mesh position={[0, 0.48, 0]}>
+        <sphereGeometry args={[0.35 + progress * 0.22, 24, 24]} />
+        <meshStandardMaterial
+          emissive="#ffd54f"
+          emissiveIntensity={4.4 * live}
+          color="#fff4c1"
+          transparent
+          depthWrite={false}
+          opacity={0.38 * live}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[1 + progress * 0.18, 1 + progress * 0.18, 1]}>
+        <ringGeometry args={[0.36, 0.84, 40]} />
+        <meshStandardMaterial
+          emissive="#ffb300"
+          emissiveIntensity={3.2 * live}
+          color="#ffe082"
+          transparent
+          depthWrite={false}
+          opacity={0.55 * live}
+        />
+      </mesh>
+
+      <mesh position={[0, 0.92, 0]}>
+        <coneGeometry args={[0.18 + progress * 0.04, 0.5 + progress * 0.08, 6]} />
+        <meshStandardMaterial
+          emissive="#ffecb3"
+          emissiveIntensity={4.2 * live}
+          color="#ffc107"
+          transparent
+          depthWrite={false}
+          opacity={0.92 * live}
+        />
+      </mesh>
+
+      {[...Array(3)].map((_, i) => (
+        <mesh
+          key={`crown-prong-${i}`}
+          position={[
+            Math.cos((i / 3) * Math.PI * 2) * 0.22,
+            0.72 + (i % 2) * 0.12,
+            Math.sin((i / 3) * Math.PI * 2) * 0.22,
+          ]}
+        >
+          <boxGeometry args={[0.05, 0.22, 0.05]} />
+          <meshStandardMaterial
+            emissive="#fff8e1"
+            emissiveIntensity={3.5 * live}
+            color="#ffd740"
+            transparent
+            depthWrite={false}
+            opacity={0.95 * live}
+          />
+        </mesh>
+      ))}
+
+      {sparks.map((_, i) => (
+        <mesh key={`legendary-spark-${i}`} ref={(ref) => { sparkRefs.current[i] = ref; }}>
+          <sphereGeometry args={[0.035 + (i % 3) * 0.008, 8, 8]} />
+          <meshStandardMaterial
+            emissive={i % 2 === 0 ? '#ffd54f' : '#ffecb3'}
+            emissiveIntensity={4.2 * live}
+            color={i % 2 === 0 ? '#fff3c4' : '#fff8e1'}
+            transparent
+            depthWrite={false}
+            opacity={0.85 * live}
           />
         </mesh>
       ))}

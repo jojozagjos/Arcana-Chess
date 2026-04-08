@@ -18,7 +18,6 @@ const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import CutsceneOverlay from './CutsceneOverlay.jsx';
 import { getCutsceneCard } from '../game/arcana/cutsceneDefinitions.js';
-import { getStoredArcanaStudioCard } from '../game/arcana/studio/arcanaStudioSchema.js';
 import { ArcanaStudioRuntimeHost, ArcanaStudioScreenOverlay } from '../game/arcana/studio/ArcanaStudioRuntimeHost.jsx';
 import { createArcanaStudioRuntimeSession, normalizeArcanaStudioEventActions, scheduleArcanaStudioAudio, scheduleArcanaStudioEvents } from '../game/arcana/studio/arcanaStudioRuntime.js';
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
@@ -140,6 +139,7 @@ function safeLoadFen(chess, fen) {
 }
 
 export function GameScene({ gameState, initialReplayPayload, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
+  const MAX_STUDIO_RUNTIME_MS = 14000;
   const [showMenu, setShowMenu] = useState(false);
   // Panels are always visible in the in-game menu (no collapse)
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -234,6 +234,25 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }, 10000);
     return () => clearTimeout(watchdog);
   }, [cutsceneTarget, clearCutscene]);
+
+  // Safety watchdog: ensure Studio runtime sessions cannot lock controls indefinitely.
+  useEffect(() => {
+    if (!studioRuntimeSession) return;
+    const startedAt = Number(studioRuntimeSession.startedAt || 0);
+    const now = performance.now();
+    const elapsed = startedAt > 0 ? Math.max(0, now - startedAt) : 0;
+    const intendedDuration = Math.max(0, Number(studioRuntimeSession.durationMs || 0));
+    const watchdogWindow = Math.min(MAX_STUDIO_RUNTIME_MS + 3000, Math.max(2500, intendedDuration + 2200));
+    const remaining = Math.max(1200, watchdogWindow - elapsed);
+
+    const timer = setTimeout(() => {
+      clearCutscene();
+      setStudioRuntimeSession(null);
+      setIsCardAnimationPlaying(false);
+    }, remaining);
+
+    return () => clearTimeout(timer);
+  }, [studioRuntimeSession, clearCutscene]);
 
   const chess = useMemo(() => {
     if (!gameState?.fen) return null;
@@ -999,18 +1018,29 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   const playStudioArcanaRuntime = useCallback((arcanaEvent, options = {}) => {
     const eventCard = getCutsceneCard(arcanaEvent.arcanaId);
-    const hasStoredOverride = Boolean(getStoredArcanaStudioCard(arcanaEvent.arcanaId));
+    const cameraTrackCount = Array.isArray(eventCard?.tracks?.camera) ? eventCard.tracks.camera.length : 0;
+    const cameraKeys = (eventCard?.tracks?.camera || []).reduce((acc, track) => acc + ((track?.keys || []).length || 0), 0);
+    const hasPlayableStudioTimeline = Boolean(eventCard && (
+      cameraKeys > Math.max(1, cameraTrackCount)
+      || (eventCard.tracks?.events || []).some((track) => (track?.keys || []).length > 0)
+      || (eventCard.tracks?.overlays || []).some((track) => (track?.keys || []).length > 0)
+      || (eventCard.tracks?.particles || []).some((track) => (track?.keys || []).length > 0)
+      || (eventCard.tracks?.sounds || []).some((track) => (track?.keys || []).some((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0))
+    ));
+    const usingStudioOverride = Boolean(eventCard?.meta?.source === 'arcana-studio' && hasPlayableStudioTimeline);
     let visualClearTimeout = 1500;
     let syncDurationMs = 0;
     let beatTimingsMs = [];
 
     if (eventCard) {
       const session = createArcanaStudioRuntimeSession(eventCard, arcanaEvent.params || {});
-      const durationMs = Math.max(0, session.durationMs || 0);
+      const durationMs = Math.min(MAX_STUDIO_RUNTIME_MS, Math.max(0, session.durationMs || 0));
       syncDurationMs = durationMs;
       visualClearTimeout = Math.max(visualClearTimeout, durationMs + 220);
-      beatTimingsMs = (eventCard.tracks?.camera?.[0]?.keys || []).map((key) => key.timeMs || 0);
-      setStudioRuntimeSession(session);
+      beatTimingsMs = (eventCard.tracks?.camera?.[0]?.keys || [])
+        .map((key) => key.timeMs || 0)
+        .filter((timeMs) => Number.isFinite(timeMs) && timeMs >= 0 && timeMs <= durationMs);
+      setStudioRuntimeSession({ ...session, durationMs });
 
       scheduleArcanaStudioAudio(eventCard, {
         soundManager,
@@ -1018,7 +1048,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       });
 
       scheduleArcanaStudioEvents(eventCard, {
-        eventParams: arcanaEvent.params || {},
+        eventParams: {
+          ...(arcanaEvent.params || {}),
+          cardId: arcanaEvent.arcanaId,
+        },
         registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
         onEvent: (eventKey) => {
           const actions = normalizeArcanaStudioEventActions(eventKey);
@@ -1081,12 +1114,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (syncDurationMs > 0) syncedParams.syncDurationMs = syncDurationMs;
     if (beatTimingsMs.length) syncedParams.beatTimingsMs = beatTimingsMs;
 
-    if (!hasStoredOverride) {
+    if (!usingStudioOverride) {
       setActiveVisualArcana({ ...arcanaEvent, params: syncedParams });
     }
 
     const t = setTimeout(() => {
-      if (!hasStoredOverride) setActiveVisualArcana(null);
+      if (!usingStudioOverride) setActiveVisualArcana(null);
       setStudioRuntimeSession((current) => (current?.id === options.sessionId || !options.sessionId ? null : current));
       setIsCardAnimationPlaying(false);
     }, visualClearTimeout);
@@ -1284,14 +1317,21 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       } catch (e) {
         console.warn('Failed to play arcana trigger sound', e);
       }
-      
-      // Client-side highlights for utility cards - ONLY show if YOU used the card
+
       const { arcanaId, params, owner } = payload || {};
-      if (!arcanaId) return;
-      
-      // Only process client-side highlights if this player is the owner of the effect
+
+      const isCutsceneCard = Boolean(payload?.visual?.cutscene);
+      const visualKey = `${arcanaId}:${owner || 'unknown'}`;
+
+      if (isCutsceneCard) {
+        lastProcessedArcanaAtRef.current = payload.at || Date.now();
+        lastActiveVisualKeyRef.current = visualKey;
+        playStudioArcanaRuntime({ ...payload, params: params || {} });
+      }
+
+      // Client-side highlights for utility cards - ONLY show if YOU used the card
       const isMyCard = owner === socket?.id;
-      if (!isMyCard) return; // Don't show opponent's card highlights
+      if (!isMyCard && !isCutsceneCard) return; // Don't show opponent's private card highlights
       
       switch (arcanaId) {
         case 'necromancy': {
@@ -1751,7 +1791,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         (res) => {
           if (!res || !res.ok) {
             const errMsg = res?.error || 'Move rejected';
-            if (typeof errMsg === 'string' && errMsg.toLowerCase().includes('sanctuary protects')) {
+            const errText = String(errMsg).toLowerCase();
+            if (errText.includes('castle breaker') || errText.includes('disabled your castling')) {
+              setPendingMoveError("You can't castle while Castle Breaker is active.");
+            } else if (errText.includes('sanctuary protects')) {
               setPendingMoveError('');
             } else {
               setPendingMoveError(errMsg);
@@ -1821,7 +1864,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       (res) => {
         if (!res || !res.ok) {
           const errMsg = res?.error || 'Move rejected';
-          if (typeof errMsg === 'string' && errMsg.toLowerCase().includes('sanctuary protects')) {
+            const errText = String(errMsg).toLowerCase();
+          if (errText.includes('castle breaker') || errText.includes('disabled your castling')) {
+              setPendingMoveError("You can't castle while Castle Breaker is active.");
+            } else if (errText.includes('sanctuary protects')) {
             setPendingMoveError('');
           } else {
             setPendingMoveError(errMsg);
@@ -2563,7 +2609,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
               if (!canUseCard(arcanaId, gameStateForUsability, myColorCode)) {
                 let errorMsg = `Cannot use this card`;
                 if (arcanaId === 'necromancy') {
-                  errorMsg = 'No captured pieces to revive';
+                  errorMsg = 'No captured pawns to revive';
                 } else if (arcanaId === 'astral_rebirth') {
                   errorMsg = 'No captured pieces to revive';
                 }

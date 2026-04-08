@@ -261,6 +261,10 @@ function getFenPieceAtSquare(fen, square) {
 }
 
 function hasPawnLeftStartingSquareBefore(gameState, square, colorChar) {
+  if (gameState?.pawnFirstMoveConsumed?.[colorChar]?.[square]) {
+    return true;
+  }
+
   const history = Array.isArray(gameState?.moveHistory) ? gameState.moveHistory : [];
   for (const fen of history) {
     const piece = getFenPieceAtSquare(fen, square);
@@ -269,6 +273,19 @@ function hasPawnLeftStartingSquareBefore(gameState, square, colorChar) {
     }
   }
   return false;
+}
+
+function isPawnStartingSquare(square, colorChar) {
+  if (!square || typeof square !== 'string' || square.length !== 2) return false;
+  const rank = square[1];
+  return colorChar === 'w' ? rank === '2' : rank === '7';
+}
+
+function markPawnStartSquareConsumed(gameState, square, colorChar) {
+  if (!isPawnStartingSquare(square, colorChar)) return;
+  gameState.pawnFirstMoveConsumed ||= { w: {}, b: {} };
+  gameState.pawnFirstMoveConsumed[colorChar] ||= {};
+  gameState.pawnFirstMoveConsumed[colorChar][square] = true;
 }
 
 function safeLoadFen(chess, fen) {
@@ -490,6 +507,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
     lastMoveByColor: { w: null, b: null },
     pawnShields: { w: null, b: null },        // active shield per color
     capturedByColor: { w: [], b: [] },        // captured pieces keyed by their color
+    pawnFirstMoveConsumed: { w: {}, b: {} },  // start squares that have already lost first-move status
     lastDrawTurn: lastDrawTurn,  // Track turn number when each player last drew
     plyCount: 0,  // Stable ply counter (chess.history().length resets on chess.load())
     // Extended state for Arcana effects
@@ -1739,6 +1757,10 @@ export class GameManager {
     gameState.lastMoveByColor = gameState.lastMoveByColor || { w: null, b: null };
     gameState.lastMoveByColor[result.color] = { ...gameState.lastMove };
 
+    if (result.piece === 'p') {
+      markPawnStartSquareConsumed(gameState, result.from, result.color);
+    }
+
     // Track captured piece by its color
     if (result.captured) {
       const capturedColor = result.color === 'w' ? 'b' : 'w';
@@ -2451,8 +2473,20 @@ export class GameManager {
 
     // Avoid capturing shielded pieces if possible
     let candidateMoves = allMoves;
+
+    // Enforce first-move-only two-square pawn rule even when a pawn returned
+    // to its start square via card effects (e.g., Royal Swap).
+    candidateMoves = candidateMoves.filter((m) => {
+      if (m.piece !== 'p') return true;
+      const fromRank = parseInt(m.from[1], 10);
+      const toRank = parseInt(m.to[1], 10);
+      const isTwoSquareAdvance = Math.abs(toRank - fromRank) === 2;
+      if (!isTwoSquareAdvance) return true;
+      return !hasPawnLeftStartingSquareBefore(gameState, m.from, moverColor);
+    });
+
     if (shield) {
-      const filtered = allMoves.filter((m) => {
+      const filtered = candidateMoves.filter((m) => {
         if (!m.captured) return true;
         // For en passant, the captured pawn is on a different square
         let capturedSquare = m.to;
@@ -2615,6 +2649,10 @@ export class GameManager {
     };
     gameState.lastMoveByColor = gameState.lastMoveByColor || { w: null, b: null };
     gameState.lastMoveByColor[result.color] = { ...gameState.lastMove };
+
+    if (result.piece === 'p') {
+      markPawnStartSquareConsumed(gameState, result.from, result.color);
+    }
 
     if (result.captured) {
       const capturedColor = result.color === 'w' ? 'b' : 'w';

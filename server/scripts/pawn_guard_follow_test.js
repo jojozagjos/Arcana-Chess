@@ -1,7 +1,25 @@
 import { io } from 'socket.io-client';
 
 const SERVER = process.env.SERVER_URL || 'http://localhost:4000';
-function wait(ms){return new Promise(r=>setTimeout(r,ms));}
+
+function waitForGameUpdate(sockets, timeout = 4000) {
+  return new Promise((resolve, reject) => {
+    const timers = [];
+    const cleanup = () => {
+      sockets.forEach((sock) => sock.off('gameUpdated', onUpdate));
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+    const onUpdate = (state) => {
+      cleanup();
+      resolve(state);
+    };
+    sockets.forEach((sock) => sock.once('gameUpdated', onUpdate));
+    timers.push(setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for gameUpdated'));
+    }, timeout));
+  });
+}
 
 async function run(){
   const a = io(SERVER, { reconnection: false });
@@ -27,18 +45,18 @@ async function run(){
 
   // quick sequence to ascension
   await action(whiteSock, { move: { from: 'e2', to: 'e4' }});
-  await wait(50);
+  await waitForGameUpdate([a, b]).catch(() => {});
   await action(blackSock, { move: { from: 'd7', to: 'd5' }});
-  await wait(50);
+  await waitForGameUpdate([a, b]).catch(() => {});
   await action(whiteSock, { move: { from: 'e4', to: 'd5' }});
-  await wait(200);
+  await waitForGameUpdate([a, b]).catch(() => {});
 
   // Ensure white has pawn_guard in hand (it should after ascension draws may vary) - draw until it has one
   let state = latest.a || latest.b || gameState;
   let attempts = 0;
   while((!(state.arcanaByPlayer && state.arcanaByPlayer[whiteSock.id] && state.arcanaByPlayer[whiteSock.id].some(c=>c.id==='pawn_guard')) ) && attempts < 5){
     await action(whiteSock, { actionType: 'drawArcana' });
-    await wait(200);
+    await waitForGameUpdate([a, b]).catch(() => {});
     state = latest.a || latest.b || state;
     attempts++;
   }
@@ -55,14 +73,14 @@ async function run(){
   console.log('using pawn_guard on', target);
   const useRes = await action(whiteSock, { actionType: 'useArcana', arcanaUsed: [{ arcanaId: 'pawn_guard', params: { targetSquare: target } }] });
   console.log('useRes', useRes);
-  await wait(200);
+  await waitForGameUpdate([a, b]).catch(() => {});
   state = latest.a || latest.b || state;
   console.log('pawnShields after use:', state.pawnShields);
 
   // Now move the guarding pawn (d5 -> d6)
   const moveRes = await action(whiteSock, { move: { from: 'd5', to: 'd6' } });
   console.log('moveRes', moveRes.ok ? 'ok' : moveRes);
-  await wait(200);
+  await waitForGameUpdate([a, b]).catch(() => {});
   state = latest.a || latest.b || state;
   console.log('pawnShields after pawn moved:', state.pawnShields);
 

@@ -4,11 +4,13 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
-import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
+import { createDefaultActiveEffectsState } from '../game/activeEffectsState.js';
+import { getArcanaDefinition, listSortedArcanaDefinitions } from '../game/arcanaCatalog.js';
+import { getArcanaTargetLabel } from '../../../shared/arcana/arcanaContracts.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
-import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget, getValidTargetSquares, getTargetTypeForArcana, canUseCard } from '../game/arcana/arcanaSimulation.js';
+import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget, getValidTargetSquares, canUseCard } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
@@ -84,39 +86,7 @@ export function CardBalancingToolV2({ onBack }) {
   const [playerColor, setPlayerColor] = useState('white');
   const [effectsModule, setEffectsModule] = useState(null);
   const [logMessages, setLogMessages] = useState([]);
-  // Initialize activeEffects with complete structure matching server gameState
-  const [activeEffects, setActiveEffects] = useState({
-    ironFortress: { w: false, b: false },
-    ironFortressShields: { w: [], b: [] },
-    bishopsBlessing: { w: [], b: [] },
-    timeFrozen: { w: false, b: false },
-    cursedSquares: [],
-    sanctuaries: [],
-    fogOfWar: { w: false, b: false },
-    vision: { w: null, b: null },
-    doubleStrike: { w: false, b: false },
-    doubleStrikeActive: null,
-    berserkerRageActive: null,
-    poisonTouch: { w: false, b: false },
-    poisonedPieces: [],
-    squireSupport: [],
-    focusFire: { w: false, b: false },
-    queensGambit: { w: 0, b: 0 },
-    queensGambitUsed: { w: false, b: false },
-    divineIntervention: { w: false, b: false },
-    mirrorImages: [],
-    spectralMarch: { w: false, b: false },
-    phantomStep: { w: false, b: false },
-    pawnRush: { w: false, b: false },
-    sharpshooter: { w: false, b: false },
-    knightOfStorms: { w: null, b: null },
-    berserkerRage: { w: null, b: null },
-    mindControlled: [],
-    enPassantMaster: { w: false, b: false },
-    temporalEcho: null,
-    chainLightning: { w: false, b: false },
-    castleBroken: { w: 0, b: 0 },
-  });
+  const [activeEffects, setActiveEffects] = useState(() => createDefaultActiveEffectsState());
   const [pawnShields, setPawnShields] = useState({ w: null, b: null });
   const [shieldTurnCounter, setShieldTurnCounter] = useState({ w: 0, b: 0 });
   const [lastMove, setLastMove] = useState(null);
@@ -134,6 +104,7 @@ export function CardBalancingToolV2({ onBack }) {
   const { cutsceneTarget, triggerCutscene: _localTriggerCutscene, clearCutscene } = useCameraCutscene();
   const overlayRef = useRef();
   const controlsRef = useRef();
+  const cutsceneCleanupRef = useRef(null);
   
   // Move history for testing
   const [moveHistory, setMoveHistory] = useState([]);
@@ -193,6 +164,25 @@ export function CardBalancingToolV2({ onBack }) {
     timeoutsRef.current = [];
   };
 
+  const clearOrchestratedCutscene = () => {
+    if (typeof cutsceneCleanupRef.current === 'function') {
+      try {
+        cutsceneCleanupRef.current();
+      } catch {
+        // Ignore cleanup errors from stale orchestrator callbacks.
+      }
+    }
+    cutsceneCleanupRef.current = null;
+  };
+
+  const clearPreviewState = () => {
+    clearOrchestratedCutscene();
+    setCutsceneActive(false);
+    setCameraTarget(null);
+    setGrayscaleIntensity(0);
+    clearCutscene();
+  };
+
   const cinematicMotionBySquare = useMemo(() => {
     if (!activeVisualArcana?.arcanaId) return new Map();
     const params = activeVisualArcana.params || {};
@@ -227,18 +217,10 @@ export function CardBalancingToolV2({ onBack }) {
   }, [activeVisualArcana]);
 
   const selectedCard = useMemo(() => {
-    return ARCANA_DEFINITIONS.find(c => c.id === selectedCardId);
+    return getArcanaDefinition(selectedCardId);
   }, [selectedCardId]);
 
-  // Sort cards by rarity (Common -> Legendary -> ???)
-  const sortedCards = useMemo(() => {
-    const rarityOrder = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, '???': 6 };
-    return [...ARCANA_DEFINITIONS].sort((a, b) => {
-      const orderDiff = rarityOrder[a.rarity] - rarityOrder[b.rarity];
-      if (orderDiff !== 0) return orderDiff;
-      return a.name.localeCompare(b.name);
-    });
-  }, []);
+  const sortedCards = useMemo(() => listSortedArcanaDefinitions(), []);
 
   useEffect(() => {
     try {
@@ -272,44 +254,14 @@ export function CardBalancingToolV2({ onBack }) {
 
   const resetTest = () => {
     clearManagedTimeouts();
+    clearPreviewState();
     setSelectedSquare(null);
     setTargetSquare(null);
     setTargetingMode(false);
     setCustomParams({});
     setPawnShields({ w: null, b: null });
     setShieldTurnCounter({ w: 0, b: 0 });
-    setActiveEffects({
-      ironFortress: { w: false, b: false },
-      ironFortressShields: { w: [], b: [] },
-      bishopsBlessing: { w: [], b: [] },
-      timeFrozen: { w: false, b: false },
-      cursedSquares: [],
-      sanctuaries: [],
-      fogOfWar: { w: false, b: false },
-      vision: { w: null, b: null },
-      doubleStrike: { w: false, b: false },
-      doubleStrikeActive: null,
-      berserkerRageActive: null,
-      poisonTouch: { w: false, b: false },
-      poisonedPieces: [],
-      squireSupport: [],
-      focusFire: { w: false, b: false },
-      queensGambit: { w: 0, b: 0 },
-      queensGambitUsed: { w: false, b: false },
-      divineIntervention: { w: false, b: false },
-      mirrorImages: [],
-      spectralMarch: { w: false, b: false },
-      phantomStep: { w: false, b: false },
-      pawnRush: { w: false, b: false },
-      sharpshooter: { w: false, b: false },
-      knightOfStorms: { w: null, b: null },
-      berserkerRage: { w: null, b: null },
-      mindControlled: [],
-      enPassantMaster: { w: false, b: false },
-      temporalEcho: null,
-      chainLightning: { w: false, b: false },
-      castleBroken: { w: 0, b: 0 },
-    });
+    setActiveEffects(createDefaultActiveEffectsState());
     setVisualEffects([]);
     setMoveHistory([]);
     setLastMove(null);
@@ -330,6 +282,7 @@ export function CardBalancingToolV2({ onBack }) {
 
   useEffect(() => () => {
     clearManagedTimeouts();
+    clearPreviewState();
   }, []);
 
   // Server validation: creates a test game, applies arcana, verifies behavior
@@ -364,7 +317,12 @@ export function CardBalancingToolV2({ onBack }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const json = await resp.json();
+      let json;
+      try {
+        json = await resp.json();
+      } catch {
+        json = { ok: false, error: `Invalid server response (HTTP ${resp.status})` };
+      }
       setServerTestActive(false);
 
       if (json.ok) {
@@ -436,21 +394,7 @@ export function CardBalancingToolV2({ onBack }) {
       setTargetingMode(true);
       setTargetSquare(null);
       
-      const targetType = getTargetTypeForArcana(selectedCard.id);
-      const targetDescription = {
-        'pawn': 'pawn',
-        'piece': 'piece',
-        'pieceNoKing': 'piece (not king)',
-        'pieceNoQueenKing': 'piece (not queen or king)',
-        'pieceWithMoves': 'piece that has legal moves',
-        'pieceWithPushTarget': 'piece that can be pushed',
-        'knight': 'knight',
-        'bishop': 'bishop',
-        'enemyPiece': 'enemy piece',
-        'enemyRook': 'enemy rook',
-        'poisoned': 'poisoned piece',
-        'square': 'square'
-      }[targetType] || 'target';
+      const targetDescription = getArcanaTargetLabel(selectedCard.id) || 'target';
       
       addLog(`Select a ${targetDescription} for ${selectedCard.name} (${validSquares.length} valid targets highlighted)`, 'info');
     } else {
@@ -482,6 +426,7 @@ export function CardBalancingToolV2({ onBack }) {
     setServerTestActive(true);
     addLog(`Applying ${card.name} via server...`, 'info');
 
+    let timeoutId = null;
     try {
       const payload = {
         cardId: card.id,
@@ -496,7 +441,7 @@ export function CardBalancingToolV2({ onBack }) {
 
       // Create abort controller for timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), SERVER_TEST_TIMEOUT_MS);
+      timeoutId = setTimeout(() => controller.abort(), SERVER_TEST_TIMEOUT_MS);
 
       const resp = await fetch('/api/test-card', {
         method: 'POST',
@@ -504,9 +449,12 @@ export function CardBalancingToolV2({ onBack }) {
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
-      clearTimeout(timeoutId);
-      const json = await resp.json();
-      setServerTestActive(false);
+      let json;
+      try {
+        json = await resp.json();
+      } catch {
+        json = { ok: false, error: `Invalid server response (HTTP ${resp.status})` };
+      }
 
       if (json.ok) {
         addLog(`✓ ${card.name} applied successfully (server)`, 'success');
@@ -583,6 +531,9 @@ export function CardBalancingToolV2({ onBack }) {
       
       // Fall back to client-side simulation
       applyCardEffect(card, params, colorChar);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      setServerTestActive(false);
     }
   };
 
@@ -850,6 +801,8 @@ export function CardBalancingToolV2({ onBack }) {
 
   // Trigger an orchestrated cutscene wired to the local CameraCutscene and CutsceneOverlay
   const triggerCardCutscene = (arcanaId, targetSquare, eventParams = null) => {
+    clearManagedTimeouts();
+    clearPreviewState();
     setCutsceneActive(true);
     // Create a cameraRef object that exposes triggerCutscene (from useCameraCutscene)
     const cameraRef = { current: { triggerCutscene: _localTriggerCutscene } };
@@ -862,9 +815,11 @@ export function CardBalancingToolV2({ onBack }) {
       eventParams,
       onVFXTrigger: handleVFXTrigger,
       onComplete: () => {
-        setCutsceneActive(false);
+        cutsceneCleanupRef.current = null;
+        clearPreviewState();
       }
     });
+    cutsceneCleanupRef.current = typeof cleanup === 'function' ? cleanup : null;
     return cleanup;
   };
 
@@ -877,21 +832,7 @@ export function CardBalancingToolV2({ onBack }) {
     if (targetingMode && selectedCard) {
       // Check if this is a valid target
       if (!validTargetSquares.includes(square)) {
-        const targetType = getTargetTypeForArcana(selectedCard.id);
-        const targetDescription = {
-          'pawn': 'one of your pawns',
-          'piece': 'one of your pieces',
-          'pieceNoKing': 'one of your pieces (not king)',
-          'pieceNoQueenKing': 'one of your pieces (not queen or king)',
-          'pieceWithMoves': 'one of your pieces that has legal moves',
-          'pieceWithPushTarget': 'one of your pieces that can be pushed',
-          'knight': 'one of your knights',
-          'bishop': 'one of your bishops',
-          'enemyPiece': 'an enemy piece',
-          'enemyRook': 'an enemy rook',
-          'poisoned': 'a poisoned piece',
-          'square': 'any square'
-        }[targetType] || 'a valid target';
+        const targetDescription = getArcanaTargetLabel(selectedCard.id) || 'valid target';
         addLog(`Invalid target! Please select ${targetDescription}`, 'error');
         return;
       }

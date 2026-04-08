@@ -8,6 +8,8 @@ import { LobbyManager } from './lobbyManager.js';
 import { GameManager } from './gameManager.js';
 import { applyArcana } from './arcana/arcanaHandlers.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
+import { createDefaultActiveEffectsState, mergeActiveEffectsState } from '../shared/arcana/activeEffectsState.js';
+import { getArcanaDefinition } from '../shared/arcana/arcanaCatalog.js';
 import { Chess } from 'chess.js';
 
 // Constants
@@ -62,38 +64,7 @@ app.post('/api/test-card', (req, res) => {
       lastMove: clientLastMove || moveResult || null,
       pawnShields: clientPawnShields || { w: null, b: null },
       capturedByColor: clientCapturedByColor || { w: [], b: [] },
-      activeEffects: clientActiveEffects || {
-        ironFortress: { w: false, b: false },
-        ironFortressShields: { w: [], b: [] },
-        bishopsBlessing: { w: [], b: [] },
-        timeFrozen: { w: false, b: false },
-        timeFreezeArcanaLock: { w: false, b: false },
-        cursedSquares: [],
-        sanctuaries: [],
-        fogOfWar: { w: false, b: false },
-        vision: { w: null, b: null },
-        doubleStrike: { w: false, b: false },
-        doubleStrikeActive: null,
-        poisonTouch: { w: false, b: false },
-        poisonedPieces: [],
-        squireSupport: [],
-        focusFire: { w: false, b: false },
-        queensGambit: { w: 0, b: 0 },
-        queensGambitUsed: { w: false, b: false },
-        divineIntervention: { w: false, b: false },
-        mirrorImages: [],
-        spectralMarch: { w: false, b: false },
-        phantomStep: { w: false, b: false },
-        pawnRush: { w: false, b: false },
-        sharpshooter: { w: false, b: false },
-        knightOfStorms: { w: null, b: null },
-        berserkerRage: { w: null, b: null },
-        mindControlled: [],
-        enPassantMaster: { w: false, b: false },
-        temporalEcho: null,
-        chainLightning: { w: false, b: false },
-        castleBroken: { w: 0, b: 0 },
-      },
+      activeEffects: clientActiveEffects ? mergeActiveEffectsState(clientActiveEffects) : createDefaultActiveEffectsState(),
       moveHistory: [],
     };
 
@@ -128,7 +99,7 @@ app.post('/api/test-card', (req, res) => {
       capturedByColor: gameState.capturedByColor,
     };
 
-    const card = ARCANA_DEFINITIONS.find(c => c.id === cardId) || null;
+    const card = getArcanaDefinition(cardId);
 
     // Only mark as success if the card was actually applied
     if (applied.length === 0) {

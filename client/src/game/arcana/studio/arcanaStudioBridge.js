@@ -23,6 +23,32 @@ function computePhaseTimeline(phases = []) {
   return result;
 }
 
+function normalizeLegacyToken(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function resolveLegacySoundFromAction(action, soundMap = {}) {
+  if (typeof action !== 'string' || !action.startsWith('sound_')) return '';
+
+  const token = action.slice('sound_'.length);
+  if (!token) return '';
+
+  if (soundMap[token]) return soundMap[token];
+
+  const normalizedToken = normalizeLegacyToken(token);
+  const entries = Object.entries(soundMap || {});
+
+  for (const [key, value] of entries) {
+    const normalizedKey = normalizeLegacyToken(key);
+    if (!normalizedKey) continue;
+    if (normalizedKey === normalizedToken || normalizedKey.includes(normalizedToken) || normalizedToken.includes(normalizedKey)) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
 export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
   if (!legacyCutscene || typeof legacyCutscene !== 'object') {
     return createEmptyArcanaStudioCard(options.id || 'legacy_cutscene');
@@ -136,12 +162,19 @@ export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
   };
   phases.forEach((phase, idx) => {
     phase.actions.forEach((action, actionIndex) => {
+      const resolvedSoundId = resolveLegacySoundFromAction(action, sounds);
       eventTrack.keys.push({
         id: `evt_${idx}_${actionIndex}`,
         timeMs: phase.startMs,
         type: action,
         delayMs: 0,
-        payload: { phase: phase.name },
+        payload: {
+          phase: phase.name,
+          cardId: id,
+          legacyAction: action,
+          soundId: resolvedSoundId || undefined,
+          soundMap: sounds,
+        },
       });
     });
   });

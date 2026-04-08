@@ -34,6 +34,14 @@
   font-size: 0.92rem;
 }
 
+.arcana-studio-subtitle {
+  color: #8ec7ff;
+  font-size: 0.84rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
 .arcana-studio-status {
   margin-top: 8px;
   color: #7ad7c6;
@@ -93,7 +101,7 @@
 
 .arcana-studio-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 320px;
+  grid-template-columns: 290px minmax(0, 1fr) 340px;
   gap: 12px;
   padding: 12px;
   min-height: 0;
@@ -150,7 +158,7 @@
   flex-direction: column;
   gap: 8px;
   overflow: auto;
-  max-height: 280px;
+  max-height: 520px;
   padding-right: 4px;
 }
 
@@ -158,13 +166,22 @@
   width: 100%;
   text-align: left;
   border: 1px solid rgba(113, 159, 225, 0.3);
-  border-radius: 10px;
+  border-radius: 12px;
   background:
     radial-gradient(circle at 100% -20%, rgba(93, 158, 255, 0.18), transparent 40%),
     rgba(21, 35, 56, 0.72);
   color: #dcebff;
-  padding: 9px;
+  padding: 13px 14px;
   cursor: pointer;
+  min-height: 98px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.card-item strong {
+  font-size: 0.97rem;
+  line-height: 1.25;
 }
 
 .card-item.selected {
@@ -179,10 +196,11 @@
 
 .card-item-meta {
   color: #95b3d5;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   letter-spacing: 0.05em;
-  margin-top: 4px;
+  margin-top: 0;
   text-transform: uppercase;
+  font-weight: 700;
 }
 
 .card-item-top {
@@ -200,6 +218,16 @@
   font-weight: 700;
 }
 
+.card-item-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rarity-pill {
+  background: rgba(8, 16, 26, 0.66);
+}
+
 .pill.cutscene {
   color: #b2f5dd;
   border-color: rgba(107, 228, 177, 0.68);
@@ -215,15 +243,43 @@
 .card-item-id {
   display: block;
   color: #7f9ec2;
-  font-size: 0.76rem;
-  margin-top: 2px;
+  font-size: 0.78rem;
+  margin-top: 4px;
 }
 
 .card-item-desc {
-  margin: 6px 0 0;
+  margin: 0;
   color: #9fb4cf;
-  font-size: 0.79rem;
+  font-size: 0.83rem;
   line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.card-item.rarity-common {
+  border-left: 3px solid #b9c8da;
+}
+
+.card-item.rarity-uncommon {
+  border-left: 3px solid #76df8f;
+}
+
+.card-item.rarity-rare {
+  border-left: 3px solid #64a8ff;
+}
+
+.card-item.rarity-epic {
+  border-left: 3px solid #c688ff;
+}
+
+.card-item.rarity-legendary {
+  border-left: 3px solid #ffbf6f;
+}
+
+.card-item.rarity-\?\?\? {
+  border-left: 3px solid #ff7a9c;
 }
 
 .arcana-add-row {
@@ -594,6 +650,86 @@
   border: 0;
   border-top: 1px solid rgba(127, 169, 222, 0.28);
   margin: 4px 0;
+}
+
+.particle-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.particle-preset-tile {
+  border: 1px solid rgba(118, 168, 230, 0.36);
+  border-radius: 10px;
+  background: rgba(18, 30, 48, 0.88);
+  color: #d6ebff;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.particle-preset-tile:hover {
+  border-color: rgba(161, 218, 255, 0.78);
+  box-shadow: 0 0 0 1px rgba(161, 218, 255, 0.25);
+}
+
+.particle-preset-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.particle-preset-preview {
+  position: relative;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(214, 236, 255, 0.2);
+}
+
+.particle-preset-dot {
+  position: absolute;
+  bottom: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.76);
+  animation: particlePresetFloat 1.35s ease-in-out infinite;
+}
+
+.particle-preset-meta {
+  color: #9ec0e1;
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+.particle-compatibility-box {
+  border: 1px solid rgba(255, 175, 120, 0.5);
+  border-radius: 9px;
+  background: rgba(65, 34, 8, 0.42);
+  color: #ffd7bc;
+  padding: 8px 9px;
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.particle-compatibility-box strong {
+  color: #ffe6d4;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@keyframes particlePresetFloat {
+  0% { transform: translateY(0px) scale(0.85); }
+  50% { transform: translateY(-9px) scale(1); }
+  100% { transform: translateY(0px) scale(0.88); }
 }
 
 .tutorial-overlay {

@@ -173,10 +173,9 @@ function validateSharpshooter(chess, from, to, color) {
   if (fileDiff !== rankDiff) return null;
 
   const destPiece = chess.get(to);
-  // Can move to empty square OR capture enemy piece (ignore blockers on diagonal)
   if (destPiece && destPiece.color === color) return null;
 
-  return { from, to, piece: 'b', captured: destPiece?.type || null, color };
+  return { from, to, piece: 'b', captured: destPiece?.type, color };
 }
 
 function validateKnightOfStorms(chess, from, to, color) {

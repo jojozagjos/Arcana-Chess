@@ -102,6 +102,29 @@ test('normalize highlight and log actions are sanitized', () => {
   assertEqual(logActions[0]?.text, 'Arcana pulse reached target.');
 });
 
+test('legacy sound action resolves concrete cue id', () => {
+  const actions = normalizeArcanaStudioEventActions({
+    type: 'sound_impact',
+    payload: {
+      soundMap: {
+        impact: 'arcana:execution_impact',
+        slash: 'arcana:execution_slash',
+      },
+    },
+  });
+  assertEqual(actions[0]?.kind, 'sound');
+  assertEqual(actions[0]?.soundId, 'arcana:execution_impact');
+});
+
+test('legacy vfx action maps to overlay effect', () => {
+  const actions = normalizeArcanaStudioEventActions({
+    type: 'vfx_fracture_bolts',
+    payload: { intensity: 0.7 },
+  });
+  assertEqual(actions[0]?.kind, 'overlay');
+  assertEqual(actions[0]?.effect, 'flash');
+});
+
 if (failed > 0) {
   console.log(`\nArcana Studio runtime tests failed: ${failed}`);
   process.exit(1);

@@ -2,6 +2,12 @@
 // Provides lightweight simulation of arcana effects for UI and testing purposes.
 
 import { Chess } from 'chess.js';
+import {
+  getArcanaTargetType,
+  getValidTargetSquares as getSharedValidTargetSquares,
+  needsTargetSquare as needsTargetSquareFromContract,
+  validateArcanaTarget as validateArcanaTargetFromContract,
+} from '../../../../shared/arcana/arcanaContracts.js';
 
 /**
  * Helper to get all legal moves for a specific color
@@ -248,67 +254,7 @@ function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = fa
 }
 
 export function getTargetTypeForArcana(arcanaId) {
-  // Returns 'pawn' | 'piece' | 'enemyPiece' | 'square' | 'knight' | 'bishop' | 'enemyRook' | 'poisoned' | null
-  const map = {
-    // Defense cards
-    shield_pawn: 'pawn',
-    squire_support: 'piece',
-    pawn_guard: 'pawn',
-    sanctuary: 'square',
-    bishops_blessing: 'bishop',
-    
-    // Movement cards
-    soft_push: 'pieceWithPushTarget', // Only pieces that have a valid push destination
-    royal_swap: 'pawn',
-    knight_of_storms: 'knight',
-    
-    // Offense cards
-    execution: 'enemyPiece',
-    castle_breaker: null, // Disables opponent's castling - no target needed
-    
-    // Transformation cards
-    metamorphosis: 'pieceNoQueenKing', // Own pieces except queen and king
-    sacrifice: 'piece',
-    mirror_image: 'pieceNoKing', // Own pieces except king
-    promotion_ritual: 'pawn',
-    
-    // Utility cards
-    line_of_sight: 'pieceWithMoves', // Only pieces that have legal moves
-    antidote: 'poisoned', // Only poisoned pieces
-    cursed_square: 'emptySquare', // Only empty squares
-    mind_control: 'enemyPiece',
-    breaking_point: 'enemyPiece',
-    edgerunner_overdrive: 'pieceNoKing',
-    
-    // Cards that don't need targeting
-    pawn_rush: null,
-    spectral_march: null,
-    phantom_step: null,
-    sharpshooter: null,
-    vision: null,
-    map_fragments: null,
-    poison_touch: null,
-    fog_of_war: null,
-    time_freeze: null,
-    divine_intervention: null,
-    iron_fortress: null,
-    ironFortressShields: { w: [], b: [] },
-    focus_fire: null,
-    double_strike: null,
-    berserker_rage: null,
-    chain_lightning: null,
-    necromancy: null,
-    astral_rebirth: null,
-    arcane_cycle: null,
-    quiet_thought: null,
-    peek_card: null,
-    en_passant_master: null,
-    chaos_theory: null,
-    time_travel: null,
-    temporal_echo: null,
-    queens_gambit: null,
-  };
-  return map[arcanaId] || null;
+  return getArcanaTargetType(arcanaId);
 }
 
 /**
@@ -320,183 +266,15 @@ export function getTargetTypeForArcana(arcanaId) {
  * @returns {Array} Array of valid target squares
  */
 export function getValidTargetSquares(chess, arcanaId, colorChar, gameState = {}) {
-  const targetType = getTargetTypeForArcana(arcanaId);
-  if (!targetType) return []; // Card doesn't need targeting
-
-  const occupiedEffectSquares = new Set([
-    ...((gameState.activeEffects?.sanctuaries || []).map((s) => s?.square).filter(Boolean)),
-    ...((gameState.activeEffects?.cursedSquares || []).map((c) => c?.square).filter(Boolean)),
-  ]);
-  
-  const validSquares = [];
-  const board = chess.board();
-  
-  for (let rank = 0; rank < 8; rank++) {
-    for (let file = 0; file < 8; file++) {
-      const piece = board[rank][file];
-      const fileChar = 'abcdefgh'[file];
-      const rankNum = 8 - rank;
-      const square = `${fileChar}${rankNum}`;
-      
-      switch (targetType) {
-        case 'pawn':
-          // Own pawns only
-          if (piece && piece.type === 'p' && piece.color === colorChar) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'piece':
-          // Any of own pieces
-          if (piece && piece.color === colorChar) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'pieceNoKing':
-          // Own pieces except king
-          if (piece && piece.color === colorChar && piece.type !== 'k') {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'pieceNoQueenKing':
-          // Own pieces except queen and king (for metamorphosis)
-          if (piece && piece.color === colorChar && piece.type !== 'k' && piece.type !== 'q') {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'pieceWithMoves':
-          // Own pieces that have at least one legal move
-          if (piece && piece.color === colorChar) {
-            const moves = chess.moves({ square, verbose: true });
-            if (moves && moves.length > 0) {
-              validSquares.push(square);
-            }
-          }
-          break;
-          
-        case 'pieceWithPushTarget':
-          // Own pieces that have a valid push destination (for soft_push)
-          if (piece && piece.color === colorChar) {
-            const pushDest = getSoftPushDestination(square, piece, colorChar);
-            if (pushDest && pushDest !== square && !chess.get(pushDest)) {
-              validSquares.push(square);
-            }
-          }
-          break;
-          
-        case 'knight':
-          // Own knights only
-          if (piece && piece.type === 'n' && piece.color === colorChar) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'bishop':
-          // Own bishops only
-          if (piece && piece.type === 'b' && piece.color === colorChar) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'enemyPiece':
-          // Enemy pieces (except king)
-          if (piece && piece.color !== colorChar && piece.type !== 'k') {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'enemyRook':
-          // Enemy rooks only
-          if (piece && piece.type === 'r' && piece.color !== colorChar) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'poisoned':
-          // Only poisoned pieces
-          const poisonedPieces = gameState.activeEffects?.poisonedPieces || [];
-          if (poisonedPieces.some(p => p.square === square)) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'square':
-          // Any square is valid
-          if (!occupiedEffectSquares.has(square)) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'emptySquare':
-          // Only empty squares
-          if (!piece && !occupiedEffectSquares.has(square)) {
-            validSquares.push(square);
-          }
-          break;
-          
-        case 'emptySquare':
-          // Only empty squares
-          if (!piece) {
-            validSquares.push(square);
-          }
-          break;
-      }
-    }
-  }
-  
-  return validSquares;
+  return getSharedValidTargetSquares(chess, arcanaId, colorChar, gameState);
 }
 
 export function needsTargetSquare(arcanaId) {
-  return !!getTargetTypeForArcana(arcanaId);
+  return needsTargetSquareFromContract(arcanaId);
 }
 
 export function validateArcanaTarget(chess, arcanaId, square, colorChar, gameState = {}) {
-  if (!arcanaId) return false;
-  const type = getTargetTypeForArcana(arcanaId);
-  if (!type) return true; // no target needed
-
-  const occupiedEffectSquares = new Set([
-    ...((gameState.activeEffects?.sanctuaries || []).map((s) => s?.square).filter(Boolean)),
-    ...((gameState.activeEffects?.cursedSquares || []).map((c) => c?.square).filter(Boolean)),
-  ]);
-
-  const piece = chess.get(square);
-  
-  switch (type) {
-    case 'pawn':
-      return !!piece && piece.type === 'p' && piece.color === colorChar;
-    case 'piece':
-      return !!piece && piece.color === colorChar;
-    case 'pieceWithMoves':
-      if (!piece || piece.color !== colorChar) return false;
-      const moves = chess.moves({ square, verbose: true });
-      return moves && moves.length > 0;
-    case 'pieceWithPushTarget':
-      if (!piece || piece.color !== colorChar) return false;
-      const pushDest = getSoftPushDestination(square, piece, colorChar);
-      return pushDest && pushDest !== square && !chess.get(pushDest);
-    case 'knight':
-      return !!piece && piece.type === 'n' && piece.color === colorChar;
-    case 'bishop':
-      return !!piece && piece.type === 'b' && piece.color === colorChar;
-    case 'enemyPiece':
-      return !!piece && piece.color !== colorChar && piece.type !== 'k';
-    case 'enemyRook':
-      return !!piece && piece.type === 'r' && piece.color !== colorChar;
-    case 'poisoned':
-      const poisonedPieces = gameState.activeEffects?.poisonedPieces || [];
-      return poisonedPieces.some(p => p.square === square);
-    case 'square':
-      return !occupiedEffectSquares.has(square);
-    case 'emptySquare':
-      return !chess.get(square) && !occupiedEffectSquares.has(square);
-    default:
-      return false;
-  }
+  return validateArcanaTargetFromContract(chess, arcanaId, square, colorChar, gameState);
 }
 
 /**
@@ -971,20 +749,12 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
             return false;
           };
 
-          // Always revive one pawn if available.
-          if (placePiece('p')) {
+          // Revive up to two captured pawns.
+          const maxPawns = Math.min(2, pawnsToRevive.length);
+          for (let i = 0; i < maxPawns; i++) {
+            if (!placePiece('p')) break;
             const pawnIdx = capturedForColor.findIndex((p) => p?.type === 'p');
             if (pawnIdx !== -1) capturedForColor.splice(pawnIdx, 1);
-          }
-
-          // Then revive one random non-pawn when available.
-          const nonPawns = capturedForColor.filter((p) => p?.type && p.type !== 'p');
-          if (nonPawns.length > 0) {
-            const selected = nonPawns[Math.floor(Math.random() * nonPawns.length)];
-            if (placePiece(selected.type)) {
-              const idx = capturedForColor.findIndex((p) => p?.type === selected.type);
-              if (idx !== -1) capturedForColor.splice(idx, 1);
-            }
           }
 
           result.success = revived.length > 0;
@@ -1003,54 +773,47 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         if (captured.length > 0) {
           const backRank = colorChar === 'w' ? '1' : '8';
           const secondRank = colorChar === 'w' ? '2' : '7';
-          const pieceValue = { q: 5, r: 4, b: 3, n: 2, p: 1 };
-          // Sort by value descending to revive the best pieces first
-          const sortedCaptured = [...captured].sort((a, b) => (pieceValue[b.type] || 0) - (pieceValue[a.type] || 0));
-          
+          const pieceValue = { q: 9, r: 5, b: 3, n: 3, p: 1 };
           const revivedSquares = [];
-          const maxRevive = Math.min(2, sortedCaptured.length);
-          
-          // Try to revive up to 2 pieces
-          for (let attempt = 0; attempt < maxRevive; attempt++) {
-            if (attempt >= sortedCaptured.length) break;
-            
-            const toRevive = sortedCaptured[attempt];
-            if (!toRevive || !toRevive.type) continue; // Skip if invalid
-            
-            let pieceType = toRevive.type;
-            
-            // Don't place pawns on back rank - they'd be immovable. Use knight instead.
-            if (pieceType === 'p') pieceType = 'n';
+          while (revivedSquares.length < 2 && captured.length > 0) {
+            const ranked = captured
+              .map((entry, idx) => ({ entry, idx }))
+              .filter(({ entry }) => entry && entry.type)
+              .sort((a, b) => (pieceValue[b.entry.type] || 0) - (pieceValue[a.entry.type] || 0));
+
+            if (ranked.length === 0) break;
+
+            const selected = ranked[0];
+            const toRevive = selected.entry;
+            const pieceType = toRevive.type;
             
             // Try back rank first
-            let placed = false;
+            let placedSquare = null;
             for (const f of 'abcdefgh') {
               const sq = f + backRank;
               if (!chess.get(sq)) {
                 chess.put({ type: pieceType, color: colorChar }, sq);
-                revivedSquares.push({ square: sq, piece: pieceType });
-                // Remove from captured list
-                const idx = captured.findIndex(p => p && p.type === toRevive.type);
-                if (idx !== -1) captured.splice(idx, 1);
-                placed = true;
+                placedSquare = sq;
                 break;
               }
             }
             
             // If back rank is full, try second rank
-            if (!placed) {
+            if (!placedSquare) {
               for (const f of 'abcdefgh') {
                 const sq = f + secondRank;
                 if (!chess.get(sq)) {
                   chess.put({ type: pieceType, color: colorChar }, sq);
-                  revivedSquares.push({ square: sq, piece: pieceType });
-                  // Remove from captured list
-                  const idx = captured.findIndex(p => p && p.type === toRevive.type);
-                  if (idx !== -1) captured.splice(idx, 1);
+                  placedSquare = sq;
                   break;
                 }
               }
             }
+
+            if (!placedSquare) break;
+
+            revivedSquares.push({ square: placedSquare, piece: pieceType });
+            captured.splice(selected.idx, 1);
           }
           
           if (revivedSquares.length > 0) {
@@ -1507,10 +1270,8 @@ export function canUseCard(arcanaId, gameState = {}, playerColor = 'w') {
   // Cards that check card usability based on game state
   switch (arcanaId) {
     case 'necromancy': {
-      // Server allows Necromancy as long as there is at least one captured piece.
-      // It revives a pawn if available and may also revive a non-pawn.
       const captured = gameState.capturedByColor?.[playerColor] || [];
-      return captured.length > 0;
+      return captured.some((p) => p?.type === 'p');
     }
     case 'astral_rebirth': {
       // Can only use if there are captured pieces the current player can revive

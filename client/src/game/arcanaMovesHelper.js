@@ -233,18 +233,20 @@ function generateSharpshooterMoves(chess, square, color) {
       
       const targetSquare = String.fromCharCode(97 + newFile) + newRank;
       const targetPiece = chess.get(targetSquare);
-      
+
       if (!targetPiece) {
-        // Empty square - WITH SHARPSHOOTER, add move regardless of blockers (pierce through!)
         moves.push({
           from: square,
           to: targetSquare,
           piece: 'b',
           color,
           flags: 'n',
-          san: `B${targetSquare}`,
+          san: targetSquare,
         });
-      } else if (targetPiece.color !== color) {
+        continue;
+      }
+
+      if (targetPiece.color !== color) {
         // Enemy piece - CAN capture (sharpshooter ignores blockers)
         moves.push({
           from: square,
@@ -255,11 +257,10 @@ function generateSharpshooterMoves(chess, square, color) {
           flags: 'c',
           san: `Bx${targetSquare}`,
         });
-        // Continue to find more enemies on this diagonal (all are capturable through blockers)
-      } else {
-        // Friendly piece blocks landing on this square but does not stop line-of-sight for sharpshooter.
-        continue;
       }
+
+      // Friendly piece blocks landing on this square but does not stop line-of-sight for sharpshooter.
+      continue;
     }
   }
 

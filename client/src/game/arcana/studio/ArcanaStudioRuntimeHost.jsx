@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Html, Line, useGLTF } from '@react-three/drei';
+import { Html, Line } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { ChessPiece } from '../../../components/ChessPiece.jsx';
@@ -107,12 +107,6 @@ function resolveTrackStates(card, eventParams, boardPieces, timeMs) {
   return resolved;
 }
 
-function ImportedMesh({ uri }) {
-  const gltf = useGLTF(uri);
-  const scene = useMemo(() => gltf.scene.clone(true), [gltf]);
-  return <primitive object={scene} scale={0.6} />;
-}
-
 function TrackFallbackMesh({ track, piece }) {
   if (track.type === 'piece' && piece) {
     return <ChessPiece {...piece} targetPosition={[0, 0.15, 0]} />;
@@ -127,10 +121,9 @@ function TrackFallbackMesh({ track, piece }) {
 
 function RuntimeObjectEntity({ track, piece, sampled }) {
   const position = sampled?.worldPosition || sampled?.anchorPosition || piece?.targetPosition || DEFAULT_WORLD_ANCHOR;
-  const content = track.assetUri ? <ImportedMesh uri={track.assetUri} /> : <TrackFallbackMesh track={track} piece={piece} />;
   return (
     <group position={position} rotation={sampled?.rotation || [0, 0, 0]} scale={sampled?.scale || [1, 1, 1]}>
-      {content}
+      <TrackFallbackMesh track={track} piece={piece} />
     </group>
   );
 }
@@ -142,7 +135,7 @@ function RuntimeParticleTrack({ track, card, eventParams, objectStates, playhead
   const attachAlias = resolveRuntimeSquare(attachTrack?.pieceSquare || track.attach?.targetId, eventParams, eventParams?.targetSquare || eventParams?.square || null);
   const attachPos = attachSample?.worldPosition || (attachAlias && /^[a-h][1-8]$/i.test(attachAlias) ? squareToPosition(attachAlias) : DEFAULT_WORLD_ANCHOR);
   const base = addVec3(attachPos, [0, 0.2, 0], track.attach?.offset || [0, 0, 0]);
-  const points = useMemo(() => buildParticlePreviewPoints({ sample, anchor: base, maxPoints: 64 }), [base, sample]);
+  const points = useMemo(() => buildParticlePreviewPoints({ sample, anchor: base, maxPoints: 84 }), [base, sample]);
 
   if (!sample.active) return null;
 
@@ -313,11 +306,16 @@ export function ArcanaStudioScreenOverlay({ session }) {
 
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 9998 }}>
-      {overlays.map(({ track, sample }) => {
+      {overlays.map(({ track, sample, composedLayer }) => {
+        const isScreenCover = track.type === 'screen_cover';
+        const widthPercent = Number.isFinite(track.style?.width) ? Math.max(1, track.style.width) : 100;
+        const heightPercent = Number.isFinite(track.style?.height) ? Math.max(1, track.style.height) : 100;
         const style = {
           position: 'absolute',
-          left: `${sample.x}%`,
-          top: `${sample.y}%`,
+          left: isScreenCover ? '50%' : `${sample.x}%`,
+          top: isScreenCover ? '50%' : `${sample.y}%`,
+          width: isScreenCover ? `${widthPercent}%` : undefined,
+          height: isScreenCover ? `${heightPercent}%` : undefined,
           opacity: sample.opacity,
           transform: `translate(-50%, -50%) scale(${sample.scale}) rotate(${sample.rotation}deg)`,
           color: track.style?.color || '#ffffff',
@@ -326,6 +324,11 @@ export function ArcanaStudioScreenOverlay({ session }) {
           fontWeight: track.style?.weight || 700,
           textAlign: track.style?.align || 'center',
           background: track.style?.background || 'transparent',
+          borderRadius: `${track.style?.borderRadius || 0}px`,
+          display: isScreenCover ? 'flex' : 'block',
+          alignItems: isScreenCover ? 'center' : undefined,
+          justifyContent: isScreenCover ? 'center' : undefined,
+          zIndex: 1000 + (Number(composedLayer) || Number(track.layer) || 0),
           textShadow: '0 6px 18px rgba(0,0,0,0.5)',
           whiteSpace: 'pre-wrap',
         };

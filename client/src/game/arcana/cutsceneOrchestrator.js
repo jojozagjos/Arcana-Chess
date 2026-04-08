@@ -178,7 +178,35 @@ export function orchestrateCutscene(params) {
 function executeAction(action, context) {
   const { arcanaId, soundManager, sound, onVFXTrigger, targetSquare } = context;
 
-  switch (action) {
+  if (typeof action !== 'string') {
+    return;
+  }
+
+  const normalizedAction = action.trim().toLowerCase();
+  if (!normalizedAction) {
+    return;
+  }
+
+  if (normalizedAction.startsWith('sound_')) {
+    const soundKey = normalizedAction.slice('sound_'.length);
+    const soundTrack = resolveSoundTrack(sound, soundKey);
+    if (soundTrack) {
+      const shouldLoop = soundKey === 'ambient' || soundKey === 'ambient_loop' || soundKey === 'ambient_continue';
+      soundManager?.play(soundTrack, shouldLoop ? { loop: true } : undefined);
+    }
+    return;
+  }
+
+  if (normalizedAction.startsWith('vfx_')) {
+    onVFXTrigger?.(resolveVfxPayload(normalizedAction, { arcanaId, targetSquare }));
+    return;
+  }
+
+  if (normalizedAction.startsWith('overlay_') || normalizedAction.startsWith('camera_')) {
+    return;
+  }
+
+  switch (normalizedAction) {
     // Sound actions
     case 'sound_guillotine':
       soundManager?.play(sound?.guillotine);
@@ -253,6 +281,45 @@ function executeAction(action, context) {
 
     default:
       console.warn(`Unknown cutscene action: ${action}`);
+  }
+}
+
+function resolveSoundTrack(sound, soundKey) {
+  if (!sound || !soundKey) return null;
+
+  const normalizedKey = soundKey.replace(/[^a-z0-9]+/g, '_');
+  const compactKey = normalizedKey.replace(/_/g, '');
+
+  const candidates = [
+    sound[normalizedKey],
+    sound[soundKey],
+    sound[compactKey],
+  ];
+
+  return candidates.find(Boolean) || null;
+}
+
+function resolveVfxPayload(action, context) {
+  const { arcanaId, targetSquare } = context;
+
+  switch (action) {
+    case 'vfx_guillotine':
+    case 'vfx_destruction':
+      return { type: 'execution', arcanaId, targetSquare };
+    case 'vfx_particles':
+      return { type: 'particles', arcanaId, targetSquare };
+    case 'vfx_spawn_particles':
+      return { type: 'spawn', arcanaId, targetSquare };
+    case 'vfx_mind_aura':
+      return { type: 'mind-control', arcanaId, targetSquare };
+    case 'vfx_materialize':
+      return { type: 'materialize', arcanaId, targetSquare };
+    case 'vfx_rewind_trails':
+      return { type: 'rewind', arcanaId, targetSquare };
+    case 'vfx_glow_particles':
+      return { type: 'glow', arcanaId, targetSquare };
+    default:
+      return { type: action.replace(/^vfx_/, '').replace(/_/g, '-'), arcanaId, targetSquare };
   }
 }
 

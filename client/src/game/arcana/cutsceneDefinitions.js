@@ -11,7 +11,8 @@
  */
 
 import { legacyCutsceneToArcanaStudioCard, arcanaStudioCardToLegacyCutscene } from './studio/arcanaStudioBridge.js';
-import { getStoredArcanaStudioCard, loadArcanaStudioCardsMap, migrateArcanaStudioCard } from './studio/arcanaStudioSchema.js';
+import { ARCANA_DEFINITIONS } from '../arcanaDefinitions.js';
+import { loadArcanaStudioCardsMap, migrateArcanaStudioCard } from './studio/arcanaStudioSchema.js';
 
 export const executionCutscene = {
   id: 'execution',
@@ -710,17 +711,62 @@ const LEGACY_CUTSCENE_CONFIGS = {
   edgerunner_overdrive: edgerunnerOverdriveCutscene,
 };
 
-function getStoredLegacyConfig(cardId) {
-  const card = getStoredArcanaStudioCard(cardId);
-  if (!card) return null;
+function normalizeRuntimeCardId(cardId = '') {
+  if (cardId === 'arcane_cycle') return 'filtered_cycle';
+  return cardId;
+}
 
-  try {
-    const built = arcanaStudioCardToLegacyCutscene(card);
-    return built?.config ? built : null;
-  } catch (err) {
-    console.warn(`Failed to build Arcana Studio override for ${cardId}:`, err);
-    return null;
+function getStoredStudioCard(cardId) {
+  const normalized = normalizeRuntimeCardId(cardId);
+  const storedMap = loadArcanaStudioCardsMap();
+  const direct = storedMap?.[normalized];
+  if (direct) return migrateArcanaStudioCard(direct, normalized);
+
+  if (normalized === 'filtered_cycle' && storedMap?.arcane_cycle) {
+    const migrated = migrateArcanaStudioCard(storedMap.arcane_cycle, normalized);
+    migrated.id = normalized;
+    return migrated;
   }
+
+  return null;
+}
+
+function definitionCutsceneIdSet() {
+  return new Set(
+    (ARCANA_DEFINITIONS || [])
+      .filter((entry) => Boolean(entry?.visual?.cutscene))
+      .map((entry) => normalizeRuntimeCardId(entry.id)),
+  );
+}
+
+function isLikelyCutsceneCard(card) {
+  if (!card || typeof card !== 'object') return false;
+  const cameraTrackCount = Array.isArray(card?.tracks?.camera) ? card.tracks.camera.length : 0;
+  const cameraKeys = Array.isArray(card?.tracks?.camera)
+    ? card.tracks.camera.reduce((acc, track) => acc + ((track?.keys || []).length || 0), 0)
+    : 0;
+  const eventKeys = Array.isArray(card?.tracks?.events)
+    ? card.tracks.events.reduce((acc, track) => acc + ((track?.keys || []).length || 0), 0)
+    : 0;
+  const overlayKeys = Array.isArray(card?.tracks?.overlays)
+    ? card.tracks.overlays.reduce((acc, track) => acc + ((track?.keys || []).length || 0), 0)
+    : 0;
+  const particleKeys = Array.isArray(card?.tracks?.particles)
+    ? card.tracks.particles.reduce((acc, track) => acc + ((track?.keys || []).length || 0), 0)
+    : 0;
+  const soundKeys = Array.isArray(card?.tracks?.sounds)
+    ? card.tracks.sounds.reduce((acc, track) => acc + (track?.keys || []).filter((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0).length, 0)
+    : 0;
+
+  // A single default camera key is common in placeholder cards and should not
+  // be treated as a playable cutscene override.
+  const hasMeaningfulCameraTimeline = cameraKeys > Math.max(1, cameraTrackCount);
+  return hasMeaningfulCameraTimeline || eventKeys > 0 || overlayKeys > 0 || particleKeys > 0 || soundKeys > 0;
+}
+
+function getStoredLegacyConfig(cardId) {
+  const card = getStoredStudioCard(cardId);
+  return card && isLikelyCutsceneCard(card) ? arcanaStudioCardToLegacyCutscene(card) : null;
 }
 
 export function getAllCutsceneConfigs() {
@@ -728,28 +774,50 @@ export function getAllCutsceneConfigs() {
 }
 
 export function getCutsceneCard(cardId) {
-  const stored = getStoredArcanaStudioCard(cardId);
-  if (stored) {
-    return migrateArcanaStudioCard(stored, cardId);
+  const normalized = normalizeRuntimeCardId(cardId);
+  const stored = getStoredStudioCard(normalized);
+  if (stored && isLikelyCutsceneCard(stored)) {
+    return {
+      ...stored,
+      id: normalized,
+      meta: {
+        ...(stored.meta || {}),
+        source: stored.meta?.source || 'arcana-studio',
+        isCutscene: true,
+      },
+    };
   }
 
-  const legacy = LEGACY_CUTSCENE_CONFIGS[cardId];
+  const legacy = LEGACY_CUTSCENE_CONFIGS[normalized];
   if (!legacy) return null;
-  return legacyCutsceneToArcanaStudioCard(legacy, { id: cardId });
+  return legacyCutsceneToArcanaStudioCard(legacy, { id: normalized });
 }
 
 export function getAllCutsceneCards() {
   const cards = {};
-  const stored = loadArcanaStudioCardsMap();
+  const cutsceneDefinitionIds = definitionCutsceneIdSet();
 
   Object.entries(LEGACY_CUTSCENE_CONFIGS).forEach(([id, legacy]) => {
-    cards[id] = stored[id]
-      ? migrateArcanaStudioCard(stored[id], id)
-      : legacyCutsceneToArcanaStudioCard(legacy, { id });
+    cards[id] = legacyCutsceneToArcanaStudioCard(legacy, { id });
   });
 
-  Object.entries(stored).forEach(([id, card]) => {
-    if (!cards[id]) cards[id] = migrateArcanaStudioCard(card, id);
+  const storedMap = loadArcanaStudioCardsMap();
+  Object.entries(storedMap || {}).forEach(([rawId, rawCard]) => {
+    const id = normalizeRuntimeCardId(rawId);
+    const card = migrateArcanaStudioCard(rawCard, id);
+    const hasPlayableData = isLikelyCutsceneCard(card);
+    if (!hasPlayableData && cards[id]) return;
+    if (!hasPlayableData && !cutsceneDefinitionIds.has(id) && !cards[id]) return;
+
+    cards[id] = {
+      ...card,
+      id,
+      meta: {
+        ...(card.meta || {}),
+        source: card.meta?.source || 'arcana-studio',
+        isCutscene: true,
+      },
+    };
   });
 
   return cards;
@@ -763,9 +831,10 @@ export function buildLegacyCutsceneFromCard(cardInput) {
  * Get cutscene config by card ID
  */
 export function getCutsceneConfig(cardId) {
-  const storedConfig = getStoredLegacyConfig(cardId);
+  const normalized = normalizeRuntimeCardId(cardId);
+  const storedConfig = getStoredLegacyConfig(normalized);
   if (storedConfig) return storedConfig;
-  return LEGACY_CUTSCENE_CONFIGS[cardId];
+  return LEGACY_CUTSCENE_CONFIGS[normalized];
 }
 
 /**

@@ -1,5 +1,6 @@
 export const ARCANA_STUDIO_CARD_VERSION = 1;
-export const ARCANA_STUDIO_STORAGE_KEY = 'arcana.arcanaStudio.cards.v1';
+const ARCANA_STUDIO_STORAGE_KEY = 'arcana:studio:cards:v1';
+let inMemoryCardsMap = {};
 
 function uid(prefix = 'id') {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -12,6 +13,18 @@ function toFiniteNumber(value, fallback = 0) {
 
 function clampTimeMs(value) {
   return Math.max(0, Math.floor(toFiniteNumber(value, 0)));
+}
+
+function cloneObject(value, fallback = {}) {
+  try {
+    return JSON.parse(JSON.stringify(value ?? fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+function canUseStorage() {
+  return typeof globalThis !== 'undefined' && typeof globalThis.localStorage !== 'undefined';
 }
 
 function normalizeVec3(value, fallback = [0, 0, 0]) {
@@ -93,6 +106,8 @@ function normalizeOverlayTrack(track = {}) {
     name: track.name || 'Overlay',
     type: track.type || 'text',
     space: track.space || 'screen',
+    parentId: track.parentId || null,
+    layer: Number.isFinite(track.layer) ? track.layer : 0,
     content: track.content || 'New overlay text',
     style: {
       color: track.style?.color || '#ffffff',
@@ -102,6 +117,9 @@ function normalizeOverlayTrack(track = {}) {
       align: track.style?.align || 'center',
       imageUrl: track.style?.imageUrl || '',
       background: track.style?.background || 'rgba(0,0,0,0)',
+      width: toFiniteNumber(track.style?.width, 100),
+      height: toFiniteNumber(track.style?.height, 100),
+      borderRadius: toFiniteNumber(track.style?.borderRadius, 0),
     },
     keys: (Array.isArray(track.keys) ? track.keys : []).map((key, idx) => ({
       id: key?.id || uid('ovk'),
@@ -223,7 +241,6 @@ export function migrateArcanaStudioCard(input, fallbackId = 'legacy_cutscene') {
         name: track?.name || `Object ${idx + 1}`,
         type: track?.type || 'piece',
         pieceSquare: track?.pieceSquare || null,
-        assetUri: track?.assetUri || '',
         previewPlayAnimation: track?.previewPlayAnimation || false,
         attach: {
           mode: track?.attach?.mode || 'follow',
@@ -250,30 +267,30 @@ export function migrateArcanaStudioCard(input, fallbackId = 'legacy_cutscene') {
 }
 
 export function loadArcanaStudioCardsMap() {
-  if (typeof localStorage === 'undefined') return {};
+  if (!canUseStorage()) {
+    return cloneObject(inMemoryCardsMap, {});
+  }
+
   try {
-    const raw = localStorage.getItem(ARCANA_STUDIO_STORAGE_KEY);
+    const raw = globalThis.localStorage.getItem(ARCANA_STUDIO_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-
-    const normalized = {};
-    Object.entries(parsed).forEach(([id, card]) => {
-      normalized[id] = migrateArcanaStudioCard(card, id);
-    });
-    return normalized;
-  } catch (err) {
-    console.warn('Failed to load Arcana Studio cards:', err);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
     return {};
   }
 }
 
 export function saveArcanaStudioCardsMap(cardsMap) {
-  if (typeof localStorage === 'undefined') return;
+  const normalized = cardsMap && typeof cardsMap === 'object' ? cardsMap : {};
+  inMemoryCardsMap = cloneObject(normalized, {});
+
+  if (!canUseStorage()) return;
+
   try {
-    localStorage.setItem(ARCANA_STUDIO_STORAGE_KEY, JSON.stringify(cardsMap || {}));
-  } catch (err) {
-    console.warn('Failed to save Arcana Studio cards:', err);
+    globalThis.localStorage.setItem(ARCANA_STUDIO_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // Ignore storage write failures (quota/private mode), keep in-memory fallback.
   }
 }
 

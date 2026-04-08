@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js';
 import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonOrUncommonArcana, pickCommonOrUncommonArcanaByCategory, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
+import { validateArcanaUse } from '../../shared/arcana/arcanaContracts.js';
 
 /**
  * Validates arcana targeting before applying effects
@@ -11,200 +12,7 @@ import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonOrUncommo
  * @returns {Object} Validation result with ok boolean and optional reason
  */
 function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState) {
-  const targetSquare = params?.targetSquare;
-  const piece = targetSquare ? chess.get(targetSquare) : null;
-  const occupiedTileEffects = new Set([
-    ...((gameState?.activeEffects?.sanctuaries || []).map((s) => s?.square).filter(Boolean)),
-    ...((gameState?.activeEffects?.cursedSquares || []).map((c) => c?.square).filter(Boolean)),
-  ]);
-
-  const noTargetCards = [
-    'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
-    'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
-    'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning',
-    'necromancy', 'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'peek_card', 'en_passant_master',
-    'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress',
-    'castle_breaker'
-  ];
-
-  if (noTargetCards.includes(arcanaId)) {
-    // Temporal Echo requires a prior move pattern to copy
-    if (arcanaId === 'temporal_echo') {
-      const ownLastMove = gameState?.lastMoveByColor?.[moverColor] || gameState?.lastMove;
-      const hasLastMove = !!(ownLastMove?.from && ownLastMove?.to);
-      if (!hasLastMove) {
-        return { ok: false, reason: 'Temporal Echo requires a previous move to echo' };
-      }
-    }
-    
-    // Necromancy: can revive one pawn if available and one other captured piece
-    if (arcanaId === 'necromancy') {
-      const captured = gameState?.capturedByColor?.[moverColor] || [];
-      if (!captured.length) {
-        return { ok: false, reason: 'No captured pieces available to revive' };
-      }
-    }
-    
-    // Astral Rebirth: requires captured pieces to revive
-    if (arcanaId === 'astral_rebirth') {
-      const captured = gameState?.capturedByColor?.[moverColor] || [];
-      if (captured.length === 0) {
-        return { ok: false, reason: 'No captured pieces available to revive' };
-      }
-    }
-
-    // Time Travel: requires at least one saved board snapshot.
-    if (arcanaId === 'time_travel') {
-      const history = gameState?.moveHistory;
-      if (!Array.isArray(history) || history.length === 0) {
-        return { ok: false, reason: 'Time Travel requires at least one move in history' };
-      }
-    }
-    
-    return { ok: true };
-  }
-
-  // Target-required cards
-  if (!targetSquare) {
-    return { ok: false, reason: 'Missing targetSquare' };
-  }
-
-  // Antidote: must target own poisoned piece
-  if (arcanaId === 'antidote') {
-    if (!piece || piece.color !== moverColor) {
-      return { ok: false, reason: 'Antidote must target your poisoned piece' };
-    }
-    const isPoisoned = Array.isArray(gameState?.activeEffects?.poisonedPieces)
-      && gameState.activeEffects.poisonedPieces.some(p => p.square === targetSquare);
-    if (!isPoisoned) {
-      return { ok: false, reason: 'Target is not poisoned' };
-    }
-    return { ok: true };
-  }
-
-  // Squire Support: must target own piece
-  if (arcanaId === 'squire_support') {
-    if (!piece || piece.color !== moverColor) {
-      return { ok: false, reason: 'Squire Support must target your piece' };
-    }
-    return { ok: true };
-  }
-
-  // Cursed Square: typically an empty square
-  if (arcanaId === 'cursed_square') {
-    if (piece) {
-      return { ok: false, reason: 'Cursed Square must target an empty square' };
-    }
-    if (occupiedTileEffects.has(targetSquare)) {
-      return { ok: false, reason: 'That square already has a tile effect' };
-    }
-    return { ok: true };
-  }
-
-  // Sanctuary: can target any board square (empty or occupied)
-  if (arcanaId === 'sanctuary') {
-    if (occupiedTileEffects.has(targetSquare)) {
-      return { ok: false, reason: 'That square already has a tile effect' };
-    }
-    return { ok: true };
-  }
-
-  // Execution: cannot target king
-  if (arcanaId === 'execution') {
-    if (!piece || piece.type === 'k') {
-      return { ok: false, reason: 'Cannot execute king or empty square' };
-    }
-    return { ok: true };
-  }
-  
-  // Mind Control: cannot target king
-  if (arcanaId === 'mind_control') {
-    if (!piece || piece.type === 'k') {
-      return { ok: false, reason: 'Cannot mind control king' };
-    }
-    if (piece.color === moverColor) {
-      return { ok: false, reason: 'Cannot mind control your own pieces' };
-    }
-    return { ok: true };
-  }
-
-  // Breaking Point: must target an enemy non-king piece
-  if (arcanaId === 'breaking_point') {
-    if (!piece) {
-      return { ok: false, reason: 'Breaking Point must target an enemy piece' };
-    }
-    if (piece.color === moverColor) {
-      return { ok: false, reason: 'Breaking Point cannot target your own piece' };
-    }
-    if (piece.type === 'k') {
-      return { ok: false, reason: 'Breaking Point cannot target a king' };
-    }
-    return { ok: true };
-  }
-
-  // Edgerunner Overdrive: must target your own non-king piece
-  if (arcanaId === 'edgerunner_overdrive') {
-    if (!piece) {
-      return { ok: false, reason: 'Edgerunner Overdrive must target one of your pieces' };
-    }
-    if (piece.color !== moverColor) {
-      return { ok: false, reason: 'Edgerunner Overdrive can only target your own piece' };
-    }
-    if (piece.type === 'k') {
-      return { ok: false, reason: 'Edgerunner Overdrive cannot target a king' };
-    }
-    return { ok: true };
-  }
-  
-  // Metamorphosis: must target own piece (not king/queen)
-  if (arcanaId === 'metamorphosis') {
-    if (!piece || piece.color !== moverColor) {
-      return { ok: false, reason: 'Metamorphosis must target your own piece' };
-    }
-    if (piece.type === 'k' || piece.type === 'q') {
-      return { ok: false, reason: 'Cannot transform king or queen' };
-    }
-    if (!params?.newType) {
-      return { ok: false, reason: 'Must specify newType for transformation' };
-    }
-    if (params.newType === 'k' || params.newType === 'q') {
-      return { ok: false, reason: 'Cannot transform into king or queen' };
-    }
-    return { ok: true };
-  }
-  
-  // Mirror Image: must target own piece (not king)
-  if (arcanaId === 'mirror_image') {
-    if (!piece || piece.color !== moverColor) {
-      return { ok: false, reason: 'Mirror Image must target your own piece' };
-    }
-    if (piece.type === 'k') {
-      return { ok: false, reason: 'Cannot duplicate king' };
-    }
-    return { ok: true };
-  }
-
-  // Promotion Ritual: must target your own pawn
-  if (arcanaId === 'promotion_ritual') {
-    if (!piece || piece.color !== moverColor || piece.type !== 'p') {
-      return { ok: false, reason: 'Promotion Ritual must target your own pawn' };
-    }
-    return { ok: true };
-  }
-  
-  // Royal Swap: must target own pawn
-  if (arcanaId === 'royal_swap') {
-    if (!piece || piece.color !== moverColor) {
-      return { ok: false, reason: 'Royal Swap must target your own piece' };
-    }
-    if (piece.type !== 'p') {
-      return { ok: false, reason: 'Royal Swap can only swap with a pawn' };
-    }
-    return { ok: true };
-  }
-
-  // Default allow if a piece exists (for other targeted cards)
-  return { ok: true };
+  return validateArcanaUse(chess, arcanaId, params, moverColor, gameState);
 }
 
 /**
@@ -296,10 +104,12 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
         visual: def.visual,
       };
       
-      // For cutscene cards, include the square info even in redacted payload
-      const cutsceneCards = ['execution', 'astral_rebirth', 'time_travel', 'mind_control', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive'];
+      // For cutscene cards, include safe target/trajectory fields so both players can
+      // run camera choreography without exposing private tactical data.
+      const forceCutsceneCards = new Set(['mind_control', 'breaking_point', 'edgerunner_overdrive']);
+      const isCutsceneCard = Boolean(def?.visual?.cutscene) || forceCutsceneCards.has(def.id);
       let redactedParams = null;
-      if (cutsceneCards.includes(def.id) && params) {
+      if (isCutsceneCard && params) {
         // Extract just the square info for cutscene camera focus
         redactedParams = {
           square: params.targetSquare || params.square || null,
@@ -310,6 +120,13 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
           pieceType: params.pieceType || null,
           pieceColor: params.pieceColor || null,
           dashPath: Array.isArray(params.dashPath) ? params.dashPath : null,
+          displaced: Array.isArray(params.displaced) ? params.displaced : null,
+          firstTo: params.firstTo || null,
+          secondTo: params.secondTo || null,
+          thirdTo: params.thirdTo || null,
+          captureCount: Number.isFinite(params.captureCount) ? params.captureCount : null,
+          originalColor: params.originalColor || null,
+          color: params.color || null,
         };
       }
       
@@ -599,156 +416,31 @@ function applyBishopsBlessing({ chess, gameState, moverColor, moveResult, params
 function getPiecesDiagonalFromBishop(chess, bishopSquare, color) {
   const protectedSquares = [];
   if (!bishopSquare) return protectedSquares;
-  
-  const file = bishopSquare.charCodeAt(0) - 97; // a=0, h=7
-  const rank = parseInt(bishopSquare[1]); // 1-8
-  
-  // 4 diagonal directions: NE, NW, SE, SW
+
+  const file = bishopSquare.charCodeAt(0) - 97;
+  const rank = parseInt(bishopSquare[1], 10);
   const directions = [
-    { df: 1, dr: 1 },  // NE
-    { df: -1, dr: 1 }, // NW
-    { df: 1, dr: -1 }, // SE
-    { df: -1, dr: -1 } // SW
+    { df: 1, dr: 1 },
+    { df: -1, dr: 1 },
+    { df: 1, dr: -1 },
+    { df: -1, dr: -1 },
   ];
-  
+
   for (const dir of directions) {
     let f = file + dir.df;
     let r = rank + dir.dr;
-    
+
     while (f >= 0 && f < 8 && r >= 1 && r <= 8) {
-      const sq = String.fromCharCode(97 + f) + r;
-      const piece = chess.get(sq);
-      
-      // Stop if we hit an enemy piece (blocked on diagonal)
-      if (piece && piece.color !== color) {
-        break;
-      }
-      // Add friendly pieces to protected list
-      if (piece && piece.color === color) {
-        protectedSquares.push(sq);
-      }
-      
+      const square = `${String.fromCharCode(97 + f)}${r}`;
+      const piece = chess.get(square);
+      if (piece && piece.color !== color) break;
+      if (piece && piece.color === color) protectedSquares.push(square);
       f += dir.df;
       r += dir.dr;
     }
   }
-  
+
   return protectedSquares;
-}
-
-function applyTimeFreeze({ gameState, moverColor }) {
-  const opponentColor = moverColor === 'w' ? 'b' : 'w';
-  if (!gameState.activeEffects.timeFreezeArcanaLock) {
-    gameState.activeEffects.timeFreezeArcanaLock = { w: false, b: false };
-  }
-  // Casting Time Freeze resets any stale lock and primes a full-turn skip.
-  gameState.activeEffects.timeFreezeArcanaLock[opponentColor] = false;
-  gameState.activeEffects.timeFrozen[opponentColor] = true;
-  return { params: { frozenColor: opponentColor } };
-}
-
-function applyDivineIntervention({ gameState, moverColor }) {
-  // Divine Intervention: Activate protective effect that triggers when entering check
-  // The effect will spawn a pawn from heaven to block check attacks
-  if (moverColor) {
-    if (!gameState.activeEffects.divineIntervention) {
-      gameState.activeEffects.divineIntervention = {};
-    }
-    gameState.activeEffects.divineIntervention[moverColor] = {
-      active: true,
-      used: false, // Triggers once when check is detected
-    };
-    return { params: { color: moverColor } };
-  }
-  return null;
-}
-
-function applySanctuary({ gameState, params }) {
-  if (params?.targetSquare) {
-    gameState.activeEffects.sanctuaries.push({
-      square: params.targetSquare,
-      turns: 4,
-    });
-    return { params: { square: params.targetSquare } };
-  }
-  return null;
-}
-
-// ============ MOVEMENT CARDS ============
-
-function applySpectralMarch({ gameState, moverColor }) {
-  if (moverColor) {
-    gameState.activeEffects.spectralMarch[moverColor] = true;
-    return { params: { color: moverColor } };
-  }
-  return null;
-}
-
-function applyKnightOfStorms({ chess, gameState, moverColor, params }) {
-  // Knight of Storms: allows knight to move to any square within 2-square radius
-  const targetSquare = params?.targetSquare;
-  if (!targetSquare) return null;
-  
-  const knight = chess.get(targetSquare);
-  if (!knight || knight.type !== 'n' || knight.color !== moverColor) return null;
-  
-  // Enable knight of storms effect for this knight
-  if (!gameState.activeEffects.knightOfStorms) {
-    gameState.activeEffects.knightOfStorms = { w: null, b: null };
-  }
-  gameState.activeEffects.knightOfStorms[moverColor] = targetSquare;
-  
-  return { params: { knightSquare: targetSquare, color: moverColor } };
-}
-
-function applyQueensGambit({ gameState, moverColor }) {
-  if (moverColor) {
-    gameState.activeEffects.queensGambit[moverColor] = 1;
-    return { params: { color: moverColor } };
-  }
-  return null;
-}
-
-function applyPhantomStep({ gameState, moverColor }) {
-  if (moverColor) {
-    gameState.activeEffects.phantomStep[moverColor] = true;
-    return { params: { color: moverColor } };
-  }
-  return null;
-}
-
-function applyRoyalSwap({ chess, moverColor, params }) {
-  if (params?.targetSquare && moverColor) {
-    const kingSquare = findKing(chess, moverColor);
-    const targetPiece = chess.get(params.targetSquare);
-    // Royal Swap: king can only swap with a pawn (per card description)
-    if (kingSquare && targetPiece && targetPiece.type === 'p' && targetPiece.color === moverColor) {
-      chess.remove(kingSquare);
-      chess.remove(params.targetSquare);
-      chess.put({ type: 'k', color: moverColor }, params.targetSquare);
-
-      // Keep the swapped piece as a pawn. Promotion still only occurs when
-      // that pawn later reaches the opponent back rank through normal rules.
-      chess.put({ type: targetPiece.type, color: moverColor }, kingSquare);
-      return {
-        params: {
-          kingFrom: kingSquare,
-          kingTo: params.targetSquare,
-          swappedPieceType: targetPiece.type,
-          promotedFromPawn: false,
-        },
-      };
-    }
-  }
-  return null;
-}
-
-function applyPawnRush({ gameState, moverColor }) {
-  if (moverColor) {
-    gameState.activeEffects.pawnRush[moverColor] = true;
-    return { params: { color: moverColor } };
-  }
-  return null;
 }
 
 function applyTemporalEcho({ gameState, moverColor }) {
@@ -773,6 +465,72 @@ function applyTemporalEcho({ gameState, moverColor }) {
     return { params: { lastMove: ownLastMove, pattern: { fileDelta, rankDelta } } };
   }
   return null;
+}
+
+function applyTimeFreeze({ gameState, moverColor }) {
+  const opponentColor = moverColor === 'w' ? 'b' : 'w';
+  gameState.activeEffects.timeFreezeArcanaLock = gameState.activeEffects.timeFreezeArcanaLock || { w: false, b: false };
+  gameState.activeEffects.timeFrozen = gameState.activeEffects.timeFrozen || { w: false, b: false };
+  gameState.activeEffects.timeFreezeArcanaLock[opponentColor] = false;
+  gameState.activeEffects.timeFrozen[opponentColor] = true;
+  return { params: { frozenColor: opponentColor } };
+}
+
+function applyDivineIntervention({ gameState, moverColor }) {
+  if (!moverColor) return null;
+  gameState.activeEffects.divineIntervention = gameState.activeEffects.divineIntervention || { w: false, b: false };
+  gameState.activeEffects.divineIntervention[moverColor] = { active: true, used: false };
+  return { params: { color: moverColor } };
+}
+
+function applySanctuary({ gameState, params }) {
+  const targetSquare = params?.targetSquare || params?.square;
+  if (!targetSquare) return null;
+  gameState.activeEffects.sanctuaries = Array.isArray(gameState.activeEffects.sanctuaries)
+    ? gameState.activeEffects.sanctuaries
+    : [];
+  gameState.activeEffects.sanctuaries.push({ square: targetSquare, turns: 4 });
+  return { params: { square: targetSquare } };
+}
+
+function applySpectralMarch({ gameState, moverColor }) {
+  if (!moverColor) return null;
+  gameState.activeEffects.spectralMarch = gameState.activeEffects.spectralMarch || { w: false, b: false };
+  gameState.activeEffects.spectralMarch[moverColor] = true;
+  return { params: { color: moverColor } };
+}
+
+function applyKnightOfStorms({ chess, gameState, moverColor, params }) {
+  const targetSquare = params?.targetSquare || params?.pieceSquare;
+  if (!targetSquare || !moverColor) return null;
+
+  const knight = chess.get(targetSquare);
+  if (!knight || knight.type !== 'n' || knight.color !== moverColor) return null;
+
+  gameState.activeEffects.knightOfStorms = gameState.activeEffects.knightOfStorms || { w: null, b: null };
+  gameState.activeEffects.knightOfStorms[moverColor] = targetSquare;
+  return { params: { knightSquare: targetSquare, color: moverColor } };
+}
+
+function applyQueensGambit({ gameState, moverColor }) {
+  if (!moverColor) return null;
+  gameState.activeEffects.queensGambit = gameState.activeEffects.queensGambit || { w: 0, b: 0 };
+  gameState.activeEffects.queensGambit[moverColor] = 1;
+  return { params: { color: moverColor } };
+}
+
+function applyPhantomStep({ gameState, moverColor }) {
+  if (!moverColor) return null;
+  gameState.activeEffects.phantomStep = gameState.activeEffects.phantomStep || { w: false, b: false };
+  gameState.activeEffects.phantomStep[moverColor] = true;
+  return { params: { color: moverColor } };
+}
+
+function applyPawnRush({ gameState, moverColor }) {
+  if (!moverColor) return null;
+  gameState.activeEffects.pawnRush = gameState.activeEffects.pawnRush || { w: false, b: false };
+  gameState.activeEffects.pawnRush[moverColor] = true;
+  return { params: { color: moverColor } };
 }
 
 // ============ OFFENSE CARDS ============
@@ -923,9 +681,7 @@ function applyAstralRebirth({ gameState, moverColor }) {
 
 function applyNecromancy({ gameState, moverColor }) {
   if (moverColor) {
-    const revivedPawns = revivePawns(gameState, moverColor, 1);
-    const revivedOther = reviveRandomCapturedNonPawn(gameState, moverColor);
-    const revived = [...revivedPawns, ...revivedOther];
+    const revived = revivePawns(gameState, moverColor, 2);
     if (revived.length === 0) {
       return null;
     }
@@ -934,8 +690,8 @@ function applyNecromancy({ gameState, moverColor }) {
         revived,
         revivedSquares: revived,
         rebornSquare: revived[0] || null,
-        revivedPawn: revivedPawns.length > 0,
-        revivedOther: revivedOther.length > 0,
+        revivedPawn: revived.length > 0,
+        revivedOther: false,
       },
     };
   }
@@ -1424,6 +1180,40 @@ function applySoftPush({ chess, moverColor, params }) {
   chess.put(piece, destSquare);
   
   return { params: { square: targetSquare, destSquare, piece: piece.type } };
+}
+
+function applyRoyalSwap({ chess, gameState, moverColor, params }) {
+  const targetSquare = params?.targetSquare;
+  if (!targetSquare) return null;
+
+  const pawn = chess.get(targetSquare);
+  if (!pawn || pawn.type !== 'p' || pawn.color !== moverColor) return null;
+
+  const kingSquare = findKing(chess, moverColor);
+  if (!kingSquare) return null;
+
+  const king = chess.get(kingSquare);
+  if (!king || king.type !== 'k' || king.color !== moverColor) return null;
+
+  chess.remove(kingSquare);
+  chess.remove(targetSquare);
+  chess.put({ type: 'k', color: moverColor }, targetSquare);
+  chess.put({ type: 'p', color: moverColor }, kingSquare);
+
+  if (gameState?.activeEffects) {
+    gameState.activeEffects.royalSwap ||= { w: null, b: null };
+    gameState.activeEffects.royalSwap[moverColor] = { piece1: kingSquare, piece2: targetSquare };
+  }
+
+  return {
+    params: {
+      square: targetSquare,
+      targetSquare,
+      kingTo: targetSquare,
+      pawnTo: kingSquare,
+      color: moverColor,
+    },
+  };
 }
 
 function applyFogOfWar({ gameState, moverColor }) {
@@ -1930,54 +1720,48 @@ function astralRebirthEffect(gameState, moverColor) {
   const captured = gameState.capturedByColor?.[moverColor] || [];
   if (!Array.isArray(captured) || captured.length === 0) return null;
   
-  const pieceValue = { q: 5, r: 4, b: 3, n: 2, p: 1 };
-  // Sort by value descending to resurrect the best pieces
-  const sortedCaptured = [...captured].sort((a, b) => (pieceValue[b.type] || 0) - (pieceValue[a.type] || 0));
-  
+  const pieceValue = { q: 9, r: 5, b: 3, n: 3, p: 1 };
   const revivedSquares = [];
-  const maxRevive = Math.min(2, sortedCaptured.length); // Revive up to 2 pieces
-  
-  // Try to revive up to 2 pieces
-  for (let attempt = 0; attempt < maxRevive; attempt++) {
-    if (attempt >= sortedCaptured.length) break;
-    
-    const toRevive = sortedCaptured[attempt];
-    if (!toRevive || !toRevive.type) continue; // Skip if invalid
-    
-    let pieceType = toRevive.type;
-    
-    // Don't place pawns on back rank - they'd be immovable. Use knight instead.
-    if (pieceType === 'p') pieceType = 'n';
+  while (revivedSquares.length < 2 && captured.length > 0) {
+    const ranked = captured
+      .map((entry, idx) => ({ entry, idx }))
+      .filter(({ entry }) => entry && entry.type)
+      .sort((a, b) => (pieceValue[b.entry.type] || 0) - (pieceValue[a.entry.type] || 0));
+
+    if (ranked.length === 0) break;
+
+    const selected = ranked[0];
+    const toRevive = selected.entry;
+    const pieceType = toRevive.type;
     
     // Try back rank first
-    let placed = false;
+    let placedSquare = null;
     for (let file = 0; file < 8; file++) {
       const square = 'abcdefgh'[file] + backRank;
       if (!chess.get(square)) {
         chess.put({ type: pieceType, color: moverColor }, square);
-        revivedSquares.push(square);
-        // Remove from captured list since it's been revived
-        const idx = captured.findIndex(p => p && p.type === toRevive.type);
-        if (idx !== -1) captured.splice(idx, 1);
-        placed = true;
+        placedSquare = square;
         break;
       }
     }
     
     // If back rank is full, try second rank
-    if (!placed) {
+    if (!placedSquare) {
       for (let file = 0; file < 8; file++) {
         const square = 'abcdefgh'[file] + secondRank;
         if (!chess.get(square)) {
           chess.put({ type: pieceType, color: moverColor }, square);
-          revivedSquares.push(square);
-          // Remove from captured list since it's been revived
-          const idx = captured.findIndex(p => p && p.type === toRevive.type);
-          if (idx !== -1) captured.splice(idx, 1);
+          placedSquare = square;
           break;
         }
       }
     }
+
+    if (!placedSquare) break;
+
+    revivedSquares.push(placedSquare);
+    // Remove the exact selected captured entry.
+    captured.splice(selected.idx, 1);
   }
   
   // Return both the primary camera focus and all revived squares for downstream UI/cutscene consumers.

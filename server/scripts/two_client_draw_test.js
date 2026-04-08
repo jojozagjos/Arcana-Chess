@@ -2,7 +2,24 @@ import { io } from 'socket.io-client';
 
 const SERVER = process.env.SERVER_URL || 'http://localhost:4000';
 
-function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+function waitForGameUpdate(sockets, timeout = 4000) {
+  return new Promise((resolve, reject) => {
+    const timers = [];
+    const cleanup = () => {
+      sockets.forEach((sock) => sock.off('gameUpdated', onUpdate));
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+    const onUpdate = (state) => {
+      cleanup();
+      resolve(state);
+    };
+    sockets.forEach((sock) => sock.once('gameUpdated', onUpdate));
+    timers.push(setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for gameUpdated'));
+    }, timeout));
+  });
+}
 
 async function run() {
   console.log('Connecting two test clients to', SERVER);
@@ -72,28 +89,25 @@ async function run() {
   console.log('\n-- Prep: White plays e2-e4');
   const prep1 = await playerAction(whiteSock, { move: { from: 'e2', to: 'e4' } }, 5000);
   console.log('white move:', prep1.ok ? 'ok' : prep1);
-
-  await wait(200);
+  await waitForGameUpdate([a, b]);
 
   console.log('\n-- Prep: Black plays d7-d5');
   const prep2 = await playerAction(blackSock, { move: { from: 'd7', to: 'd5' } }, 5000);
   console.log('black move:', prep2.ok ? 'ok' : prep2);
-
-  await wait(200);
+  await waitForGameUpdate([a, b]);
 
   console.log('\n-- Prep: White captures e4xd5 to trigger ascension');
   const prep3 = await playerAction(whiteSock, { move: { from: 'e4', to: 'd5' } }, 5000);
   console.log('white capture response:', prep3);
 
   // Allow server to process ascension state
-  await wait(300);
+  await waitForGameUpdate([a, b]);
 
   // After white captures, it's black's turn
   console.log('\n-- Step 1: Black makes a move (e7-e5)');
   const res1 = await playerAction(blackSock, { move: { from: 'e7', to: 'e5' } }, 5000);
   console.log('black move response:', res1.ok ? 'ok' : res1);
-
-  await wait(200);
+  await waitForGameUpdate([a, b]);
 
   // Now it's white's turn - white can draw
   console.log('\n-- Step 2: White draws (should succeed - first draw after ascension)');
@@ -105,14 +119,13 @@ async function run() {
     console.log('✓ First draw successful');
   }
 
-  await wait(200);
+  await waitForGameUpdate([a, b]);
 
   // After white draws, it's black's turn
   console.log('\n-- Step 3: Black makes another move (f7-f6)');
   const res3 = await playerAction(blackSock, { move: { from: 'f7', to: 'f6' } }, 5000);
   console.log('black move response:', res3.ok ? 'ok' : res3);
-
-  await wait(200);
+  await waitForGameUpdate([a, b]);
 
   // Now it's white's turn - white tries to draw on immediate next turn (should be blocked)
   console.log('\n-- Step 4: White tries to draw again (should be BLOCKED - immediate next turn)');
@@ -124,19 +137,17 @@ async function run() {
     console.log('✓ Draw correctly blocked');
   }
 
-  await wait(200);
+  await waitForGameUpdate([a, b]).catch(() => {});
 
   console.log('\n-- Step 5: White makes a regular move instead (g2-g3)');
   const res5 = await playerAction(whiteSock, { move: { from: 'g2', to: 'g3' } }, 5000);
   console.log('white move response:', res5.ok ? 'ok' : res5);
-
-  await wait(200);
+  await waitForGameUpdate([a, b]);
 
   console.log('\n-- Step 6: Black makes another move (g7-g6)');
   const res6 = await playerAction(blackSock, { move: { from: 'g7', to: 'g6' } }, 5000);
   console.log('black move response:', res6.ok ? 'ok' : res6);
-
-  await wait(200);
+  await waitForGameUpdate([a, b]);
 
   // Now it's white's turn - enough plies have passed (following turn after skipping immediate next turn)
   console.log('\n-- Step 7: White attempts to draw again (should now be ALLOWED - following turn)');
@@ -149,7 +160,7 @@ async function run() {
   }
 
   // --- Additional checks: independence and draw-after-use ---
-  await wait(300);
+  await waitForGameUpdate([a, b]).catch(() => {});
 
   console.log('\n-- Independence test: Ensure black can draw on its turn independently');
   // Let black draw on its turn
@@ -158,13 +169,13 @@ async function run() {
   if (cur && cur.turn === 'w') {
     // make a white move to hand turn back to black (if possible)
     await playerAction(whiteSock, { move: { from: 'a2', to: 'a3' } }, 3000).catch(()=>{});
-    await wait(200);
+    await waitForGameUpdate([a, b]).catch(() => {});
   }
 
   const blackDraw = await playerAction(blackSock, { actionType: 'drawArcana' }, 5000);
   console.log('black draw response:', blackDraw);
 
-  await wait(300);
+  await waitForGameUpdate([a, b]).catch(() => {});
 
   console.log('\n-- Draw after use test: White draws, uses a card, then attempts to draw (should be blocked)');
   // Ensure white has at least one card: if not, draw one
@@ -173,7 +184,7 @@ async function run() {
   if (!whiteCards || whiteCards.length === 0) {
     const d1 = await playerAction(whiteSock, { actionType: 'drawArcana' }, 5000);
     console.log('white drew for use test:', d1.ok ? 'ok' : d1);
-    await wait(200);
+    await waitForGameUpdate([a, b]).catch(() => {});
   }
 
   const stateAfterDraw = getLatestFor(whiteSock);
@@ -185,7 +196,7 @@ async function run() {
     const first = cardsNow[0];
     const useRes = await playerAction(whiteSock, { actionType: 'useArcana', arcanaUsed: [{ arcanaId: first.id, params: {} }] }, 5000);
     console.log('useArcana response:', useRes);
-    await wait(300);
+    await waitForGameUpdate([a, b]).catch(() => {});
 
     const postUseState = getLatestFor(whiteSock);
     const postCards = postUseState?.arcanaByPlayer?.[whiteSock.id] || [];
@@ -196,7 +207,7 @@ async function run() {
     console.log('draw after use response:', blockedDraw);
   }
 
-  await wait(300);
+  await waitForGameUpdate([a, b]).catch(() => {});
 
   console.log('\n-- Draw while in check test: try to force a check and draw (should be blocked)');
   // This is a weaker check: if in-check condition can be simulated, attempt draw and expect error

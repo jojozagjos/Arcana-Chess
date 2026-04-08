@@ -11,6 +11,16 @@ function normalizeCardId(cardId = '') {
   return cardId === 'arcane_cycle' ? 'filtered_cycle' : cardId;
 }
 
+function hashCardId(cardId = '') {
+  const value = normalizeCardId(cardId);
+  let h = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h >>> 0);
+}
+
 function mulberry32(seed) {
   let t = seed >>> 0;
   return () => {
@@ -27,6 +37,7 @@ function hasVfxData(vfx = {}) {
 
 function inferProfile(cardId = '', vfx = {}) {
   const id = normalizeCardId(cardId);
+  const cardHash = hashCardId(id);
 
   if (id === 'execution') {
     return {
@@ -130,36 +141,94 @@ function inferProfile(cardId = '', vfx = {}) {
     };
   }
 
-  if (id === 'filtered_cycle') {
+  if (id === 'promotion_ritual') {
     return {
-      name: 'Cycle Echo Drift',
-      colors: ['#d5f1ff', '#87cbff', '#4b78ff'],
-      emissionRate: 36,
-      burstCount: 10,
-      velocityMin: 0.35,
-      velocityMax: 1.3,
-      lifetimeMin: 0.45,
-      lifetimeMax: 1.3,
-      spawnRadius: 0.56,
-      gravity: [0, -3.2, 0],
-      noiseStrength: 0.28,
-      spawnShape: 'ring',
+      name: 'Promotion Ritual Beam',
+      colors: [vfx.beamColor || '#fff6a8', '#ffe36a', '#ffb03f'],
+      emissionRate: toNumber(vfx.promotionParticles, 58),
+      burstCount: toNumber(vfx.lightBeam ? 30 : 18, 30),
+      velocityMin: 0.45,
+      velocityMax: toNumber(vfx.particleVelocity, 1.6),
+      lifetimeMin: 0.3,
+      lifetimeMax: 1.15,
+      spawnRadius: 0.42,
+      gravity: [0, -4.8, 0],
+      noiseStrength: 0.34,
+      spawnShape: 'cone',
+      burstDelayMs: Math.max(0, toNumber(vfx.beamDuration, 0) * 0.3),
     };
   }
 
-  if (hasVfxData(vfx)) {
+  if (id === 'breaking_point') {
     return {
-      name: 'Imported Cutscene VFX',
-      colors: [vfx.glowColor || '#a6ecff', '#62beff', '#3f59ff'],
-      emissionRate: toNumber(vfx.bloodParticles || vfx.rewindParticles || vfx.astralParticles || vfx.snowParticles, 30),
-      burstCount: 8,
-      velocityMin: 0.35,
-      velocityMax: toNumber(vfx.particleVelocity, 1.35),
-      lifetimeMin: 0.25,
-      lifetimeMax: 1.1,
-      spawnRadius: 0.4,
-      gravity: [0, -5.4, 0],
-      noiseStrength: 0.24,
+      name: 'Breaking Point Rupture',
+      colors: [vfx.pressureColor || '#ff4d4d', '#ff9a4f', vfx.fractureColor || '#8de3ff'],
+      emissionRate: Math.max(28, toNumber(vfx.fractureBolts, 56)),
+      burstCount: Math.max(24, toNumber(vfx.shardBurst, 132)),
+      velocityMin: 0.95,
+      velocityMax: toNumber(vfx.particleVelocity, 3.15),
+      lifetimeMin: 0.18,
+      lifetimeMax: 1.22,
+      spawnRadius: 0.68,
+      gravity: [0, -9.4, 0],
+      noiseStrength: 0.72,
+      noiseFrequency: 2.3,
+      spawnShape: 'ring',
+      burstDelayMs: 320,
+    };
+  }
+
+  if (id === 'edgerunner_overdrive') {
+    return {
+      name: 'Overdrive Dash Tracer',
+      colors: ['#d6ffd9', '#6cff8f', '#00c356'],
+      emissionRate: 66,
+      burstCount: 34,
+      velocityMin: 1.2,
+      velocityMax: toNumber(vfx.particleVelocity, 3.8),
+      lifetimeMin: 0.14,
+      lifetimeMax: 0.82,
+      spawnRadius: 0.46,
+      gravity: [0, -3.1, 0],
+      noiseStrength: 0.58,
+      noiseFrequency: 2.8,
+      drag: 0.03,
+      spawnShape: 'sphere',
+      burstDelayMs: 140,
+    };
+  }
+
+  // filtered_cycle has no canonical particle metadata in legacy definitions.
+  // Do not auto-generate VFX for it unless real vfx payload exists.
+  if (id === 'filtered_cycle' && !hasVfxData(vfx)) return null;
+
+  if (hasVfxData(vfx)) {
+    const paletteIndex = cardHash % 4;
+    const palettes = [
+      ['#a6ecff', '#62beff', '#3f59ff'],
+      ['#ffd8f8', '#f78fff', '#8b3dff'],
+      ['#c8ffe4', '#5ce6b0', '#16857f'],
+      ['#ffe3c2', '#ffb066', '#ff6d6d'],
+    ];
+    const shapeByHash = ['sphere', 'ring', 'cone', 'box'];
+    const shape = vfx.spawnShape || shapeByHash[paletteIndex];
+
+    return {
+      name: `Imported VFX ${paletteIndex + 1}`,
+      colors: [vfx.glowColor || palettes[paletteIndex][0], palettes[paletteIndex][1], palettes[paletteIndex][2]],
+      emissionRate: toNumber(vfx.bloodParticles || vfx.rewindParticles || vfx.astralParticles || vfx.snowParticles, 28 + (cardHash % 14)),
+      burstCount: 6 + (cardHash % 10),
+      velocityMin: 0.28 + ((cardHash % 5) * 0.06),
+      velocityMax: toNumber(vfx.particleVelocity, 1.2 + ((cardHash % 8) * 0.16)),
+      lifetimeMin: 0.2 + ((cardHash % 4) * 0.05),
+      lifetimeMax: 0.95 + ((cardHash % 6) * 0.12),
+      spawnRadius: 0.28 + ((cardHash % 7) * 0.05),
+      gravity: [0, -4.2 - (cardHash % 5), 0],
+      noiseStrength: 0.18 + ((cardHash % 6) * 0.05),
+      noiseFrequency: 1 + ((cardHash % 7) * 0.22),
+      drag: 0.04 + ((cardHash % 5) * 0.03),
+      sizeOverLife: [1.05 + ((cardHash % 3) * 0.07), 0.68 + ((cardHash % 4) * 0.04), 0.08 + ((cardHash % 3) * 0.04)],
+      spawnShape: shape,
     };
   }
 
@@ -234,19 +303,111 @@ function buildParticleTrack(profile, options = {}) {
   };
 }
 
+function buildSecondaryProfile(profile, cardId = '', vfx = {}) {
+  if (!profile) return null;
+  const cardHash = hashCardId(cardId);
+  const shouldHaveSecondary = ['execution', 'time_travel', 'mind_control', 'astral_rebirth', 'divine_intervention'].includes(normalizeCardId(cardId))
+    || hasVfxData(vfx);
+  if (!shouldHaveSecondary) return null;
+
+  const a = (Array.isArray(profile.colors) && profile.colors.length > 0) ? profile.colors[0] : '#9ad7ff';
+  const b = (Array.isArray(profile.colors) && profile.colors.length > 1) ? profile.colors[1] : '#4cb6ff';
+  return {
+    name: `${profile.name || 'Imported VFX'} Echo`,
+    colors: [b, a, '#ffffff'],
+    emissionRate: Math.max(6, Math.round(toNumber(profile.emissionRate, 20) * (0.32 + (cardHash % 4) * 0.08))),
+    burstCount: Math.max(2, Math.round(toNumber(profile.burstCount, 8) * 0.45)),
+    velocityMin: Math.max(0.12, toNumber(profile.velocityMin, 0.4) * 0.45),
+    velocityMax: Math.max(0.42, toNumber(profile.velocityMax, 1.2) * 0.72),
+    lifetimeMin: Math.max(0.18, toNumber(profile.lifetimeMin, 0.25) * 1.2),
+    lifetimeMax: Math.max(0.55, toNumber(profile.lifetimeMax, 1.1) * 1.35),
+    spawnRadius: Math.max(0.2, toNumber(profile.spawnRadius, 0.4) * 1.2),
+    gravity: [0, (Array.isArray(profile.gravity) ? toNumber(profile.gravity[1], -6) : -6) * 0.42, 0],
+    noiseStrength: Math.max(0.08, toNumber(profile.noiseStrength, 0.2) * 0.7),
+    noiseFrequency: Math.max(0.7, toNumber(profile.noiseFrequency, 1.4) * 0.9),
+    drag: Math.max(0.03, toNumber(profile.drag, 0.08) + 0.04),
+    sizeOverLife: [0.72, 0.5, 0.14],
+    spawnShape: (cardHash % 2 === 0) ? 'ring' : 'sphere',
+    burstDelayMs: 90 + (cardHash % 4) * 45,
+  };
+}
+
+function buildCinematicAccentProfile(profile, cardId = '') {
+  if (!profile) return null;
+  const id = normalizeCardId(cardId);
+  const cinematicIds = new Set([
+    'time_freeze',
+    'divine_intervention',
+    'execution',
+    'astral_rebirth',
+    'promotion_ritual',
+    'time_travel',
+    'mind_control',
+    'breaking_point',
+    'edgerunner_overdrive',
+  ]);
+  if (!cinematicIds.has(id)) return null;
+
+  return {
+    name: `${profile.name || 'Cinematic'} Accent`,
+    colors: ['#ffffff', ...(Array.isArray(profile.colors) ? profile.colors.slice(0, 2) : ['#9ad7ff', '#4cb6ff'])],
+    emissionRate: Math.max(8, Math.round(toNumber(profile.emissionRate, 24) * 0.22)),
+    burstCount: Math.max(3, Math.round(toNumber(profile.burstCount, 10) * 0.38)),
+    velocityMin: Math.max(0.1, toNumber(profile.velocityMin, 0.4) * 0.35),
+    velocityMax: Math.max(0.7, toNumber(profile.velocityMax, 1.2) * 0.62),
+    lifetimeMin: Math.max(0.2, toNumber(profile.lifetimeMin, 0.25) * 1.1),
+    lifetimeMax: Math.max(0.8, toNumber(profile.lifetimeMax, 1.1) * 1.5),
+    spawnRadius: Math.max(0.32, toNumber(profile.spawnRadius, 0.4) * 1.45),
+    gravity: [0, -1.2, 0],
+    noiseStrength: Math.max(0.04, toNumber(profile.noiseStrength, 0.2) * 0.45),
+    noiseFrequency: Math.max(0.8, toNumber(profile.noiseFrequency, 1.4) * 0.72),
+    drag: Math.max(0.06, toNumber(profile.drag, 0.08) + 0.08),
+    sizeOverLife: [0.58, 0.44, 0.12],
+    spawnShape: 'ring',
+    burstDelayMs: 210,
+  };
+}
+
 export function buildStudioParticleTracksFromLegacy({ cardId = '', legacyConfig = null, durationMs = 4000, objectTrackId = null } = {}) {
+  const normalizedId = normalizeCardId(cardId);
   const vfx = legacyConfig?.vfx && typeof legacyConfig.vfx === 'object' ? legacyConfig.vfx : {};
-  const profile = inferProfile(cardId, vfx);
+  const profile = inferProfile(normalizedId, vfx);
   if (!profile) return [];
 
-  const track = buildParticleTrack(profile, {
-    id: `pt_${normalizeCardId(cardId) || 'card'}_main`,
-    seed: 1337,
+  const baseSeed = 1200 + (hashCardId(normalizedId) % 90000);
+
+  const mainTrack = buildParticleTrack(profile, {
+    id: `pt_${normalizedId || 'card'}_main`,
+    seed: baseSeed,
     durationMs,
     objectTrackId,
   });
+  if (!mainTrack) return [];
 
-  return track ? [track] : [];
+  const tracks = [mainTrack];
+  const secondaryProfile = buildSecondaryProfile(profile, normalizedId, vfx);
+  if (secondaryProfile) {
+    const secondaryTrack = buildParticleTrack(secondaryProfile, {
+      id: `pt_${normalizedId || 'card'}_echo`,
+      seed: baseSeed + 313,
+      durationMs,
+      objectTrackId,
+    });
+    if (secondaryTrack) tracks.push(secondaryTrack);
+  }
+
+  const cinematicAccent = buildCinematicAccentProfile(profile, normalizedId);
+  if (cinematicAccent) {
+    const accentTrack = buildParticleTrack(cinematicAccent, {
+      id: `pt_${normalizedId || 'card'}_accent`,
+      seed: baseSeed + 911,
+      durationMs,
+      objectTrackId,
+    });
+    if (accentTrack) tracks.push(accentTrack);
+  }
+
+  return tracks;
 }
 
 function sampleArrayCurve(arr, t, fallback = 1) {
@@ -297,13 +458,27 @@ function spawnOffset(shape, radius, rand) {
   return [r * m * Math.cos(theta), r * u, r * m * Math.sin(theta)];
 }
 
+function normalizeVector(vec = [0, 0, 0]) {
+  const length = Math.hypot(vec[0] || 0, vec[1] || 0, vec[2] || 0);
+  if (length < 0.0001) return [0, 1, 0];
+  return [(vec[0] || 0) / length, (vec[1] || 0) / length, (vec[2] || 0) / length];
+}
+
+function addVec3(a = [0, 0, 0], b = [0, 0, 0]) {
+  return [
+    (a[0] || 0) + (b[0] || 0),
+    (a[1] || 0) + (b[1] || 0),
+    (a[2] || 0) + (b[2] || 0),
+  ];
+}
+
 export function buildParticlePreviewPoints({ sample, anchor = [0, 0, 0], maxPoints = 72 } = {}) {
   if (!sample?.active) return [];
 
   const params = sample.params || {};
   const emissionRate = Math.max(0, toNumber(params.emissionRate, 12));
   const burstCount = Math.max(0, toNumber(params.burstCount, 0));
-  const count = clamp(Math.round(emissionRate * 0.7 + burstCount * 0.5), 6, maxPoints);
+  const count = clamp(Math.round(emissionRate * 0.6 + burstCount * 1.15), 8, maxPoints);
   const seed = Number.isInteger(sample.seed) ? sample.seed : 1337;
   const rand = mulberry32(seed);
 
@@ -311,7 +486,7 @@ export function buildParticlePreviewPoints({ sample, anchor = [0, 0, 0], maxPoin
   const velocityMin = Math.max(0, toNumber(params.velocityMin, 0.35));
   const velocityMax = Math.max(velocityMin + 0.01, toNumber(params.velocityMax, 1.6));
   const lifetime = Math.max(0.1, toNumber(params.lifetimeMax, 1.2));
-  const gravityY = toNumber(params.gravity?.[1], -6);
+  const gravity = Array.isArray(params.gravity) ? params.gravity : [0, -6, 0];
   const drag = Math.max(0, toNumber(params.drag, 0.08));
   const noiseStrength = Math.max(0, toNumber(params.noiseStrength, 0.2));
   const spawnShape = params.spawnShape || 'sphere';
@@ -319,24 +494,66 @@ export function buildParticlePreviewPoints({ sample, anchor = [0, 0, 0], maxPoin
   const sizeOverLife = Array.isArray(params.sizeOverLife) ? params.sizeOverLife : [1, 0.7, 0.2];
 
   const points = [];
-  for (let i = 0; i < count; i += 1) {
-    const lifeT = i / Math.max(1, count - 1);
-    const age = 1 - lifeT;
-    const speed = velocityMin + (velocityMax - velocityMin) * rand();
-    const offset = spawnOffset(spawnShape, spawnRadius, rand);
-    const swirl = (rand() * 2 - 1) * noiseStrength;
-    const arc = lifetime * age;
-    const gravityDrift = gravityY * (age ** 2) * 0.04;
+  const burstQuota = Math.min(burstCount, Math.max(0, Math.round(count * 0.45)));
+  const trailQuota = Math.max(0, count - burstQuota);
 
+  const pushPoint = ({ position, lifeT, energy = 1, direction = [0, 1, 0], velocityScale = 1 }) => {
+    const sizeShape = sampleArrayCurve(sizeOverLife, lifeT, 1);
+    const opacityBias = clamp(1 - lifeT * 0.95, 0, 1);
     points.push({
-      position: [
-        anchor[0] + offset[0] + swirl * 0.5,
-        anchor[1] + 0.14 + offset[1] + speed * arc + gravityDrift,
-        anchor[2] + offset[2] + swirl * 0.5,
-      ],
+      position,
       color: sampleColor(colors, lifeT),
-      size: 0.02 + sampleArrayCurve(sizeOverLife, lifeT, 1) * 0.05,
-      opacity: clamp(0.24 + (1 - lifeT) * 0.7 - drag * lifeT * 0.4, 0.12, 0.95),
+      size: (0.022 + sizeShape * 0.05) * clamp(0.65 + energy * 0.65, 0.5, 1.5),
+      opacity: clamp(0.18 + opacityBias * 0.72 - drag * lifeT * 0.35 + energy * 0.12, 0.1, 0.98),
+      direction,
+      velocityScale,
+    });
+  };
+
+  for (let i = 0; i < burstQuota; i += 1) {
+    const offset = spawnOffset(spawnShape, spawnRadius, rand);
+    const direction = normalizeVector(offset);
+    const speed = velocityMin + (velocityMax - velocityMin) * rand();
+    const lifeT = clamp(rand() * 0.22, 0, 1);
+    const arc = lifetime * (0.7 + rand() * 0.35);
+    const swirl = (rand() * 2 - 1) * noiseStrength;
+    const gravityDrift = gravity[1] * arc * arc * 0.06;
+    const position = [
+      anchor[0] + offset[0] + direction[0] * speed * arc * 0.85 + swirl * 0.25,
+      anchor[1] + 0.14 + offset[1] + direction[1] * speed * arc + gravityDrift,
+      anchor[2] + offset[2] + direction[2] * speed * arc * 0.85 + swirl * 0.25,
+    ];
+    pushPoint({ position, lifeT, energy: 1, direction, velocityScale: speed });
+  }
+
+  for (let i = 0; i < trailQuota; i += 1) {
+    const lifeT = trailQuota <= 1 ? 1 : i / (trailQuota - 1);
+    const age = 1 - lifeT;
+    const offset = spawnOffset(spawnShape, spawnRadius, rand);
+    const direction = normalizeVector(addVec3(offset, [0, spawnShape === 'cone' ? 1 : 0.35, 0]));
+    const speed = velocityMin + (velocityMax - velocityMin) * rand();
+    const arc = lifetime * (0.28 + age * 0.9);
+    const gravityDrift = [
+      gravity[0] * age * age * 0.08,
+      gravity[1] * age * age * 0.08,
+      gravity[2] * age * age * 0.08,
+    ];
+    const swirl = noiseStrength * (rand() * 2 - 1);
+    const trail = addVec3(
+      anchor,
+      addVec3(offset, [
+        direction[0] * speed * arc + swirl * 0.18,
+        direction[1] * speed * arc + swirl * 0.08,
+        direction[2] * speed * arc + swirl * 0.18,
+      ]),
+    );
+
+    pushPoint({
+      position: addVec3(trail, gravityDrift),
+      lifeT,
+      energy: 0.55 + age * 0.45,
+      direction,
+      velocityScale: speed,
     });
   }
 

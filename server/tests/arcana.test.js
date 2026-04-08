@@ -909,7 +909,7 @@ test('Temporal Echo uses the mover color last move when available', () => {
   assertEqual(gameState.activeEffects.temporalEcho.pattern.rankDelta, 2, 'Expected rank delta from white last move');
 });
 
-test('Necromancy revives non-pawn when no pawn captured', () => {
+test('Necromancy does not apply when no pawn is captured', () => {
   const gameState = createMockGameState('4k3/8/8/8/8/8/8/4K3 w - - 0 1');
   const socketId = 'player1';
   gameState.arcanaByPlayer[socketId] = [{ id: 'necromancy', name: 'Necromancy' }];
@@ -918,7 +918,7 @@ test('Necromancy revives non-pawn when no pawn captured', () => {
 
   const applied = applyArcana(socketId, gameState, [{ arcanaId: 'necromancy', params: {} }], { color: 'w' }, null);
 
-  assertEqual(applied.length, 1, 'Necromancy should apply with non-pawn captures available');
+  assertEqual(applied.length, 0, 'Necromancy should not apply without captured pawns');
   const board = gameState.chess.board();
   let foundKnight = false;
   for (let r = 0; r < 8; r++) {
@@ -927,7 +927,7 @@ test('Necromancy revives non-pawn when no pawn captured', () => {
       if (piece && piece.type === 'n' && piece.color === 'w') foundKnight = true;
     }
   }
-  assert(foundKnight, 'Necromancy should place a revived non-pawn piece');
+  assert(!foundKnight, 'Necromancy should not place a revived non-pawn piece');
 });
 
 test('Royal Swap keeps pawn as pawn on own back rank', () => {

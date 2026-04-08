@@ -18,6 +18,11 @@ function sanitizeSquareList(value) {
   return value.map(sanitizeSquare).filter(Boolean);
 }
 
+function clampPercent(value, fallback = 50) {
+  const n = Number.isFinite(value) ? value : fallback;
+  return Math.max(0, Math.min(100, n));
+}
+
 export function resolveRuntimeSquare(alias, eventParams = {}, fallbackSquare = null) {
   if (!alias || typeof alias !== 'string') {
     return EVENT_SQUARE_KEYS.map((key) => sanitizeSquare(eventParams?.[key])).find(Boolean) || sanitizeSquare(fallbackSquare) || null;
@@ -76,19 +81,57 @@ export function resolveSoundPreviewUrl(soundId) {
 }
 
 export function getScreenOverlaySamples(card, timeMs) {
-  return (card?.tracks?.overlays || [])
+  const entries = (card?.tracks?.overlays || [])
     .filter((track) => (track?.space || 'screen') !== 'world')
     .map((track) => ({ track, sample: sampleOverlayTrack(track, timeMs) }))
     .filter((entry) => entry.sample);
+
+  const byId = new Map(entries.map((entry) => [entry.track?.id, entry]));
+  const cache = new Map();
+  const visiting = new Set();
+
+  const resolveEntry = (entry) => {
+    const id = entry?.track?.id;
+    if (!id) return entry;
+    if (cache.has(id)) return cache.get(id);
+    if (visiting.has(id)) return entry;
+
+    visiting.add(id);
+    const parentId = entry.track?.parentId || null;
+    const parent = parentId ? byId.get(parentId) : null;
+    const parentResolved = parent ? resolveEntry(parent) : null;
+
+    const sample = entry.sample || {};
+    const composedSample = {
+      ...sample,
+      x: clampPercent((parentResolved?.sample?.x ?? 0) + (sample.x ?? 50)),
+      y: clampPercent((parentResolved?.sample?.y ?? 0) + (sample.y ?? 50)),
+      opacity: Math.max(0, Math.min(1, (parentResolved?.sample?.opacity ?? 1) * (sample.opacity ?? 1))),
+      scale: Math.max(0, (parentResolved?.sample?.scale ?? 1) * (sample.scale ?? 1)),
+      rotation: (parentResolved?.sample?.rotation ?? 0) + (sample.rotation ?? 0),
+    };
+
+    const resolved = {
+      ...entry,
+      sample: composedSample,
+      composedLayer: (parentResolved?.composedLayer || 0) + (entry.track?.layer || 0),
+    };
+
+    visiting.delete(id);
+    cache.set(id, resolved);
+    return resolved;
+  };
+
+  return entries.map((entry) => resolveEntry(entry)).sort((a, b) => (a.composedLayer || 0) - (b.composedLayer || 0));
 }
 
 export function scheduleArcanaStudioAudio(card, options = {}) {
-  const { registerTimeout, soundManager } = options;
+  const { registerTimeout, soundManager, playheadMs = 0 } = options;
   const timers = [];
 
   (card?.tracks?.sounds || []).forEach((track) => {
     (track?.keys || []).forEach((key) => {
-      const delay = Math.max(0, Number(key.timeMs) || 0);
+      const delay = Math.max(0, (Number(key.timeMs) || 0) - Math.max(0, Number(playheadMs) || 0));
       const timer = setTimeout(() => {
         if (!key.soundId) return;
         soundManager?.play?.(key.soundId, {
@@ -106,19 +149,25 @@ export function scheduleArcanaStudioAudio(card, options = {}) {
 }
 
 export function scheduleArcanaStudioEvents(card, options = {}) {
-  const { eventParams, registerTimeout, onEvent } = options;
+  const { eventParams, registerTimeout, onEvent, playheadMs = 0 } = options;
   const timers = [];
 
   (card?.tracks?.events || []).forEach((track) => {
     (track?.keys || []).forEach((key) => {
-      const delay = Math.max(0, (Number(key.timeMs) || 0) + (Number(key.delayMs) || 0));
+      const delay = Math.max(0, (Number(key.timeMs) || 0) + (Number(key.delayMs) || 0) - Math.max(0, Number(playheadMs) || 0));
       const timer = setTimeout(() => {
-        onEvent?.({
+        const mergedPayload = {
+          ...(key.payload || {}),
+          eventParams: eventParams || {},
+        };
+        const normalizedKey = {
           ...key,
-          payload: {
-            ...(key.payload || {}),
-            eventParams: eventParams || {},
-          },
+          payload: mergedPayload,
+        };
+        const actions = normalizeArcanaStudioEventActions(normalizedKey);
+        onEvent?.({
+          ...normalizedKey,
+          actions,
         });
       }, delay);
       timers.push(timer);
@@ -135,8 +184,10 @@ function resolveOverlayEffectName(type, payload = {}) {
   if (type.startsWith('overlay_')) {
     const suffix = type.slice('overlay_'.length);
     if (suffix === 'flash' || suffix === 'divine_flash' || suffix === 'astral_glow' || suffix === 'mind_flash') return 'flash';
-    if (suffix === 'monochrome' || suffix === 'monochrome_fade') return 'monochrome';
-    if (suffix === 'color_restore') return 'color-fade';
+    if (suffix.endsWith('_flash')) return 'flash';
+    if (suffix === 'monochrome' || suffix === 'monochrome_fade' || suffix.includes('monochrome')) return 'monochrome';
+    if (suffix === 'color_restore' || suffix.includes('color_restore')) return 'color-fade';
+    if (suffix === 'vignette' || suffix.includes('vignette')) return 'vignette';
   }
 
   if (type.startsWith('overlay:')) {
@@ -144,6 +195,72 @@ function resolveOverlayEffectName(type, payload = {}) {
   }
 
   return null;
+}
+
+function normalizeLegacyToken(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function resolveLegacySoundAction(type, payload = {}) {
+  if (!type.startsWith('sound_')) return '';
+  if (typeof payload.soundId === 'string' && payload.soundId.trim()) return payload.soundId.trim();
+
+  const token = type.slice('sound_'.length);
+  if (!token) return '';
+  const normalizedToken = normalizeLegacyToken(token);
+
+  if (payload?.soundMap && typeof payload.soundMap === 'object') {
+    const entries = Object.entries(payload.soundMap);
+    for (const [key, value] of entries) {
+      const normalizedKey = normalizeLegacyToken(key);
+      if (!normalizedKey) continue;
+      if (normalizedKey === normalizedToken || normalizedKey.includes(normalizedToken) || normalizedToken.includes(normalizedKey)) {
+        return String(value || '');
+      }
+    }
+  }
+
+  return '';
+}
+
+function resolveLegacyVfxOverlay(type, payload = {}) {
+  if (!type.startsWith('vfx_')) return null;
+  const token = type.slice('vfx_'.length);
+  const normalized = normalizeLegacyToken(token);
+
+  if (normalized.includes('flash') || normalized.includes('burst') || normalized.includes('explosion') || normalized.includes('impact') || normalized.includes('slice')) {
+    return {
+      effect: 'flash',
+      color: payload.color || '#ffffff',
+      intensity: Math.max(0, Math.min(1, toNumber(payload.intensity, 0.85))),
+      duration: Math.max(100, toNumber(payload.duration, 520)),
+      fadeIn: Math.max(0, toNumber(payload.fadeIn, 110)),
+      hold: Math.max(0, toNumber(payload.hold, 210)),
+      fadeOut: Math.max(0, toNumber(payload.fadeOut, 180)),
+    };
+  }
+
+  if (normalized.includes('glow') || normalized.includes('aura') || normalized.includes('beam') || normalized.includes('light')) {
+    return {
+      effect: 'vignette',
+      color: payload.color || '#ffffff',
+      intensity: Math.max(0, Math.min(1, toNumber(payload.intensity, 0.72))),
+      duration: Math.max(100, toNumber(payload.duration, 900)),
+      fadeIn: Math.max(0, toNumber(payload.fadeIn, 140)),
+      hold: Math.max(0, toNumber(payload.hold, 360)),
+      fadeOut: Math.max(0, toNumber(payload.fadeOut, 260)),
+    };
+  }
+
+  return {
+    effect: 'flash',
+    color: payload.color || '#cfe8ff',
+    intensity: Math.max(0, Math.min(1, toNumber(payload.intensity, 0.6))),
+    duration: Math.max(100, toNumber(payload.duration, 420)),
+    fadeIn: Math.max(0, toNumber(payload.fadeIn, 80)),
+    hold: Math.max(0, toNumber(payload.hold, 160)),
+    fadeOut: Math.max(0, toNumber(payload.fadeOut, 160)),
+  };
 }
 
 export function normalizeArcanaStudioEventActions(eventKey) {
@@ -180,6 +297,19 @@ export function normalizeArcanaStudioEventActions(eventKey) {
     }
   }
 
+  if (type.startsWith('sound_')) {
+    const soundId = resolveLegacySoundAction(type, payload);
+    if (soundId) {
+      actions.push({
+        kind: 'sound',
+        soundId,
+        volume: toNumber(payload.volume, 1),
+        pitch: toNumber(payload.pitch, 1),
+        loop: Boolean(payload.loop),
+      });
+    }
+  }
+
   if (type === 'camera_cutscene' || type === 'camera:focus') {
     const square = resolveRuntimeSquare(payload.square || payload.anchor, payload.eventParams || {}, payload.targetSquare || null);
     if (square) {
@@ -191,6 +321,25 @@ export function normalizeArcanaStudioEventActions(eventKey) {
           holdDuration: Math.max(100, toNumber(payload.holdDuration, 1000)),
           duration: Math.max(100, toNumber(payload.duration, 650)),
           returnDuration: Math.max(100, toNumber(payload.returnDuration, 650)),
+          lookAtYOffset: toNumber(payload.lookAtYOffset, 0),
+        },
+      });
+    }
+  }
+
+  // Legacy cutscene cards imported from phase actions emit camera_* tokens.
+  // Translate them into runtime camera actions so old cards still animate.
+  if (type === 'camera_move' || type === 'camera_focus' || type === 'camera_lock' || type === 'camera_return') {
+    const square = resolveRuntimeSquare(payload.square || payload.anchor || 'target', payload.eventParams || {}, payload.targetSquare || null);
+    if (square) {
+      actions.push({
+        kind: 'camera',
+        square,
+        options: {
+          zoom: toNumber(payload.zoom, 1.55),
+          holdDuration: Math.max(120, toNumber(payload.holdDuration, 1100)),
+          duration: Math.max(120, toNumber(payload.duration, 650)),
+          returnDuration: Math.max(120, toNumber(payload.returnDuration, 650)),
           lookAtYOffset: toNumber(payload.lookAtYOffset, 0),
         },
       });
@@ -209,6 +358,11 @@ export function normalizeArcanaStudioEventActions(eventKey) {
       hold: Math.max(0, toNumber(payload.hold, 380)),
       fadeOut: Math.max(0, toNumber(payload.fadeOut, 240)),
     });
+  }
+
+  const vfxOverlay = resolveLegacyVfxOverlay(type, payload);
+  if (vfxOverlay) {
+    actions.push({ kind: 'overlay', ...vfxOverlay });
   }
 
   if (type === 'log' || type === 'combat_log' || type === 'status_log') {

@@ -92,6 +92,32 @@ const TUTORIAL_STEPS = [
   },
   {
     id: 6,
+    title: 'Castling',
+    description:
+      'Castling is a special king move. Move your king two squares toward a rook, and that rook jumps over the king. You can castle only if neither piece has moved, the path is clear, and your king is not in check or passing through check.',
+    instruction: 'Castle kingside by moving your king from e1 to g1.',
+    setupFen: 'rnbqkbnr/pppppppp/8/8/8/5N2/PPPPBPPP/RNBQK2R w KQkq - 0 1',
+    highlightSquares: ['e1', 'g1', 'h1', 'f1'],
+    requireMove: { from: 'e1', to: 'g1' },
+    specialMove: 'castle',
+    resetPosition: true,
+    showCards: false,
+  },
+  {
+    id: 7,
+    title: 'En Passant',
+    description:
+      'En passant is a special pawn capture. If an enemy pawn moves two squares and lands next to your pawn, you can capture it as if it moved only one square, but only on your very next move.',
+    instruction: 'Capture en passant: move your pawn from e5 to d6.',
+    setupFen: 'rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 1',
+    highlightSquares: ['e5', 'd6', 'd5'],
+    requireMove: { from: 'e5', to: 'd6', capture: true },
+    specialMove: 'en-passant',
+    resetPosition: true,
+    showCards: false,
+  },
+  {
+    id: 8,
     title: 'Capturing Pieces',
     description:
       'When your piece moves to a square occupied by an enemy piece, you capture it! The captured piece is removed from the board.',
@@ -103,7 +129,7 @@ const TUTORIAL_STEPS = [
     showCards: false,
   },
   {
-    id: 7,
+    id: 9,
     title: '⚡ Ascension!',
     description:
       'Ascension happens when the first capture of the game occurs. Once that first capture happens, Arcana cards are unlocked for both players.',
@@ -116,7 +142,7 @@ const TUTORIAL_STEPS = [
     triggerAscension: true,
   },
   {
-    id: 8,
+    id: 10,
     title: 'Drawing Arcana Cards',
     description:
       'After ascension, you can draw Arcana cards on your turn by clicking the "Draw Card" button. Drawing a card ends your turn — you cannot draw on your immediate next turn, but may draw again on the following turn.',
@@ -130,7 +156,7 @@ const TUTORIAL_STEPS = [
     requireDraw: true,
   },
   {
-    id: 9,
+    id: 11,
     title: 'Card Targeting',
     description:
       'Some cards require selecting a target. Shield Pawn needs you to select which pawn to protect. Valid targets will glow when the card is active.',
@@ -143,7 +169,7 @@ const TUTORIAL_STEPS = [
     cardTargeting: true,
   },
   {
-    id: 10,
+    id: 12,
     title: 'Winning the Game',
     description:
       'The goal is checkmate: trap the enemy king so it cannot escape. Check means the king is under attack. Checkmate means check with no legal escape.',
@@ -155,7 +181,7 @@ const TUTORIAL_STEPS = [
     showCards: false,
   },
   {
-    id: 11,
+    id: 13,
     title: 'Ready to Play!',
     description:
       'You now know the basics: move pieces, capture to ascend, draw cards with a two turn cooldown, use one card per turn, and aim for checkmate. Open Menu View Arcana to browse all cards.',
@@ -394,6 +420,8 @@ export function Tutorial({ onBack }) {
   const handleTileClick = (square) => {
     if (!chess) return;
 
+    const isSpecialEnPassantStep = step.specialMove === 'en-passant';
+
     // Handle card targeting mode first (highest priority, works even without step.requireMove)
     if (selectedCard && cardTargets.includes(square)) {
       // Card target selected!
@@ -421,7 +449,7 @@ export function Tutorial({ onBack }) {
 
     // If this step expects a capture but the destination is already empty,
     // treat the task as completed to avoid softlocks.
-    if (step.requireMove.capture && step.requireMove.to) {
+    if (step.requireMove.capture && step.requireMove.to && !isSpecialEnPassantStep) {
       const targetPiece = chess.get(step.requireMove.to);
       if (!targetPiece) {
         setFeedback('✓ Target already captured — click Next to continue.');
@@ -498,13 +526,39 @@ export function Tutorial({ onBack }) {
           const fromSquare = selectedSquare;
           const toSquare = square;
           const toPos = squareToPosition(toSquare);
+          const isCastleMove = Boolean(move.flags && (move.flags.includes('k') || move.flags.includes('q')));
+          const isEnPassantMove = Boolean(move.flags && move.flags.includes('e'));
 
           setPiecesState((prev) => {
-            const withoutCaptured = prev.filter((p) => p.square !== toSquare);
-            return withoutCaptured.map((p) => {
+            let nextPieces = prev;
+
+            if (isEnPassantMove) {
+              const captureSquare = `${toSquare[0]}${fromSquare[1]}`;
+              nextPieces = nextPieces.filter((p) => p.square !== captureSquare);
+            } else if (move.captured) {
+              nextPieces = nextPieces.filter((p) => p.square !== toSquare);
+            }
+
+            return nextPieces.map((p) => {
               if (p.square === fromSquare) {
                 return { ...p, square: toSquare, targetPosition: toPos };
               }
+
+              if (isCastleMove && p.type === 'r') {
+                if (fromSquare === 'e1' && toSquare === 'g1' && p.square === 'h1') {
+                  return { ...p, square: 'f1', targetPosition: squareToPosition('f1') };
+                }
+                if (fromSquare === 'e1' && toSquare === 'c1' && p.square === 'a1') {
+                  return { ...p, square: 'd1', targetPosition: squareToPosition('d1') };
+                }
+                if (fromSquare === 'e8' && toSquare === 'g8' && p.square === 'h8') {
+                  return { ...p, square: 'f8', targetPosition: squareToPosition('f8') };
+                }
+                if (fromSquare === 'e8' && toSquare === 'c8' && p.square === 'a8') {
+                  return { ...p, square: 'd8', targetPosition: squareToPosition('d8') };
+                }
+              }
+
               return p;
             });
           });

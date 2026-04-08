@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { ARCANA_DEFINITIONS } from '../../game/arcanaDefinitions.js';
 import { squareToPosition } from './sharedHelpers.jsx';
 import { getArcanaEffectDuration } from './arcanaTimings.js';
 import { effectResourcePool } from '../effectResourcePool.js';
@@ -28,10 +29,22 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
 
   if (!Effects) return null;
 
+  const getArcanaDefinition = (arcanaId) => {
+    if (!arcanaId) return null;
+    return ARCANA_DEFINITIONS.find((card) => card.id === arcanaId) || null;
+  };
+
   // Helper to map arcanaId -> component name fallback
   const getEffectComponent = (arcanaId) => {
     const compName = `${pascalCase(arcanaId)}Effect`;
-    return Effects[compName] || null;
+    if (Effects[compName]) return Effects[compName];
+
+    const arcanaDefinition = getArcanaDefinition(arcanaId);
+    if (arcanaDefinition?.rarity === 'legendary' && Effects.LegendaryEffect) {
+      return Effects.LegendaryEffect;
+    }
+
+    return null;
   };
 
   // Render persistent effects based on gameState.activeEffects

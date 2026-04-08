@@ -41,6 +41,10 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
 
   const finishCutscene = useCallback(() => {
     unlockControls();
+    sequenceBaseState.current = null;
+    inSequence.current = false;
+    sequenceEndRef.current = false;
+    holdPositionRef.current = false;
     if (onCutsceneEnd) {
       onCutsceneEnd();
     }
@@ -105,11 +109,14 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       inSequence.current = true;
     }
 
-    // Save current camera state before this shot
-    savedCameraState.current = {
-      position: camera.position.clone(),
-      lookAt: controlsRef?.current?.target?.clone() || new THREE.Vector3(0, 0, 0),
-    };
+    // Preserve the first camera state for the entire sequence so the camera
+    // always returns to the original gameplay view after the cutscene ends.
+    if (!savedCameraState.current || sequenceStart || phase.current === 'idle') {
+      savedCameraState.current = {
+        position: camera.position.clone(),
+        lookAt: controlsRef?.current?.target?.clone() || new THREE.Vector3(0, 0, 0),
+      };
+    }
     
     // Calculate target position (above and looking at the effect square)
     const [x, y, z] = squareToPosition(cutsceneTarget.square);
@@ -155,6 +162,18 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       unlockControls();
     }
   }, [cutsceneTarget, unlockControls]);
+
+  useEffect(() => {
+    return () => {
+      isAnimating.current = false;
+      phase.current = 'idle';
+      sequenceBaseState.current = null;
+      inSequence.current = false;
+      sequenceEndRef.current = false;
+      holdPositionRef.current = false;
+      unlockControls();
+    };
+  }, [unlockControls]);
   
   // Animation frame handler
   useFrame((_, delta) => {
@@ -186,14 +205,9 @@ export function CameraCutscene({ cutsceneTarget, onCutsceneEnd, myColor, control
       holdTimer.current -= delta * 1000;
       if (holdTimer.current <= 0) {
         if (inSequence.current && holdPositionRef.current && !sequenceEndRef.current) {
-          // If the sequence does not continue (interrupted runtime/event), avoid leaving
-          // the camera controls locked on this intermediate shot.
-          if (controls) {
-            controls.enabled = true;
-          }
-          phase.current = 'idle';
-          isAnimating.current = false;
-          finishCutscene();
+          // Intermediate sequence shots should stay locked in place until the
+          // next queued shot arrives or the cutscene is explicitly cleared.
+          holdTimer.current = 150;
           return;
         }
         phase.current = 'returning';
