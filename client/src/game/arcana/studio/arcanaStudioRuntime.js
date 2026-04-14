@@ -18,6 +18,46 @@ function sanitizeSquareList(value) {
   return value.map(sanitizeSquare).filter(Boolean);
 }
 
+function extractSquareSequence(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry === 'string') return sanitizeSquare(entry);
+      if (entry && typeof entry === 'object') {
+        return sanitizeSquare(entry.square || entry.rebornSquare || entry.targetSquare || entry.to || entry.from);
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+export function expandStudioRuntimePlaybackQueue(cardId, eventParams = {}) {
+  const normalizedId = String(cardId || '');
+  if (normalizedId !== 'astral_rebirth') {
+    return [{ eventParams: { ...(eventParams || {}) } }];
+  }
+
+  const revivedSquares = extractSquareSequence(eventParams?.revivedSquares);
+  const fallbackSquare = sanitizeSquare(eventParams?.rebornSquare)
+    || sanitizeSquare(eventParams?.targetSquare)
+    || sanitizeSquare(eventParams?.square)
+    || sanitizeSquare(eventParams?.focusSquare);
+  const queueSquares = revivedSquares.length > 0 ? revivedSquares : (fallbackSquare ? [fallbackSquare] : []);
+
+  return queueSquares.map((square) => ({
+    eventParams: {
+      ...(eventParams || {}),
+      targetSquare: square,
+      square,
+      rebornSquare: square,
+      revivedSquares: [square],
+      cameraAnchorSquare: square,
+      cameraAnchorMode: 'piece',
+    },
+    cameraAnchorSquare: square,
+  }));
+}
+
 function clampPercent(value, fallback = 50) {
   const n = Number.isFinite(value) ? value : fallback;
   return Math.max(0, Math.min(100, n));
@@ -126,19 +166,39 @@ export function getScreenOverlaySamples(card, timeMs) {
 }
 
 export function scheduleArcanaStudioAudio(card, options = {}) {
-  const { registerTimeout, soundManager, playheadMs = 0 } = options;
+  const { registerTimeout, soundManager, playheadMs = 0, startDelayMs = 0 } = options;
   const timers = [];
+  const fallbackCardSoundId = (typeof card?.meta?.soundId === 'string' && card.meta.soundId.trim())
+    ? card.meta.soundId.trim()
+    : (card?.id ? `arcana:${card.id}` : '');
 
-  (card?.tracks?.sounds || []).forEach((track) => {
-    (track?.keys || []).forEach((key) => {
-      const delay = Math.max(0, (Number(key.timeMs) || 0) - Math.max(0, Number(playheadMs) || 0));
-      const timer = setTimeout(() => {
-        if (!key.soundId) return;
-        soundManager?.play?.(key.soundId, {
+  const playAudioKey = (key) => {
+    const primarySoundId = typeof key?.soundId === 'string' ? key.soundId.trim() : '';
+    const playedPrimary = primarySoundId
+      ? soundManager?.play?.(primarySoundId, {
           volume: key.volume,
           pitch: key.pitch,
           loop: key.loop,
-        });
+        })
+      : null;
+    if (playedPrimary) return;
+    if (!fallbackCardSoundId || fallbackCardSoundId === primarySoundId) return;
+    soundManager?.play?.(fallbackCardSoundId, {
+      volume: key.volume,
+      pitch: key.pitch,
+      loop: key.loop,
+    });
+  };
+
+  (card?.tracks?.sounds || []).forEach((track) => {
+    (track?.keys || []).forEach((key) => {
+      const delay = Math.max(0, (Number(key.timeMs) || 0) - Math.max(0, Number(playheadMs) || 0) + Math.max(0, Number(startDelayMs) || 0));
+      if (delay <= 1) {
+        playAudioKey(key);
+        return;
+      }
+      const timer = setTimeout(() => {
+        playAudioKey(key);
       }, delay);
       timers.push(timer);
       registerTimeout?.(timer);
@@ -149,26 +209,34 @@ export function scheduleArcanaStudioAudio(card, options = {}) {
 }
 
 export function scheduleArcanaStudioEvents(card, options = {}) {
-  const { eventParams, registerTimeout, onEvent, playheadMs = 0 } = options;
+  const { eventParams, registerTimeout, onEvent, playheadMs = 0, startDelayMs = 0 } = options;
   const timers = [];
+
+  const fireEventKey = (key) => {
+    const mergedPayload = {
+      ...(key.payload || {}),
+      eventParams: eventParams || {},
+    };
+    const normalizedKey = {
+      ...key,
+      payload: mergedPayload,
+    };
+    const actions = normalizeArcanaStudioEventActions(normalizedKey);
+    onEvent?.({
+      ...normalizedKey,
+      actions,
+    });
+  };
 
   (card?.tracks?.events || []).forEach((track) => {
     (track?.keys || []).forEach((key) => {
-      const delay = Math.max(0, (Number(key.timeMs) || 0) + (Number(key.delayMs) || 0) - Math.max(0, Number(playheadMs) || 0));
+      const delay = Math.max(0, (Number(key.timeMs) || 0) + (Number(key.delayMs) || 0) - Math.max(0, Number(playheadMs) || 0) + Math.max(0, Number(startDelayMs) || 0));
+      if (delay <= 1) {
+        fireEventKey(key);
+        return;
+      }
       const timer = setTimeout(() => {
-        const mergedPayload = {
-          ...(key.payload || {}),
-          eventParams: eventParams || {},
-        };
-        const normalizedKey = {
-          ...key,
-          payload: mergedPayload,
-        };
-        const actions = normalizeArcanaStudioEventActions(normalizedKey);
-        onEvent?.({
-          ...normalizedKey,
-          actions,
-        });
+        fireEventKey(key);
       }, delay);
       timers.push(timer);
       registerTimeout?.(timer);
@@ -297,6 +365,28 @@ export function normalizeArcanaStudioEventActions(eventKey) {
     }
   }
 
+  if (type === 'vfx_play' || type === 'vfx:play') {
+    const arcanaId = (typeof payload.arcanaId === 'string' && payload.arcanaId.trim())
+      || (typeof payload.cardId === 'string' && payload.cardId.trim())
+      || (typeof payload.eventParams?.cardId === 'string' && payload.eventParams.cardId.trim())
+      || null;
+    if (arcanaId) {
+      const fallbackSquare = payload.targetSquare
+        || payload.square
+        || payload.eventParams?.targetSquare
+        || payload.eventParams?.square
+        || null;
+      const square = resolveRuntimeSquare(payload.square || payload.targetSquare || 'target', payload.eventParams || {}, fallbackSquare);
+      actions.push({
+        kind: 'vfx',
+        arcanaId,
+        params: square ? { ...payload, square } : { ...payload },
+        durationMs: Math.max(100, toNumber(payload.durationMs ?? payload.duration, 1200)),
+        vfxKey: String(payload.vfxKey || payload.effect || arcanaId),
+      });
+    }
+  }
+
   if (type.startsWith('sound_')) {
     const soundId = resolveLegacySoundAction(type, payload);
     if (soundId) {
@@ -363,6 +453,27 @@ export function normalizeArcanaStudioEventActions(eventKey) {
   const vfxOverlay = resolveLegacyVfxOverlay(type, payload);
   if (vfxOverlay) {
     actions.push({ kind: 'overlay', ...vfxOverlay });
+
+    const arcanaId = (typeof payload.arcanaId === 'string' && payload.arcanaId.trim())
+      || (typeof payload.cardId === 'string' && payload.cardId.trim())
+      || (typeof payload.eventParams?.cardId === 'string' && payload.eventParams.cardId.trim())
+      || null;
+
+    if (arcanaId) {
+      const fallbackSquare = payload.targetSquare
+        || payload.square
+        || payload.eventParams?.targetSquare
+        || payload.eventParams?.square
+        || 'e4';
+      const square = resolveRuntimeSquare(payload.square || payload.targetSquare || 'target', payload.eventParams || {}, fallbackSquare);
+      actions.push({
+        kind: 'vfx',
+        arcanaId,
+        params: square ? { ...payload, square } : { ...payload },
+        durationMs: Math.max(100, toNumber(payload.durationMs ?? payload.duration, 1200)),
+        vfxKey: String(payload.vfxKey || type || arcanaId),
+      });
+    }
   }
 
   if (type === 'log' || type === 'combat_log' || type === 'status_log') {

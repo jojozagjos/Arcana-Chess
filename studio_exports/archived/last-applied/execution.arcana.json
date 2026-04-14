@@ -1,0 +1,513 @@
+{
+  "version": 1,
+  "id": "execution",
+  "name": "execution",
+  "durationMs": 2000,
+  "settings": {
+    "autoKey": true,
+    "fps": 60,
+    "timelineSnapMs": 50,
+    "randomSeed": 1337,
+    "seedLocked": true
+  },
+  "board": {
+    "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+    "focusSquare": null
+  },
+  "tracks": {
+    "camera": [
+      {
+        "id": "cam_ldolzu3i",
+        "name": "Main Camera",
+        "keys": [
+          {
+            "id": "camk_l0z5sup2",
+            "timeMs": 0,
+            "position": [
+              0.022563991862479704,
+              0.9704836945988153,
+              1.7106488872818082
+            ],
+            "target": [
+              -0.002699025814850371,
+              0.1675252127480798,
+              -0.019752151289992362
+            ],
+            "rotation": [
+              -0.4344600593551074,
+              0.01324240957796461,
+              0.0061446221221649324
+            ],
+            "fov": 55,
+            "easing": "easeInOutCubic",
+            "bezier": [
+              0.25,
+              0.1,
+              0.25,
+              1
+            ],
+            "blendMode": "curve"
+          },
+          {
+            "id": "camk_76nup7ip",
+            "timeMs": 800,
+            "position": [
+              -0.07052070159757101,
+              0.26837343382028145,
+              1.889188780070457
+            ],
+            "target": [
+              -0.08932747355138843,
+              1.1371810298909435,
+              0.6009923748979056
+            ],
+            "rotation": [
+              0.5933629381698253,
+              0.012103181260977716,
+              -0.008162455292816536
+            ],
+            "fov": 55,
+            "easing": "easeInOutCubic",
+            "bezier": [
+              0.25,
+              0.1,
+              0.25,
+              1
+            ],
+            "blendMode": "curve"
+          },
+          {
+            "id": "camk_1jr7s4dg",
+            "timeMs": 1500,
+            "position": [
+              0.022563991862479704,
+              0.9704836945988153,
+              1.7106488872818082
+            ],
+            "target": [
+              -0.002699025814850371,
+              0.1675252127480798,
+              -0.019752151289992362
+            ],
+            "rotation": [
+              -0.4344600593551074,
+              0.01324240957796461,
+              0.0061446221221649324
+            ],
+            "fov": 55,
+            "easing": "easeInOutCubic",
+            "bezier": [
+              0.25,
+              0.1,
+              0.25,
+              1
+            ],
+            "blendMode": "curve"
+          },
+          {
+            "id": "camk_0ik3gajv",
+            "timeMs": 2000,
+            "position": [
+              0.022563991862479704,
+              0.9704836945988153,
+              1.7106488872818082
+            ],
+            "target": [
+              -0.002699025814850371,
+              0.1675252127480798,
+              -0.019752151289992362
+            ],
+            "rotation": [
+              -0.4344600593551074,
+              0.01324240957796461,
+              0.0061446221221649324
+            ],
+            "fov": 55,
+            "easing": "easeInOutCubic",
+            "bezier": [
+              0.25,
+              0.1,
+              0.25,
+              1
+            ],
+            "blendMode": "curve"
+          }
+        ]
+      }
+    ],
+    "objects": [
+      {
+        "id": "obj_pb9wl78y",
+        "name": "Main Piece",
+        "type": "piece",
+        "pieceSquare": "e4",
+        "previewPlayAnimation": false,
+        "attach": {
+          "mode": "follow",
+          "targetId": null,
+          "parentId": null,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "parenting": true
+        },
+        "keys": [],
+        "pieceType": "p",
+        "pieceColor": "white",
+        "isAnimatablePiece": true
+      }
+    ],
+    "particles": [],
+    "overlays": [],
+    "sounds": [
+      {
+        "id": "legacy_sound",
+        "name": "Legacy Sound",
+        "keys": [
+          {
+            "id": "snd_0",
+            "timeMs": 0,
+            "soundId": "arcana:execution_blade",
+            "volume": 1,
+            "loop": false,
+            "pitch": 1
+          },
+          {
+            "id": "snd_1",
+            "timeMs": 800,
+            "soundId": "arcana:execution_blood",
+            "volume": 1,
+            "loop": false,
+            "pitch": 1
+          },
+          {
+            "id": "snd_2",
+            "timeMs": 1500,
+            "soundId": "arcana:execution_complete",
+            "volume": 1,
+            "loop": false,
+            "pitch": 1
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "legacy_events",
+        "name": "Legacy Events",
+        "keys": [
+          {
+            "id": "evt_0_0",
+            "timeMs": 0,
+            "type": "camera:focus",
+            "delayMs": 0,
+            "payload": {
+              "phase": "camera_focus",
+              "cardId": "execution",
+              "legacyAction": "camera:focus",
+              "soundMap": {
+                "cue_1": "arcana:execution_blade",
+                "cue_2": "arcana:execution_blood",
+                "cue_3": "arcana:execution_complete"
+              }
+            }
+          },
+          {
+            "id": "evt_0_1",
+            "timeMs": 0,
+            "type": "sound_play",
+            "delayMs": 0,
+            "payload": {
+              "phase": "camera_focus",
+              "cardId": "execution",
+              "legacyAction": "sound_play",
+              "soundId": "",
+              "volume": 1,
+              "pitch": 1,
+              "loop": false,
+              "soundMap": {
+                "cue_1": "arcana:execution_blade",
+                "cue_2": "arcana:execution_blood",
+                "cue_3": "arcana:execution_complete"
+              }
+            }
+          },
+          {
+            "id": "evt_1_0",
+            "timeMs": 800,
+            "type": "vfx:play",
+            "delayMs": 0,
+            "payload": {
+              "phase": "slice",
+              "cardId": "execution",
+              "legacyAction": "vfx:play",
+              "soundMap": {
+                "cue_1": "arcana:execution_blade",
+                "cue_2": "arcana:execution_blood",
+                "cue_3": "arcana:execution_complete"
+              }
+            }
+          },
+          {
+            "id": "evt_2_0",
+            "timeMs": 1500,
+            "type": "sound_play",
+            "delayMs": 0,
+            "payload": {
+              "phase": "hold",
+              "cardId": "execution",
+              "legacyAction": "sound_play",
+              "soundId": "",
+              "volume": 1,
+              "pitch": 1,
+              "loop": false,
+              "soundMap": {
+                "cue_1": "arcana:execution_blade",
+                "cue_2": "arcana:execution_blood",
+                "cue_3": "arcana:execution_complete"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "arcana-studio",
+    "createdAt": 1776036583181,
+    "updatedAt": 1776126752165,
+    "usedPieces": [],
+    "legacyId": "execution",
+    "legacyImportedAt": 1776036583181,
+    "legacyConfigSnapshot": {
+      "id": "execution",
+      "duration": 3900,
+      "config": {
+        "camera": {
+          "targetZoom": 2.5,
+          "duration": 175,
+          "holdDuration": 350,
+          "easing": "easeInOutCubic",
+          "shots": [
+            {
+              "fov": 24,
+              "zoom": 2.5,
+              "duration": 175,
+              "holdDuration": 350,
+              "returnDuration": 175,
+              "offset": [
+                2.3,
+                2.2,
+                0.5
+              ],
+              "lookAtYOffset": 0.38,
+              "blendMode": "curve"
+            },
+            {
+              "fov": 27,
+              "zoom": 2.2222222222222223,
+              "duration": 200,
+              "holdDuration": 400,
+              "returnDuration": 200,
+              "offset": [
+                -2.2,
+                2.5,
+                -0.7
+              ],
+              "lookAtYOffset": 0.25,
+              "blendMode": "curve"
+            },
+            {
+              "fov": 22,
+              "zoom": 2.727272727272727,
+              "duration": 600,
+              "holdDuration": 1200,
+              "returnDuration": 600,
+              "offset": [
+                0,
+                3.5,
+                6
+              ],
+              "lookAtYOffset": 0.15,
+              "blendMode": "curve"
+            }
+          ]
+        },
+        "overlay": null,
+        "vfx": {
+          "bladeDuration": 1000,
+          "bloodExplosionDelay": 2000,
+          "bloodParticles": 48,
+          "destructionIntensity": 1.2
+        },
+        "sound": {
+          "cue_1": "arcana:execution_blade",
+          "cue_2": "arcana:execution_blood",
+          "cue_3": "arcana:execution_complete"
+        },
+        "phases": [
+          {
+            "name": "camera_focus",
+            "duration": 800,
+            "actions": [
+              "camera:focus",
+              "sound_play"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "slice",
+            "duration": 700,
+            "actions": [
+              "vfx:play"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "hold",
+            "duration": 1000,
+            "actions": [
+              "sound_play"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "explosion",
+            "duration": 400,
+            "actions": [
+              "overlay:flash"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "camera_return",
+            "duration": 1000,
+            "actions": [
+              "sound_play"
+            ],
+            "delay": 0
+          }
+        ]
+      }
+    },
+    "isCutscene": true,
+    "canAnimatePiece": true,
+    "rarity": "legendary",
+    "category": "offense",
+    "soundId": "arcana:execution",
+    "legacyCutscene": {
+      "id": "execution",
+      "duration": 3900,
+      "config": {
+        "camera": {
+          "targetZoom": 2.5,
+          "duration": 175,
+          "holdDuration": 350,
+          "easing": "easeInOutCubic",
+          "shots": [
+            {
+              "fov": 24,
+              "zoom": 2.5,
+              "duration": 175,
+              "holdDuration": 350,
+              "returnDuration": 175,
+              "offset": [
+                2.3,
+                2.2,
+                0.5
+              ],
+              "lookAtYOffset": 0.38,
+              "blendMode": "curve"
+            },
+            {
+              "fov": 27,
+              "zoom": 2.2222222222222223,
+              "duration": 200,
+              "holdDuration": 400,
+              "returnDuration": 200,
+              "offset": [
+                -2.2,
+                2.5,
+                -0.7
+              ],
+              "lookAtYOffset": 0.25,
+              "blendMode": "curve"
+            },
+            {
+              "fov": 22,
+              "zoom": 2.727272727272727,
+              "duration": 600,
+              "holdDuration": 1200,
+              "returnDuration": 600,
+              "offset": [
+                0,
+                3.5,
+                6
+              ],
+              "lookAtYOffset": 0.15,
+              "blendMode": "curve"
+            }
+          ]
+        },
+        "overlay": null,
+        "vfx": {
+          "bladeDuration": 1000,
+          "bloodExplosionDelay": 2000,
+          "bloodParticles": 48,
+          "destructionIntensity": 1.2
+        },
+        "sound": {
+          "cue_1": "arcana:execution_blade",
+          "cue_2": "arcana:execution_blood",
+          "cue_3": "arcana:execution_complete"
+        },
+        "phases": [
+          {
+            "name": "camera_focus",
+            "duration": 800,
+            "actions": [
+              "camera:focus",
+              "sound_play"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "slice",
+            "duration": 700,
+            "actions": [
+              "vfx:play"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "hold",
+            "duration": 1000,
+            "actions": [
+              "sound_play"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "explosion",
+            "duration": 400,
+            "actions": [
+              "overlay:flash"
+            ],
+            "delay": 0
+          },
+          {
+            "name": "camera_return",
+            "duration": 1000,
+            "actions": [
+              "sound_play"
+            ],
+            "delay": 0
+          }
+        ]
+      }
+    }
+  },
+  "description": "Select an enemy piece and destroy it."
+}

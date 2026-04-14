@@ -64,6 +64,8 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       continue; // Skip this arcana if targeting is invalid
     }
 
+    const preArcanaFen = chess.fen();
+
     // Apply the specific arcana effect
     const result = applyArcanaEffect(def.id, {
       chess,
@@ -82,6 +84,12 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     }
 
     params = result.params || params;
+    if (params && typeof params === 'object') {
+      params = {
+        ...params,
+        preArcanaFen,
+      };
+    }
 
     // Mark as used. Prefer canonical instanceId when available, otherwise mark by index.
     if (def.instanceId !== undefined && def.instanceId !== null) {
@@ -95,12 +103,13 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     // Notify players; send full params only to the owner to avoid leaking private info
     // Exception: For cutscene cards, include square info so all players can see camera focus correctly
     if (io) {
+      const triggerSoundId = def.soundId || `arcana:${def.id}`;
       const ownerPayload = {
         gameId: gameState.id,
         arcanaId: def.id,
         owner: socketId,
         params,
-        soundKey: def.soundKey,
+        soundId: triggerSoundId,
         visual: def.visual,
       };
       
@@ -135,7 +144,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
         arcanaId: def.id,
         owner: socketId,
         params: redactedParams,
-        soundKey: def.soundKey,
+        soundId: triggerSoundId,
         visual: def.visual,
       };
 
@@ -636,7 +645,15 @@ function applyExecution({ chess, moverColor, params }) {
     const target = chess.get(params.targetSquare);
     if (target && target.color !== moverColor && target.type !== 'k') {
       chess.remove(params.targetSquare);
-      return { params: { square: params.targetSquare, piece: target.type } };
+      return {
+        params: {
+          square: params.targetSquare,
+          targetSquare: params.targetSquare,
+          piece: target.type,
+          pieceType: target.type,
+          pieceColor: target.color,
+        },
+      };
     }
   }
   return null;
@@ -720,9 +737,13 @@ function applyPromotionRitual({ chess, gameState, moverColor, params }) {
       return { 
         params: { 
           square: targetSquare,
+          targetSquare,
           color: moverColor,
+          pieceType: 'p',
+          pieceColor: moverColor,
           extraMoves: 2,
           monochrome: true,
+          cutsceneStartDelayMs: 550,
         } 
       };
     }
@@ -1394,7 +1415,8 @@ function applyEnPassantMaster({ gameState, moverColor }) {
 }
 
 function applyMindControl({ chess, gameState, moverColor, params }) {
-  // Mind Control: Seize control of an enemy piece for one full enemy turn.
+  // Mind Control: Seize control of an enemy piece for one turn.
+  // The piece keeps its original color/appearance but the caster can move it.
   const targetSquare = params?.targetSquare;
   if (!targetSquare) return null;
 
@@ -1411,8 +1433,8 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   if (!gameState.activeEffects) gameState.activeEffects = {};
   if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
   
-  // Track original ownership and temporarily flip color so normal move validation
-  // and client selection treat the piece as controlled by the caster.
+  // Track controlled piece - DO NOT change its color, keep it as enemy piece
+  // The move validation logic will allow the caster to move it despite the color difference
   gameState.activeEffects.mindControlled.push({
     square: targetSquare,
     controller: moverColor,
@@ -1420,10 +1442,10 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
     type: targetPiece.type,
   });
 
-  chess.remove(targetSquare);
-  chess.put({ type: targetPiece.type, color: moverColor }, targetSquare);
+  // Do NOT modify the piece on the board - keep its original color and appearance
+  // The UI will show a visual indicator (aura) that it's mind-controlled
 
-  return { params: { square: targetSquare, targetSquare, color: moverColor, originalColor: targetPiece.color } };
+  return { params: { square: targetSquare, targetSquare, color: targetPiece.color, isControlled: true } };
 }
 
 function applyBreakingPoint({ chess, moverColor, params }) {
@@ -1434,6 +1456,8 @@ function applyBreakingPoint({ chess, moverColor, params }) {
   if (!targetPiece || targetPiece.color === moverColor || targetPiece.type === 'k') {
     return null;
   }
+  const shatteredPieceType = targetPiece.type;
+  const shatteredPieceColor = targetPiece.color;
 
   // 1) Shatter the primary target.
   chess.remove(epicenter);
@@ -1473,6 +1497,8 @@ function applyBreakingPoint({ chess, moverColor, params }) {
       square: epicenter,
       targetSquare: epicenter,
       shatteredSquare: epicenter,
+      pieceType: shatteredPieceType,
+      pieceColor: shatteredPieceColor,
       displaced,
     },
   };
@@ -1515,7 +1541,7 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
   // Gain a third burst only if one of the first two bursts captured.
   if (captureCount > 0) {
     const thirdMove = pickBestOverdriveMove(chess, currentSquare, moverColor, true)
-      || pickBestOverdriveMove(chess, currentSquare, moverColor);
+      || pickBestOverdriveMove(chess, currentSquare, moverColor, false);
 
     if (thirdMove) {
       const thirdResult = chess.move({ from: currentSquare, to: thirdMove.to, promotion: 'q' });

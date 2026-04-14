@@ -1622,6 +1622,42 @@ export function ExecutionEffect({ square, onComplete }) {
   const [progress, setProgress] = useState(0);
   const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 600);
 
+  // Keep particle trajectories stable for the full lifetime of the effect.
+  const bloodParticles = useMemo(() => {
+    return [...Array(44)].map((_, i) => {
+      const angle = (i / 44) * Math.PI * 2;
+      return {
+        dirX: Math.cos(angle),
+        dirZ: Math.sin(angle),
+        spread: 0.7 + ((i * 7) % 10) / 10,
+        lift: 0.2 + ((i * 5) % 9) / 20,
+        gravity: 0.65 + ((i * 3) % 7) / 10,
+        size: 0.045 + ((i * 11) % 8) / 200,
+      };
+    });
+  }, []);
+
+  const groundSplats = useMemo(() => {
+    return [...Array(10)].map((_, i) => {
+      const angle = (i / 10) * Math.PI * 2;
+      const radius = 0.15 + (i % 4) * 0.1;
+      return {
+        x: Math.cos(angle) * radius,
+        z: Math.sin(angle) * radius,
+        r: 0.1 + (i % 3) * 0.07,
+      };
+    });
+  }, []);
+
+  const bladeTrailParticles = useMemo(() => {
+    return [...Array(24)].map((_, i) => ({
+      lane: ((i % 6) - 2.5) * 0.05,
+      depth: ((Math.floor(i / 6) % 2) - 0.5) * 0.08,
+      dropOffset: (i % 8) * 0.07,
+      size: 0.018 + (i % 5) * 0.004,
+    }));
+  }, []);
+
   useFrame((state, delta) => {
     setProgress(prev => {
       const next = prev + delta * 0.8; // Slower for blade animation
@@ -1636,12 +1672,15 @@ export function ExecutionEffect({ square, onComplete }) {
 
   // Calculate animation phases
   const bladePhase = Math.min(progress * 2, 1); // First half: blade falls
-  const explosionPhase = Math.max((progress - 0.7) * 3.33, 0); // Last 30%: blood explosion
+  const impactPhase = Math.min(Math.max((progress - 0.56) / 0.2, 0), 1); // Exact remove/readability cue
+  const explosionPhase = Math.min(Math.max((progress - 0.62) / 0.38, 0), 1); // Blood burst phase
+  const impactFlash = 1 - Math.abs(impactPhase - 0.5) * 2;
+  const stainPhase = Math.min(Math.max((progress - 0.62) / 0.28, 0), 1);
 
   return (
     <group position={[x, 0, z]}>
       {/* Target piece - visible until blade hits */}
-      {bladePhase < 0.9 && (
+      {bladePhase < 0.86 && (
         <mesh position={[0, 0.4, 0]}>
           <cylinderGeometry args={[0.3, 0.3, 0.5, 16]} />
           <meshStandardMaterial
@@ -1653,6 +1692,34 @@ export function ExecutionEffect({ square, onComplete }) {
             depthWrite={false}
           />
         </mesh>
+      )}
+
+      {/* Removal timing cue: bright slash marker at exact impact window */}
+      {impactPhase > 0 && impactPhase < 1 && (
+        <>
+          <mesh position={[0, 0.45, 0]} rotation={[-Math.PI / 2, 0, Math.PI / 4]}>
+            <ringGeometry args={[0.16, 0.32, 24]} />
+            <meshStandardMaterial
+              emissive="#ff1744"
+              emissiveIntensity={5 * Math.max(0, impactFlash)}
+              color="#ff8a80"
+              transparent
+              depthWrite={false}
+              opacity={0.8 * Math.max(0, impactFlash) * (1 - finishT)}
+            />
+          </mesh>
+          <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, -Math.PI / 4]}>
+            <planeGeometry args={[1.15, 0.09]} />
+            <meshStandardMaterial
+              emissive="#ff1744"
+              emissiveIntensity={7 * Math.max(0, impactFlash)}
+              color="#ffffff"
+              transparent
+              depthWrite={false}
+              opacity={0.9 * Math.max(0, impactFlash) * (1 - finishT)}
+            />
+          </mesh>
+        </>
       )}
 
       {/* Falling blade (silver/metallic) */}
@@ -1673,6 +1740,24 @@ export function ExecutionEffect({ square, onComplete }) {
           />
         </mesh>
       )}
+
+      {/* Blade trail particles - keeps the slash feeling continuous through the fall. */}
+      {bladePhase < 1 && bladeTrailParticles.map((p, i) => {
+        const y = 3 - bladePhase * 2.5 + p.dropOffset * (1 - bladePhase);
+        return (
+          <mesh key={`blade-trail-${i}`} position={[p.lane, y, p.depth]}>
+            <sphereGeometry args={[p.size, 6, 6]} />
+            <meshStandardMaterial
+              emissive="#ffe082"
+              emissiveIntensity={2.2 * (1 - bladePhase)}
+              color="#fff3c4"
+              transparent
+              depthWrite={false}
+              opacity={0.45 * (1 - bladePhase) * (1 - finishT)}
+            />
+          </mesh>
+        );
+      })}
       
       {/* Slice impact flash */}
       {bladePhase > 0.8 && bladePhase < 1 && (
@@ -1689,23 +1774,23 @@ export function ExecutionEffect({ square, onComplete }) {
         </mesh>
       )}
       
-      {/* Blood explosion particles */}
-      {explosionPhase > 0 && [...Array(32)].map((_, i) => {
-        const angle = (i / 32) * Math.PI * 2;
-        const vertAngle = (Math.random() - 0.5) * Math.PI * 0.5;
-        const dist = explosionPhase * (0.8 + Math.random() * 1.2);
-        
+      {/* Blood explosion particles (stable trajectories) */}
+      {explosionPhase > 0.02 && bloodParticles.map((p, i) => {
+        const dist = (0.2 + explosionPhase * 1.4) * p.spread;
+        const lift = p.lift * explosionPhase;
+        const drop = explosionPhase * explosionPhase * p.gravity;
+
         return (
           <mesh
             key={i}
             position={[
-              Math.cos(angle) * dist,
-              0.5 + Math.sin(vertAngle) * dist * 0.8 - explosionPhase * 0.5, // Gravity
-              Math.sin(angle) * dist
+              p.dirX * dist,
+              0.5 + lift - drop,
+              p.dirZ * dist
             ]}
             scale={[1 - explosionPhase * 0.3, 1 - explosionPhase * 0.3, 1]}
           >
-            <sphereGeometry args={[0.06 + Math.random() * 0.04, 6, 6]} />
+            <sphereGeometry args={[p.size, 6, 6]} />
             <meshStandardMaterial
               emissive="#8B0000"
               emissiveIntensity={4 * (1 - explosionPhase)}
@@ -1719,18 +1804,37 @@ export function ExecutionEffect({ square, onComplete }) {
       })}
       
       {/* Blood splash ground stain */}
-      {explosionPhase > 0.3 && (
-        <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <circleGeometry args={[explosionPhase * 0.8, 32]} />
-          <meshStandardMaterial
-            color="#8B0000"
-            emissive="#8B0000"
-            emissiveIntensity={0.5 * (1 - explosionPhase)}
-            transparent
-            depthWrite={false}
-            opacity={0.7 * (1 - finishT)}
-          />
-        </mesh>
+      {stainPhase > 0 && (
+        <>
+          <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[0.22 + stainPhase * 0.52, 32]} />
+            <meshStandardMaterial
+              color="#8B0000"
+              emissive="#8B0000"
+              emissiveIntensity={0.6 * (1 - stainPhase * 0.5)}
+              transparent
+              depthWrite={false}
+              opacity={(0.58 + 0.2 * stainPhase) * (1 - finishT)}
+            />
+          </mesh>
+          {groundSplats.map((splat, i) => (
+            <mesh
+              key={`splat-${i}`}
+              position={[splat.x * stainPhase, 0.021, splat.z * stainPhase]}
+              rotation={[-Math.PI / 2, 0, 0]}
+            >
+              <circleGeometry args={[splat.r * stainPhase, 16]} />
+              <meshStandardMaterial
+                color="#6b0000"
+                emissive="#6b0000"
+                emissiveIntensity={0.45}
+                transparent
+                depthWrite={false}
+                opacity={0.45 * (1 - finishT)}
+              />
+            </mesh>
+          ))}
+        </>
       )}
     </group>
   );

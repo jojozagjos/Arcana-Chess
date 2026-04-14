@@ -1295,6 +1295,44 @@ export class GameManager {
       return true;
     });
 
+    // NEW: Check if trying to move a mind-controlled ENEMY piece
+    // If not in legalMoves, but piece at 'from' is mind-controlled by current player, 
+    // validate the move manually
+    if (!candidate && move.from && move.to) {
+      const pieceAtFrom = chess.get(move.from);
+      const mindControlled = gameState.activeEffects?.mindControlled || [];
+      const controlEntry = mindControlled.find(c => c.square === move.from);
+      
+      if (pieceAtFrom && controlEntry && controlEntry.controller === moverColor) {
+        // This IS an enemy piece being mind-controlled by current player
+        // Validate it's a legal move for that piece
+        const tempChess = new Chess(chess.fen());
+        // Temporarily pretend the piece belongs to the controlling player
+        const piece = tempChess.get(move.from);
+        const originalColor = piece.color;
+        tempChess.remove(move.from);
+        tempChess.put({ type: piece.type, color: moverColor }, move.from);
+        
+        // Now check if this move is legal
+        const tempMoves = tempChess.moves({ verbose: true });
+        const tempCandidate = tempMoves.find(m => {
+          if (m.from !== move.from || m.to !== move.to) return false;
+          if (move.promotion && m.promotion !== move.promotion) return false;
+          return true;
+        });
+        
+        // Restore original color and store as candidate
+        if (tempCandidate) {
+          // Construct a candidate with original color but valid move info
+          candidate = {
+            ...tempCandidate,
+            piece: pieceAtFrom.type,
+            color: originalColor // Keep track of original color for logging
+          };
+        }
+      }
+    }
+
     // Additional validation: pawns cannot capture on the same rank unless En Passant Master is active.
     if (candidate && candidate.piece === 'p' && candidate.captured) {
       const fromRank = parseInt(candidate.from[1]);
@@ -2579,7 +2617,10 @@ export class GameManager {
         console.error('[AI] No scored moves available - using first legal move');
         selectedMove = allMoves[0];
       } else {
-        selectedMove = scoredMoves[0].move;
+        // AI makes intentionally BAD moves!
+        // Pick from the lowest-scoring moves instead of best
+        const randomBadIndex = Math.floor(Math.random() * Math.min(5, Math.max(1, Math.floor(scoredMoves.length / 2))));
+        selectedMove = scoredMoves[scoredMoves.length - 1 - randomBadIndex].move;
       }
     }
     
@@ -3163,17 +3204,10 @@ export class GameManager {
       }
     }
     
-    // Reverse mind control after 1 turn
+    // Clear mind control after 1 turn
+    // Pieces keep their original color and appearance, so no need to flip back
+    // Just clear the tracking so player can't move them anymore
     if (effects.mindControlled && effects.mindControlled.length > 0) {
-      const chess = gameState.chess;
-      for (const controlled of effects.mindControlled) {
-        const piece = chess.get(controlled.square);
-        if (piece && piece.type === controlled.type) {
-          // Flip it back to original color
-          chess.remove(controlled.square);
-          chess.put({ type: controlled.type, color: controlled.originalColor }, controlled.square);
-        }
-      }
       effects.mindControlled = [];
     }
     

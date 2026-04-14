@@ -1111,9 +1111,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
           const target = chess.get(params.targetSquare);
           const opponentColorMC = colorChar === 'w' ? 'b' : 'w';
           if (target && target.color === opponentColorMC && target.type !== 'k') {
-            // Temporarily switch piece color
-            chess.remove(params.targetSquare);
-            chess.put({ type: target.type, color: colorChar }, params.targetSquare);
+            // DON'T change piece color - keep original appearance, just mark as controlled
             gameState.activeEffects.mindControlled = gameState.activeEffects.mindControlled || [];
             gameState.activeEffects.mindControlled.push({
               square: params.targetSquare,
@@ -1219,7 +1217,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
 
             if (captureCount > 0) {
               const thirdMove = pickBestOverdriveMove(chess, currentSquare, colorChar, true)
-                || pickBestOverdriveMove(chess, currentSquare, colorChar);
+                || pickBestOverdriveMove(chess, currentSquare, colorChar, false);
 
               if (thirdMove) {
                 const thirdResult = chess.move({ from: currentSquare, to: thirdMove.to, promotion: 'q' });

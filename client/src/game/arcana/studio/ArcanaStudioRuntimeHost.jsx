@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Html, Line } from '@react-three/drei';
-import { useThree } from '@react-three/fiber';
+import { Line } from '@react-three/drei';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { ChessPiece } from '../../../components/ChessPiece.jsx';
-import { sampleCameraTrack, sampleObjectTrack, sampleOverlayTrack, sampleParticleTrack } from './arcanaStudioPlayback.js';
-import { getScreenOverlaySamples, resolveRuntimeSquare } from './arcanaStudioRuntime.js';
-import { buildParticlePreviewPoints } from './arcanaStudioVfxPresets.js';
+import { sampleCameraTrack, sampleObjectTrack } from './arcanaStudioPlayback.js';
+import { resolveRuntimeSquare } from './arcanaStudioRuntime.js';
 import { squareToPosition } from '../sharedHelpers.jsx';
 
 const DEFAULT_WORLD_ANCHOR = [0, 0.15, 0];
@@ -45,6 +44,20 @@ function addVec3(...vectors) {
   ]), [0, 0, 0]);
 }
 
+function resolveTrackRuntimeSquare(track, eventParams) {
+  const explicitSquare = typeof track?.pieceSquare === 'string' ? track.pieceSquare.trim() : '';
+  if (explicitSquare === 'target' || explicitSquare === 'source') {
+    return resolveRuntimeSquare(explicitSquare, eventParams, explicitSquare);
+  }
+
+  const targetSquare = eventParams?.targetSquare || eventParams?.square || '';
+  if (track?.type === 'piece' && targetSquare) {
+    return resolveRuntimeSquare('target', eventParams, targetSquare);
+  }
+
+  return resolveRuntimeSquare(explicitSquare, eventParams, explicitSquare);
+}
+
 function resolveTrackStates(card, eventParams, boardPieces, timeMs) {
   const tracks = card?.tracks?.objects || [];
   const pieceBySquare = new Map(boardPieces.map((piece) => [piece.square, piece]));
@@ -53,7 +66,7 @@ function resolveTrackStates(card, eventParams, boardPieces, timeMs) {
   const visiting = new Set();
 
   const resolveSquareAnchor = (track) => {
-    const alias = resolveRuntimeSquare(track?.pieceSquare, eventParams, track?.pieceSquare);
+    const alias = resolveTrackRuntimeSquare(track, eventParams);
     const piece = pieceBySquare.get(alias || '');
     if (piece) return piece.targetPosition;
     if (alias && /^[a-h][1-8]$/i.test(alias)) {
@@ -120,6 +133,7 @@ function TrackFallbackMesh({ track, piece }) {
 }
 
 function RuntimeObjectEntity({ track, piece, sampled }) {
+  if (track?.type === 'piece') return null;
   const position = sampled?.worldPosition || sampled?.anchorPosition || piece?.targetPosition || DEFAULT_WORLD_ANCHOR;
   return (
     <group position={position} rotation={sampled?.rotation || [0, 0, 0]} scale={sampled?.scale || [1, 1, 1]}>
@@ -128,103 +142,174 @@ function RuntimeObjectEntity({ track, piece, sampled }) {
   );
 }
 
-function RuntimeParticleTrack({ track, card, eventParams, objectStates, playheadMs }) {
-  const sample = sampleParticleTrack(track, playheadMs);
-  const attachTrack = (card.tracks?.objects || []).find((entry) => entry.id === track.attach?.targetId) || null;
-  const attachSample = attachTrack ? objectStates[attachTrack.id] : null;
-  const attachAlias = resolveRuntimeSquare(attachTrack?.pieceSquare || track.attach?.targetId, eventParams, eventParams?.targetSquare || eventParams?.square || null);
-  const attachPos = attachSample?.worldPosition || (attachAlias && /^[a-h][1-8]$/i.test(attachAlias) ? squareToPosition(attachAlias) : DEFAULT_WORLD_ANCHOR);
-  const base = addVec3(attachPos, [0, 0.2, 0], track.attach?.offset || [0, 0, 0]);
-  const points = useMemo(() => buildParticlePreviewPoints({ sample, anchor: base, maxPoints: 84 }), [base, sample]);
-
-  if (!sample.active) return null;
-
-  return (
-    <group>
-      {points.map((point, index) => (
-        <mesh key={`${track.id}-${index}`} position={point.position}>
-          <sphereGeometry args={[point.size || 0.05, 8, 8]} />
-          <meshStandardMaterial color={point.color} emissive={point.color} emissiveIntensity={1.2} transparent opacity={point.opacity || 0.78} depthWrite={false} />
-        </mesh>
-      ))}
-      {track.attach?.targetId && attachTrack && (
-        <Line points={[base, [attachPos[0], 0.2, attachPos[2]]]} color="#8fe5ff" lineWidth={1.25} dashed dashSize={0.18} gapSize={0.12} />
-      )}
-    </group>
-  );
-}
-
-function RuntimeWorldOverlay({ track, sample, eventParams, card }) {
-  const alias = resolveRuntimeSquare(track.anchorSquare || track.pieceSquare || eventParams?.targetSquare, eventParams, card?.board?.focusSquare || null);
-  const position = alias && /^[a-h][1-8]$/i.test(alias)
-    ? (() => {
-        const [x, , z] = squareToPosition(alias);
-        return [x, 1.25, z];
-      })()
-    : [0, 1.25, 0];
-
-  return (
-    <Html position={position} center transform>
-      <div
-        style={{
-          color: track.style?.color || '#ffffff',
-          fontSize: `${track.style?.fontSize || 28}px`,
-          fontFamily: track.style?.fontFamily || 'Georgia, serif',
-          fontWeight: track.style?.weight || 700,
-          textAlign: track.style?.align || 'center',
-          background: track.style?.background || 'transparent',
-          opacity: sample.opacity,
-          transform: `scale(${sample.scale}) rotate(${sample.rotation}deg)`,
-          whiteSpace: 'pre-wrap',
-          textShadow: '0 6px 18px rgba(0,0,0,0.5)',
-          padding: '0.15rem 0.35rem',
-          borderRadius: '0.35rem',
-        }}
-      >
-        {sample.text || track.content}
-      </div>
-    </Html>
-  );
-}
-
-export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onComplete }) {
+export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onComplete, runtimePieces = null, onPieceMotionsChange = null }) {
   const { camera } = useThree();
   const savedStateRef = useRef(null);
+  const onCompleteRef = useRef(onComplete);
+  const cameraTransitionRef = useRef(null);
+  const previousPlayheadRef = useRef(0);
   const [playheadMs, setPlayheadMs] = useState(0);
-
-  const boardPieces = useMemo(() => parseFenPieces(session?.card?.board?.fen), [session?.card?.board?.fen]);
-  const objectStates = useMemo(() => resolveTrackStates(session?.card, session?.eventParams, boardPieces, playheadMs), [session?.card, session?.eventParams, boardPieces, playheadMs]);
-  const pieceBySquare = useMemo(() => new Map(boardPieces.map((piece) => [piece.square, piece])), [boardPieces]);
-  const worldOverlayEntries = useMemo(() => (
-    (session?.card?.tracks?.overlays || [])
-      .filter((track) => track.space === 'world')
-      .map((track) => ({ track, sample: sampleOverlayTrack(track, playheadMs) }))
-      .filter((entry) => entry.sample)
-  ), [session?.card, playheadMs]);
+  const hasCameraTimeline = useMemo(
+    () => (session?.card?.tracks?.camera || []).some((track) => (track?.keys || []).length > 0),
+    [session?.card?.tracks?.camera],
+  );
 
   useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  const fallbackFenPieces = useMemo(() => {
+    // Use runtime FEN from params if available (actual game board state),
+    // otherwise fall back to card's preview FEN (for Studio editing)
+    const runtimeFen = session?.eventParams?.fen;
+    const fenToUse = runtimeFen || session?.card?.board?.fen;
+    return parseFenPieces(fenToUse);
+  }, [session?.card?.board?.fen, session?.eventParams?.fen]);
+  const boardPieces = useMemo(() => {
+    if (Array.isArray(runtimePieces) && runtimePieces.length > 0) {
+      return runtimePieces
+        .filter((piece) => piece && typeof piece.square === 'string' && Array.isArray(piece.targetPosition))
+        .map((piece) => ({
+          square: piece.square,
+          type: piece.type,
+          isWhite: piece.isWhite,
+          targetPosition: piece.targetPosition,
+        }));
+    }
+    return fallbackFenPieces;
+  }, [runtimePieces, fallbackFenPieces]);
+  const pieceBySquare = useMemo(() => new Map(boardPieces.map((piece) => [piece.square, piece])), [boardPieces]);
+  const cameraAnchorPosition = useMemo(() => {
+    const anchorMode = String(session?.eventParams?.cameraAnchorMode || 'auto').toLowerCase();
+    if (anchorMode === 'board' || anchorMode === 'center') return null;
+
+    const anchorSquare = resolveRuntimeSquare(
+      session?.eventParams?.cameraAnchorSquare || session?.eventParams?.focusSquare || session?.eventParams?.targetSquare || session?.eventParams?.square,
+      session?.eventParams,
+      null,
+    );
+
+    if (!anchorSquare && anchorMode === 'piece') return [0, 0.15, 0];
+    if (!anchorSquare) return null;
+    const anchoredPiece = pieceBySquare.get(anchorSquare);
+    if (anchoredPiece && Array.isArray(anchoredPiece.targetPosition)) {
+      return anchoredPiece.targetPosition;
+    }
+    const [x, , z] = squareToPosition(anchorSquare);
+    return [x, 0.15, z];
+  }, [pieceBySquare, session?.eventParams?.cameraAnchorMode, session?.eventParams?.cameraAnchorSquare, session?.eventParams?.focusSquare, session?.eventParams?.square, session?.eventParams?.targetSquare]);
+  const objectStates = useMemo(() => resolveTrackStates(session?.card, session?.eventParams, boardPieces, playheadMs), [session?.card, session?.eventParams, boardPieces, playheadMs]);
+
+  useEffect(() => {
+    if (typeof onPieceMotionsChange !== 'function') return undefined;
+    if (!session?.card) {
+      onPieceMotionsChange({});
+      return undefined;
+    }
+
+    const nextMotions = {};
+    (session.card.tracks?.objects || []).forEach((track) => {
+      if (track?.type !== 'piece') return;
+      const alias = resolveTrackRuntimeSquare(track, session.eventParams);
+      if (!alias) return;
+      const piece = pieceBySquare.get(alias);
+      const sampled = objectStates?.[track.id];
+      if (!piece || !sampled) return;
+
+      const basePosition = Array.isArray(piece.targetPosition) ? piece.targetPosition : DEFAULT_WORLD_ANCHOR;
+      const worldPosition = Array.isArray(sampled.worldPosition) ? sampled.worldPosition : basePosition;
+      nextMotions[alias] = {
+        active: true,
+        mode: 'studio-runtime',
+        positionOffset: [
+          (worldPosition[0] || 0) - (basePosition[0] || 0),
+          (worldPosition[1] || 0) - (basePosition[1] || 0),
+          (worldPosition[2] || 0) - (basePosition[2] || 0),
+        ],
+        rotation: sampled.rotation || [0, 0, 0],
+        scale: sampled.scale || [1, 1, 1],
+      };
+    });
+
+    onPieceMotionsChange(nextMotions);
+    return () => {
+      onPieceMotionsChange({});
+    };
+  }, [objectStates, onPieceMotionsChange, pieceBySquare, session]);
+  useEffect(() => {
     if (!session?.id) {
+      const savedState = savedStateRef.current;
+      if (savedState) {
+        const controls = controlsRef?.current;
+        const startPosition = camera.position.clone();
+        const startQuaternion = camera.quaternion.clone();
+        const startTarget = controls?.target?.clone() || new THREE.Vector3(0, 0, 0);
+        const startFov = camera.fov;
+        const startTime = performance.now();
+        const durationMs = 360;
+        if (controls) controls.enabled = false;
+
+        let frame = 0;
+        const animateRestore = () => {
+          const progress = Math.min(1, (performance.now() - startTime) / durationMs);
+          const eased = progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+          camera.position.lerpVectors(startPosition, savedState.position, eased);
+          camera.quaternion.slerpQuaternions(startQuaternion, savedState.quaternion, eased);
+          camera.fov = THREE.MathUtils.lerp(startFov, savedState.fov, eased);
+          camera.updateProjectionMatrix();
+
+          if (controls) {
+            controls.target.lerpVectors(startTarget, savedState.target, eased);
+            controls.update();
+          }
+
+          if (progress < 1) {
+            frame = requestAnimationFrame(animateRestore);
+            return;
+          }
+
+          if (controls) {
+            controls.enabled = savedState.controlsEnabled;
+            controls.update();
+          }
+
+          savedStateRef.current = null;
+        };
+
+        frame = requestAnimationFrame(animateRestore);
+        setPlayheadMs(0);
+        return () => {
+          cancelAnimationFrame(frame);
+          savedStateRef.current = null;
+        };
+      }
       setPlayheadMs(0);
       return undefined;
     }
 
     const controls = controlsRef?.current;
-    savedStateRef.current = {
-      position: camera.position.clone(),
-      quaternion: camera.quaternion.clone(),
-      fov: camera.fov,
-      target: controls?.target?.clone() || new THREE.Vector3(0, 0, 0),
-      controlsEnabled: controls?.enabled ?? true,
-    };
-    if (controls) controls.enabled = false;
+    if (hasCameraTimeline && !savedStateRef.current) {
+      savedStateRef.current = {
+        position: camera.position.clone(),
+        quaternion: camera.quaternion.clone(),
+        fov: camera.fov,
+        target: controls?.target?.clone() || new THREE.Vector3(0, 0, 0),
+        controlsEnabled: controls?.enabled ?? true,
+      };
+      if (controls) controls.enabled = false;
+    }
 
+    setPlayheadMs(0);
     let frame = 0;
     const tick = () => {
       const elapsed = Math.max(0, performance.now() - session.startedAt);
       const next = Math.min(session.durationMs, elapsed);
       setPlayheadMs(next);
       if (next >= session.durationMs) {
-        onComplete?.();
+        onCompleteRef.current?.();
         return;
       }
       frame = requestAnimationFrame(tick);
@@ -233,112 +318,122 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
 
     return () => {
       cancelAnimationFrame(frame);
-      const savedState = savedStateRef.current;
-      if (savedState) {
-        camera.position.copy(savedState.position);
-        camera.quaternion.copy(savedState.quaternion);
-        camera.fov = savedState.fov;
-        camera.updateProjectionMatrix();
-        if (controls) {
-          controls.target.copy(savedState.target);
-          controls.enabled = savedState.controlsEnabled;
-          controls.update();
-        }
-      }
     };
-  }, [camera, controlsRef, onComplete, session]);
+  }, [camera, controlsRef, hasCameraTimeline, session?.id]);
 
   useEffect(() => {
-    if (!session?.card) return;
-    const cameraTrack = session.card.tracks?.camera?.[0];
+    if (!session?.card || !hasCameraTimeline) return;
+    const cameraTrack = (session.card.tracks?.camera || []).find((track) => (track?.keys || []).length > 0);
     if (!cameraTrack) return;
+
+    // Treat only large jumps (or reverse jumps) as scrubbing.
+    const playheadDelta = playheadMs - previousPlayheadRef.current;
+    const isScrubbing = playheadDelta < -1 || playheadDelta > 50;
+    previousPlayheadRef.current = playheadMs;
+
     const sample = sampleCameraTrack(cameraTrack, playheadMs);
-    camera.position.set(...(sample.position || [0, 7, 7]));
-    camera.fov = sample.fov || 55;
-    camera.updateProjectionMatrix();
+    const targetOffset = cameraAnchorPosition || null;
+    const basePosition = sample.position || [0, 7, 7];
+    const baseTarget = sample.target || [0, 0, 0];
+    const targetPosition = targetOffset ? addVec3(basePosition, targetOffset) : basePosition;
+    const targetCameraTarget = targetOffset ? addVec3(baseTarget, targetOffset) : baseTarget;
+    const targetFov = sample.fov || 55;
+
     const controls = controlsRef?.current;
-    if (controls) {
-      controls.target.set(...(sample.target || [0, 0, 0]));
-      controls.update();
+
+    // If scrubbing, animate smoothly; otherwise snap
+    if (isScrubbing) {
+      // Cancel any existing transition
+      if (cameraTransitionRef.current?.frameId) {
+        cancelAnimationFrame(cameraTransitionRef.current.frameId);
+      }
+
+      const startPosition = camera.position.clone();
+      const startQuaternion = camera.quaternion.clone();
+      const startFov = camera.fov;
+      const startTarget = controls?.target?.clone() || new THREE.Vector3(0, 0, 0);
+      const startTime = performance.now();
+      const durationMs = 200; // Scrubbing animation duration (slower, ~200ms)
+      const targetPositionVec = new THREE.Vector3(...targetPosition);
+      const targetCameraTargetVec = new THREE.Vector3(...targetCameraTarget);
+
+      const targetQuaternion = new THREE.Quaternion();
+      const lookAtMatrix = new THREE.Matrix4();
+      lookAtMatrix.lookAt(targetPositionVec, targetCameraTargetVec, camera.up);
+      targetQuaternion.setFromRotationMatrix(lookAtMatrix);
+
+      const animateToTarget = () => {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(1, elapsed / durationMs);
+
+        // Easing: easeInOutCubic for smooth acceleration/deceleration
+        const eased = progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+        camera.position.lerpVectors(startPosition, targetPositionVec, eased);
+        camera.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, eased);
+        camera.fov = THREE.MathUtils.lerp(startFov, targetFov, eased);
+        camera.updateProjectionMatrix();
+
+        if (controls) {
+          controls.target.lerpVectors(startTarget, targetCameraTargetVec, eased);
+          controls.update();
+        }
+
+        if (progress < 1) {
+          cameraTransitionRef.current.frameId = requestAnimationFrame(animateToTarget);
+        } else {
+          cameraTransitionRef.current = null;
+        }
+      };
+
+      cameraTransitionRef.current = { frameId: requestAnimationFrame(animateToTarget) };
+    } else {
+      // Not scrubbing - apply immediately (playback is running)
+      // Position
+      camera.position.set(...targetPosition);
+      
+      // FOV
+      camera.fov = targetFov;
+
+      // Keep camera orientation target-driven to match Studio preview.
+      if (!controls) {
+        camera.lookAt(...targetCameraTarget);
+      }
+
+      camera.updateProjectionMatrix();
+
+      if (controls) {
+        // Always update controls to look at the target
+        controls.target.set(...targetCameraTarget);
+        controls.update();
+      }
     }
-  }, [camera, controlsRef, playheadMs, session]);
+
+    return () => {
+      if (cameraTransitionRef.current?.frameId) {
+        cancelAnimationFrame(cameraTransitionRef.current.frameId);
+      }
+    };
+  }, [camera, cameraAnchorPosition, controlsRef, hasCameraTimeline, playheadMs, session]);
 
   if (!session?.card) return null;
 
+  const objectTracks = session.card.tracks?.objects || [];
+
   return (
     <group>
-      {(session.card.tracks?.objects || []).map((track) => {
-        const alias = resolveRuntimeSquare(track.pieceSquare, session.eventParams, track.pieceSquare);
+      {objectTracks.map((track) => {
+        const alias = resolveTrackRuntimeSquare(track, session.eventParams);
         const piece = pieceBySquare.get(alias || '');
-        return <RuntimeObjectEntity key={track.id} track={track} piece={piece} sampled={objectStates[track.id]} />;
+        const sampled = objectStates[track.id];
+        return <RuntimeObjectEntity key={track.id} track={track} piece={piece} sampled={sampled} />;
       })}
-      {(session.card.tracks?.particles || []).map((track) => (
-        <RuntimeParticleTrack key={track.id} track={track} card={session.card} eventParams={session.eventParams} objectStates={objectStates} playheadMs={playheadMs} />
-      ))}
-      {worldOverlayEntries.map(({ track, sample }) => (
-        <RuntimeWorldOverlay key={track.id} track={track} sample={sample} eventParams={session.eventParams} card={session.card} />
-      ))}
     </group>
   );
 }
 
 export function ArcanaStudioScreenOverlay({ session }) {
-  const [playheadMs, setPlayheadMs] = useState(0);
-
-  useEffect(() => {
-    if (!session?.id) {
-      setPlayheadMs(0);
-      return undefined;
-    }
-    let frame = 0;
-    const tick = () => {
-      const elapsed = Math.max(0, performance.now() - session.startedAt);
-      const next = Math.min(session.durationMs, elapsed);
-      setPlayheadMs(next);
-      if (next < session.durationMs) frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [session]);
-
-  const overlays = useMemo(() => getScreenOverlaySamples(session?.card, playheadMs), [playheadMs, session?.card]);
-  if (!session?.card || overlays.length === 0) return null;
-
-  return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 9998 }}>
-      {overlays.map(({ track, sample, composedLayer }) => {
-        const isScreenCover = track.type === 'screen_cover';
-        const widthPercent = Number.isFinite(track.style?.width) ? Math.max(1, track.style.width) : 100;
-        const heightPercent = Number.isFinite(track.style?.height) ? Math.max(1, track.style.height) : 100;
-        const style = {
-          position: 'absolute',
-          left: isScreenCover ? '50%' : `${sample.x}%`,
-          top: isScreenCover ? '50%' : `${sample.y}%`,
-          width: isScreenCover ? `${widthPercent}%` : undefined,
-          height: isScreenCover ? `${heightPercent}%` : undefined,
-          opacity: sample.opacity,
-          transform: `translate(-50%, -50%) scale(${sample.scale}) rotate(${sample.rotation}deg)`,
-          color: track.style?.color || '#ffffff',
-          fontSize: `${track.style?.fontSize || 36}px`,
-          fontFamily: track.style?.fontFamily || 'Georgia, serif',
-          fontWeight: track.style?.weight || 700,
-          textAlign: track.style?.align || 'center',
-          background: track.style?.background || 'transparent',
-          borderRadius: `${track.style?.borderRadius || 0}px`,
-          display: isScreenCover ? 'flex' : 'block',
-          alignItems: isScreenCover ? 'center' : undefined,
-          justifyContent: isScreenCover ? 'center' : undefined,
-          zIndex: 1000 + (Number(composedLayer) || Number(track.layer) || 0),
-          textShadow: '0 6px 18px rgba(0,0,0,0.5)',
-          whiteSpace: 'pre-wrap',
-        };
-
-        if (track.type === 'image' && track.style?.imageUrl) {
-          return <img key={track.id} alt={track.name} src={track.style.imageUrl} style={style} />;
-        }
-
-        return <div key={track.id} style={style}>{sample.text || track.content}</div>;
-      })}
-    </div>
-  );
+  return null;
 }

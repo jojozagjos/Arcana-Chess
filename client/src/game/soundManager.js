@@ -38,13 +38,23 @@ class SoundManager {
   }
 
   // Register arcana sounds using ARCANA_DEFINITIONS
-  // This will generate namespaced keys like 'arcana:shield_pawn' -> '/sounds/arcana/shield_pawn.mp3'
+  // This generates namespaced keys like:
+  // - 'arcana:shield_pawn' -> '/sounds/arcana/shield_pawn.mp3' (card id fallback)
+  // - 'arcana:shield' -> '/sounds/arcana/shield.mp3' (explicit soundId alias)
   registerArcanaSounds(basePath = '/sounds/arcana') {
     const map = {};
     for (const arc of ARCANA_DEFINITIONS) {
-      const key = `arcana:${arc.id}`;
-      // Prefer mp3, fall back to ogg could be supported by client if present
-      map[key] = `${basePath}/${arc.id}.mp3`;
+      const idKey = `arcana:${arc.id}`;
+      map[idKey] = `${basePath}/${arc.id}.mp3`;
+
+      // If definition declares an explicit arcana sound id (e.g. arcana:shield), preload that too.
+      const explicit = typeof arc?.soundId === 'string' ? arc.soundId.trim() : '';
+      if (explicit.startsWith('arcana:')) {
+        const token = explicit.slice('arcana:'.length);
+        if (token) {
+          map[explicit] = `${basePath}/${token}.mp3`;
+        }
+      }
     }
     this.preload(map);
   }
@@ -215,11 +225,37 @@ class SoundManager {
     return !!(a && a._ready);
   }
 
+  resolveSfxPath(soundName) {
+    if (!soundName || typeof soundName !== 'string') return '';
+    const trimmed = soundName.trim();
+    if (!trimmed) return '';
+    if (/^(https?:)?\//.test(trimmed)) return trimmed;
+    if (trimmed.startsWith('arcana:')) {
+      return `/sounds/arcana/${trimmed.slice('arcana:'.length)}.mp3`;
+    }
+    if (trimmed.startsWith('ui:')) {
+      return `/sounds/ui/${trimmed.slice('ui:'.length)}.mp3`;
+    }
+    return '';
+  }
+
   play(soundName, options = {}) {
     if (!this.enabled) return;
     // Skip silently if soundName is null/undefined (intentionally silent)
     if (!soundName) return;
-    const sound = this.sounds[soundName];
+    let sound = this.sounds[soundName];
+    if (!sound) {
+      const fallbackPath = this.resolveSfxPath(soundName);
+      if (fallbackPath) {
+        const audio = new Audio(fallbackPath);
+        audio.preload = 'auto';
+        audio._ready = false;
+        audio.addEventListener('canplaythrough', () => { audio._ready = true; }, { once: true });
+        try { audio.load(); } catch (e) {}
+        this.sounds[soundName] = audio;
+        sound = audio;
+      }
+    }
     if (!sound) {
       if (process.env.NODE_ENV !== 'production') {
         console.warn(`Sound "${soundName}" not found`);
@@ -227,18 +263,30 @@ class SoundManager {
       return;
     }
 
-    // Clone and play to allow overlapping sounds
-    const clone = sound.cloneNode(true);
-    // Ensure start at beginning
-    try { clone.currentTime = 0; } catch (e) {}
-    // Treat played sounds as SFX by default
     const requestedVolume = typeof options.volume === 'number' ? Math.max(0, Math.min(2, options.volume)) : 1;
-    clone.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * requestedVolume));
-    clone.loop = Boolean(options.loop);
-    if (typeof options.pitch === 'number' && Number.isFinite(options.pitch)) {
-      try { clone.playbackRate = Math.max(0.25, Math.min(4, options.pitch)); } catch (e) {}
+
+    const configure = (audio) => {
+      audio.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * requestedVolume));
+      audio.loop = Boolean(options.loop);
+      if (typeof options.pitch === 'number' && Number.isFinite(options.pitch)) {
+        try { audio.playbackRate = Math.max(0.25, Math.min(4, options.pitch)); } catch (e) {}
+      }
+    };
+
+    // If the preloaded element is not ready yet, use it directly to avoid a cold clone miss.
+    const isReady = Boolean(sound._ready) || (Number(sound.readyState) >= 2);
+    const target = isReady ? sound.cloneNode(true) : sound;
+    try {
+      target.currentTime = 0;
+    } catch (e) {
+      // Ignore non-seekable audio errors.
     }
-    const p = clone.play();
+    if (!isReady) {
+      try { sound.load(); } catch (e) {}
+    }
+
+    configure(target);
+    const p = target.play();
     if (p && p.catch) {
       p.catch(err => {
         // Commonly occurs when play is attempted before user gesture or browser policies
@@ -247,7 +295,7 @@ class SoundManager {
         }
       });
     }
-    return clone;
+    return target;
   }
 
   // Backwards-compatible alias for master volume

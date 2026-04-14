@@ -13,10 +13,10 @@ import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
 import { simulateArcanaEffect, needsTargetSquare, validateArcanaTarget, getValidTargetSquares, canUseCard } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { GhostPiece, CameraController, GrayscaleEffect, squareToPosition } from '../game/arcana/sharedHelpers.jsx';
-import { CameraCutscene, useCameraCutscene } from '../game/arcana/CameraCutscene.jsx';
-import CutsceneOverlay from './CutsceneOverlay.jsx';
-import { orchestrateCutscene } from '../game/arcana/cutsceneOrchestrator.js';
-import { getCutsceneConfig } from '../game/arcana/cutsceneDefinitions.js';
+import { getCutsceneCard } from '../game/arcana/cutsceneDefinitions.js';
+import { ArcanaStudioRuntimeHost } from '../game/arcana/studio/ArcanaStudioRuntimeHost.jsx';
+import { createArcanaStudioRuntimeSession, expandStudioRuntimePlaybackQueue } from '../game/arcana/studio/arcanaStudioRuntime.js';
+import { scheduleArcanaStudioAudio, scheduleArcanaStudioEvents, normalizeArcanaStudioEventActions } from '../game/arcana/studio/arcanaStudioRuntime.js';
 import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getRarityColor, getLogColor } from '../game/arcanaHelpers.js';
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
@@ -100,11 +100,8 @@ export function CardBalancingToolV2({ onBack }) {
   const [cutsceneActive, setCutsceneActive] = useState(false);
   const [cameraTarget, setCameraTarget] = useState(null);
   const [grayscaleIntensity, setGrayscaleIntensity] = useState(0);
-  // Cutscene orchestration hooks/refs
-  const { cutsceneTarget, triggerCutscene: _localTriggerCutscene, clearCutscene } = useCameraCutscene();
-  const overlayRef = useRef();
+  // Cutscene runtime refs
   const controlsRef = useRef();
-  const cutsceneCleanupRef = useRef(null);
   
   // Move history for testing
   const [moveHistory, setMoveHistory] = useState([]);
@@ -130,12 +127,20 @@ export function CardBalancingToolV2({ onBack }) {
   
   // Active visual arcana (for rendering cutscenes/effects)
   const [activeVisualArcana, setActiveVisualArcana] = useState(null);
+  const [studioRuntimeSession, setStudioRuntimeSession] = useState(null);
+  const [studioPieceMotions, setStudioPieceMotions] = useState({});
+  const studioRuntimeQueueRef = useRef([]);
+  const studioCameraRuntimeActive = Boolean(
+    studioRuntimeSession
+    && (studioRuntimeSession.card?.tracks?.camera || []).some((track) => (track?.keys || []).length > 0)
+  );
   
   // Highlighted squares for Line of Sight, Vision, Map Fragments, etc
   const [highlightedSquares, setHighlightedSquares] = useState([]);
   const [highlightedArcana, setHighlightedArcana] = useState(null);
   const [highlightColor, setHighlightColor] = useState('#88c0d0');
   const timeoutsRef = useRef([]);
+  const firedRuntimeVfxRef = useRef(new Map());
   
   // Metamorphosis dialog state
   const [metamorphosisDialog, setMetamorphosisDialog] = useState(null);
@@ -164,23 +169,11 @@ export function CardBalancingToolV2({ onBack }) {
     timeoutsRef.current = [];
   };
 
-  const clearOrchestratedCutscene = () => {
-    if (typeof cutsceneCleanupRef.current === 'function') {
-      try {
-        cutsceneCleanupRef.current();
-      } catch {
-        // Ignore cleanup errors from stale orchestrator callbacks.
-      }
-    }
-    cutsceneCleanupRef.current = null;
-  };
-
   const clearPreviewState = () => {
-    clearOrchestratedCutscene();
+    setStudioRuntimeSession(null);
     setCutsceneActive(false);
     setCameraTarget(null);
     setGrayscaleIntensity(0);
-    clearCutscene();
   };
 
   const cinematicMotionBySquare = useMemo(() => {
@@ -363,11 +356,12 @@ export function CardBalancingToolV2({ onBack }) {
       addLog(`Sound error: ${err.message}`, 'warning');
     }
 
-    // Play card sound if present (use soundKey)
+    // Play card sound if present (soundId)
     // Note: some cards (e.g. focus_fire) should not play on activation — only on capture
-    if (selectedCard.soundKey && selectedCard.id !== 'focus_fire') {
+    const selectedCardSoundId = selectedCard.soundId;
+    if (selectedCardSoundId && selectedCard.id !== 'focus_fire') {
       try {
-        soundManager.play(selectedCard.soundKey);
+        soundManager.play(selectedCardSoundId);
         setValidationChecklist(prev => ({ ...prev, sound: true }));
       } catch (err) {
         addLog(`Sound error: ${err.message}`, 'warning');
@@ -540,6 +534,14 @@ export function CardBalancingToolV2({ onBack }) {
   // Trigger visuals and sounds after server validation
   const triggerCardVisualsAndSounds = (card, params, colorChar) => {
     const visualParams = { ...(params || {}), actorColor: colorChar };
+    const studioCard = getCutsceneCard(card.id);
+    const hasStudioTimeline = Boolean(studioCard && (
+      (studioCard.tracks?.camera || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.objects || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.events || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.sounds || []).some((track) => (track?.keys || []).some((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0))
+    ));
+    const hasCutscenePlayback = hasStudioTimeline;
 
     // Divine Intervention should NOT show visuals on activation - only when check occurs
     if (card.id === 'divine_intervention') {
@@ -547,10 +549,11 @@ export function CardBalancingToolV2({ onBack }) {
       return;
     }
 
-    // Play sound effect if card has one (use soundKey)
-    if (card.soundKey) {
+    // Play sound effect if card has one (soundId)
+    const cardSoundId = card.soundId;
+    if (cardSoundId) {
       try {
-        soundManager.play(card.soundKey);
+        soundManager.play(cardSoundId);
         setValidationChecklist(prev => ({ ...prev, sound: true }));
       } catch (err) {
         addLog(`Sound error: ${err.message}`, 'warning');
@@ -560,7 +563,7 @@ export function CardBalancingToolV2({ onBack }) {
     // Trigger visual effect if card has one
     // BUT skip particles for berserker_rage and double_strike on card application - they show on capture only
     const skipParticlesForPending = (card.id === 'berserker_rage' || card.id === 'double_strike');
-    if ((card.visual?.particles || card.visual?.effect) && !skipParticlesForPending) {
+    if ((card.visual?.particles || card.visual?.effect) && !skipParticlesForPending && !hasCutscenePlayback) {
       setValidationChecklist(prev => ({ ...prev, visuals: true }));
 
       const pascalCase = (id) => id.split(/[_-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
@@ -574,7 +577,9 @@ export function CardBalancingToolV2({ onBack }) {
 
         setActiveVisualArcana({ arcanaId: card.id, params: visualParams });
         const duration = getArcanaEffectDuration(card.id);
-        const cutsceneDuration = card.visual?.cutscene ? (getCutsceneConfig(card.id)?.duration || 0) : 0;
+        const cutsceneDuration = hasCutscenePlayback
+          ? Math.max(0, createArcanaStudioRuntimeSession(studioCard, { ...visualParams, fen: chess.fen() }).durationMs || 0)
+          : 0;
         const clearMs = Math.max(duration || 3000, cutsceneDuration || 0);
         trackTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
       };
@@ -591,15 +596,14 @@ export function CardBalancingToolV2({ onBack }) {
       } else {
         triggerVisual(effectsModule);
       }
+    }
 
-      // Trigger cutscene if card has one
-      if (card.visual?.cutscene) {
-        setValidationChecklist(prev => ({ ...prev, cutscene: true }));
-        try {
-          triggerCardCutscene(card.id, params.targetSquare || params.square, params);
-        } catch (e) {
-          addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
-        }
+    if (hasCutscenePlayback) {
+      setValidationChecklist(prev => ({ ...prev, cutscene: true }));
+      try {
+        triggerCardCutscene(card.id, params?.targetSquare || params?.square, params);
+      } catch (e) {
+        addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
       }
     }
   };
@@ -647,22 +651,29 @@ export function CardBalancingToolV2({ onBack }) {
     // Skip visual for cards that show pending state (Berserker Rage, Double Strike show visual on capture, not on card use)
     const isPendingCard = testGameState.activeEffects.berserkerRage?.[colorChar]?.pending || 
                          testGameState.activeEffects.doubleStrike?.[colorChar]?.pending;
-    const shouldShowVisual = result.visualEffect && !(isPendingCard && (card.id === 'berserker_rage' || card.id === 'double_strike'));
+    const shouldShowVisual = result.visualEffect
+      && !hasCutscenePlayback
+      && !(isPendingCard && (card.id === 'berserker_rage' || card.id === 'double_strike'));
+    const studioCard = getCutsceneCard(card.id);
+    const hasStudioTimeline = Boolean(studioCard && (
+      (studioCard.tracks?.camera || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.objects || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.events || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.sounds || []).some((track) => (track?.keys || []).some((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0))
+    ));
+    const hasCutscenePlayback = hasStudioTimeline;
+    const visualParams = { ...(params || {}) };
+    if (result.highlightSquares && result.highlightSquares.length > 0) {
+      visualParams.square = result.highlightSquares[0];
+    }
+    if (!visualParams.square && visualParams.targetSquare) visualParams.square = visualParams.targetSquare;
+    if (result.pieceType && !visualParams.pieceType) visualParams.pieceType = result.pieceType;
+    if (result.pieceColor && !visualParams.pieceColor) visualParams.pieceColor = result.pieceColor;
+    // include actor color for effects that use it
+    visualParams.actorColor = colorChar;
     
     if (shouldShowVisual) {
       setValidationChecklist(prev => ({ ...prev, visuals: true }));
-
-      // Prepare visual params: prefer highlightSquares (destination) when present,
-      // fall back to targetSquare; also include actorColor for effects that need it.
-      const visualParams = { ...(params || {}) };
-      if (result.highlightSquares && result.highlightSquares.length > 0) {
-        visualParams.square = result.highlightSquares[0];
-      }
-      if (!visualParams.square && visualParams.targetSquare) visualParams.square = visualParams.targetSquare;
-      if (result.pieceType && !visualParams.pieceType) visualParams.pieceType = result.pieceType;
-      if (result.pieceColor && !visualParams.pieceColor) visualParams.pieceColor = result.pieceColor;
-      // include actor color for effects that use it
-      visualParams.actorColor = colorChar;
 
       const pascalCase = (id) => id.split(/[_-]/).map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
 
@@ -677,7 +688,9 @@ export function CardBalancingToolV2({ onBack }) {
         setActiveVisualArcana({ arcanaId: card.id, params: visualParams });
         // Clear visual after animation duration (use shared timing)
         const duration = getArcanaEffectDuration(card.id);
-        const cutsceneDuration = card?.visual?.cutscene ? (getCutsceneConfig(card.id)?.duration || 0) : 0;
+        const cutsceneDuration = hasCutscenePlayback
+          ? Math.max(0, createArcanaStudioRuntimeSession(studioCard, { ...visualParams, fen: chess.fen() }).durationMs || 0)
+          : 0;
         const clearMs = Math.max(duration || 3000, cutsceneDuration || 0);
         trackTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
       };
@@ -694,17 +707,6 @@ export function CardBalancingToolV2({ onBack }) {
           });
       } else {
         triggerVisual(effectsModule);
-      }
-
-      // If this card includes a cutscene in its visuals metadata, mark cutscene as working
-      if (card?.visual?.cutscene) {
-        setValidationChecklist(prev => ({ ...prev, cutscene: true }));
-        // Trigger full orchestrated cutscene when available
-        try {
-          triggerCardCutscene(card.id, visualParams.square, visualParams);
-        } catch (e) {
-          addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
-        }
       }
 
       // Handle shield (persistent effect)
@@ -725,6 +727,15 @@ export function CardBalancingToolV2({ onBack }) {
       }, visualDuration || 2000);
       
       return;
+    }
+
+    if (hasCutscenePlayback) {
+      setValidationChecklist(prev => ({ ...prev, cutscene: true }));
+      try {
+        triggerCardCutscene(card.id, visualParams.square, visualParams);
+      } catch (e) {
+        addLog(`Cutscene trigger failed: ${e.message}`, 'warning');
+      }
     }
 
     // Special handling for specific cards
@@ -789,38 +800,96 @@ export function CardBalancingToolV2({ onBack }) {
     addLog(result.message, result.success ? 'success' : 'error');
   };
 
-  // Map orchestrator VFX triggers into ArcanaVisualHost by setting activeVisualArcana
-  const handleVFXTrigger = (payload) => {
-    if (!payload) return;
-    const arcanaId = payload.arcanaId || payload.type;
-    const params = { square: payload.targetSquare || payload.square };
-    setActiveVisualArcana({ arcanaId, params });
-    const duration = getArcanaEffectDuration(arcanaId) || 3000;
-    trackTimeout(() => setActiveVisualArcana(null), duration);
+  // Trigger Studio runtime playback for a card if a studio timeline exists
+  const launchStudioCutscenePlayback = (arcanaId, targetSquare, eventParams = null, options = {}) => {
+    clearManagedTimeouts();
+    if (!options.preservePreviewState) {
+      clearPreviewState();
+    }
+    const studioCard = getCutsceneCard(arcanaId);
+    const hasStudioTimeline = Boolean(studioCard && (
+      (studioCard.tracks?.camera || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.objects || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.events || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.sounds || []).some((track) => (track?.keys || []).some((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0))
+    ));
+    if (!hasStudioTimeline) {
+      return null;
+    }
+
+    const runtimeParams = {
+      ...(eventParams || {}),
+      fen: chess.fen(),
+      targetSquare,
+      square: targetSquare,
+      cameraAnchorSquare: targetSquare,
+      cameraAnchorMode: eventParams?.cameraAnchorMode || (targetSquare ? 'piece' : 'board'),
+    };
+    const session = createArcanaStudioRuntimeSession(studioCard, runtimeParams);
+    setStudioRuntimeSession(session);
+    setCutsceneActive(true);
+
+    scheduleArcanaStudioAudio(studioCard, {
+      soundManager,
+      registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
+    });
+
+    scheduleArcanaStudioEvents(studioCard, {
+      eventParams: {
+        ...runtimeParams,
+        cardId: arcanaId,
+      },
+      registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
+      onEvent: (eventKey) => {
+        const actions = normalizeArcanaStudioEventActions(eventKey);
+        actions.forEach((action) => {
+          if (action.kind === 'sound' && action.soundId) {
+            soundManager.play(action.soundId, {
+              volume: action.volume,
+              pitch: action.pitch,
+              loop: action.loop,
+            });
+            return;
+          }
+
+          if (action.kind === 'highlight') {
+            setHighlightedSquares(action.squares || []);
+            setHighlightColor(action.color || '#88c0d0');
+            if ((action.durationMs || 0) > 0) {
+              trackTimeout(() => setHighlightedSquares([]), action.durationMs);
+            }
+            return;
+          }
+
+          if (action.kind === 'vfx' && action.arcanaId) {
+            const now = Date.now();
+            const dedupeKey = `${session?.id || 'session'}:${action.arcanaId}:${action.vfxKey || ''}:${action.params?.square || ''}`;
+            const lastAt = firedRuntimeVfxRef.current.get(dedupeKey) || 0;
+            if ((now - lastAt) < 280) return;
+            firedRuntimeVfxRef.current.set(dedupeKey, now);
+            setActiveVisualArcana({ arcanaId: action.arcanaId, params: action.params || {} });
+            trackTimeout(() => {
+              setActiveVisualArcana((current) => (current?.arcanaId === action.arcanaId ? null : current));
+            }, Math.max(100, Number(action.durationMs || 1200)));
+          }
+        });
+      },
+    });
+
+    return session;
   };
 
-  // Trigger an orchestrated cutscene wired to the local CameraCutscene and CutsceneOverlay
   const triggerCardCutscene = (arcanaId, targetSquare, eventParams = null) => {
-    clearManagedTimeouts();
-    clearPreviewState();
-    setCutsceneActive(true);
-    // Create a cameraRef object that exposes triggerCutscene (from useCameraCutscene)
-    const cameraRef = { current: { triggerCutscene: _localTriggerCutscene } };
-    const cleanup = orchestrateCutscene({
+    const playbackQueue = expandStudioRuntimePlaybackQueue(arcanaId, eventParams || {});
+    studioRuntimeQueueRef.current = playbackQueue.slice(1).map((entry) => ({
       arcanaId,
-      cameraRef,
-      overlayRef,
-      soundManager,
-      targetSquare,
-      eventParams,
-      onVFXTrigger: handleVFXTrigger,
-      onComplete: () => {
-        cutsceneCleanupRef.current = null;
-        clearPreviewState();
-      }
-    });
-    cutsceneCleanupRef.current = typeof cleanup === 'function' ? cleanup : null;
-    return cleanup;
+      targetSquare: entry.eventParams?.targetSquare || targetSquare,
+      eventParams: entry.eventParams,
+    }));
+
+    const firstTargetSquare = playbackQueue[0]?.eventParams?.targetSquare || targetSquare;
+    const firstEventParams = playbackQueue[0]?.eventParams || eventParams;
+    return launchStudioCutscenePlayback(arcanaId, firstTargetSquare, firstEventParams);
   };
 
   const handleSquareClick = (fileIndex, rankIndex) => {
@@ -1459,7 +1528,9 @@ export function CardBalancingToolV2({ onBack }) {
               <directionalLight position={[-5, 8, -5]} intensity={0.4} color="#88c0d0" />
               <pointLight position={[0, 5, 0]} intensity={0.6} color="#d8dee9" />
               <Environment preset="night" />
-              <OrbitControls ref={controlsRef} enabled={!cutsceneTarget} enablePan={false} minDistance={8} maxDistance={20} />
+              {!studioCameraRuntimeActive && (
+                <OrbitControls ref={controlsRef} enabled={!studioRuntimeSession} enablePan={false} minDistance={8} maxDistance={20} />
+              )}
 
               {/* Board squares - matches GameScene styling */}
               <group>
@@ -1532,7 +1603,7 @@ export function CardBalancingToolV2({ onBack }) {
                   isWhite={p.isWhite}
                   targetPosition={p.targetPosition}
                   square={p.square}
-                  cutsceneMotion={cinematicMotionBySquare.get(p.square) || null}
+                  cutsceneMotion={studioPieceMotions[p.square] || cinematicMotionBySquare.get(p.square) || null}
                   onClickSquare={(sq) => {
                     const file = 'abcdefgh'.indexOf(sq[0]);
                     const rank = 8 - parseInt(sq[1], 10);
@@ -1549,8 +1620,27 @@ export function CardBalancingToolV2({ onBack }) {
                 pawnShields={pawnShields}
               />
 
-              {/* CameraCutscene (uses three.js camera) - keep inside canvas */}
-              <CameraCutscene cutsceneTarget={cutsceneTarget} onCutsceneEnd={() => { setCutsceneActive(false); clearCutscene(); }} myColor={playerColor} controlsRef={controlsRef} />
+              <ArcanaStudioRuntimeHost
+                session={studioRuntimeSession}
+                controlsRef={controlsRef}
+                myColor={playerColor}
+                runtimePieces={pieces}
+                onPieceMotionsChange={setStudioPieceMotions}
+                onComplete={() => {
+                  const nextQueued = studioRuntimeQueueRef.current.shift();
+                  if (nextQueued) {
+                    launchStudioCutscenePlayback(
+                      nextQueued.arcanaId,
+                      nextQueued.targetSquare,
+                      nextQueued.eventParams,
+                      { preservePreviewState: true },
+                    );
+                    return;
+                  }
+                  setStudioRuntimeSession(null);
+                  setStudioPieceMotions({});
+                }}
+              />
 
               {/* Legacy Visual Effects (kept for backward compatibility) */}
               {visualEffects.map(effect => {
@@ -1580,8 +1670,6 @@ export function CardBalancingToolV2({ onBack }) {
               {/* Grayscale effect */}
               {grayscaleIntensity > 0 && <GrayscaleEffect intensity={grayscaleIntensity} />}
             </Canvas>
-            {/* DOM overlay for cutscenes must be outside the Canvas (not part of R3F tree) */}
-            <CutsceneOverlay ref={overlayRef} />
           </div>
 
           <div style={styles.testControls}>
@@ -1703,9 +1791,9 @@ export function CardBalancingToolV2({ onBack }) {
                 </div>
                 <div style={styles.checklistItem}>
                   <span style={validationChecklist.sound ? styles.checkTrue : styles.checkFalse}>
-                    {validationChecklist.sound ? '✓' : (selectedCard?.soundKey ? '✗' : '—')}
+                    {validationChecklist.sound ? '✓' : (selectedCard?.soundId ? '✗' : '—')}
                   </span>
-                  <span>Sound {selectedCard?.soundKey ? 'Working' : 'None'}</span>
+                  <span>Sound {selectedCard?.soundId ? 'Working' : 'None'}</span>
                 </div>
                 {selectedCard?.visual?.cutscene && (
                   <div style={styles.checklistItem}>

@@ -21,24 +21,6 @@
   backdrop-filter: saturate(0%);
 }
 
-/* Flash effect - bright white/colored burst */
-.cutscene-flash {
-  mix-blend-mode: screen;
-  animation: flash-pulse 0.3s ease-out;
-}
-
-@keyframes flash-pulse {
-  0% {
-    opacity: 0;
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
 /* Vignette effect - darkens edges */
 .cutscene-vignette {
   mix-blend-mode: multiply;

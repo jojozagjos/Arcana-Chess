@@ -28,7 +28,7 @@ export const CutsceneOverlay = React.forwardRef((props, ref) => {
 
   const playEffect = (config) => {
     const {
-      effect = 'flash', // 'monochrome', 'flash', 'vignette', 'color-fade'
+      effect = 'monochrome', // 'monochrome', 'vignette', 'color-fade'
       duration = 1000,
       intensity = 1.0,
       color = '#000000',
@@ -38,11 +38,17 @@ export const CutsceneOverlay = React.forwardRef((props, ref) => {
       onComplete = null,
     } = config;
 
+    const normalizedEffect = String(effect || '').trim().toLowerCase();
+    if (normalizedEffect === 'flash') {
+      onComplete?.();
+      return () => {};
+    }
+
     const id = `effect-${Date.now()}-${Math.random()}`;
     const startTime = performance.now();
 
     const effectElement = document.createElement('div');
-    effectElement.className = `cutscene-overlay cutscene-${effect}`;
+    effectElement.className = `cutscene-overlay cutscene-${normalizedEffect}`;
     effectElement.id = id;
     effectElement.style.cssText = `
       position: fixed;
@@ -55,17 +61,11 @@ export const CutsceneOverlay = React.forwardRef((props, ref) => {
     `;
 
     // Effect-specific styling
-    switch (effect) {
+    switch (normalizedEffect) {
       case 'monochrome':
         effectElement.style.cssText += `
           background: linear-gradient(rgba(100, 100, 100, ${intensity * 0.7}), rgba(100, 100, 100, ${intensity * 0.7}));
           mix-blend-mode: multiply;
-          opacity: 0;
-        `;
-        break;
-      case 'flash':
-        effectElement.style.cssText += `
-          background: ${color};
           opacity: 0;
         `;
         break;

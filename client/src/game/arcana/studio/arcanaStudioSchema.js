@@ -1,6 +1,4 @@
 export const ARCANA_STUDIO_CARD_VERSION = 1;
-const ARCANA_STUDIO_STORAGE_KEY = 'arcana:studio:cards:v1';
-let inMemoryCardsMap = {};
 
 function uid(prefix = 'id') {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -23,13 +21,17 @@ function cloneObject(value, fallback = {}) {
   }
 }
 
-function canUseStorage() {
-  return typeof globalThis !== 'undefined' && typeof globalThis.localStorage !== 'undefined';
-}
-
 function normalizeVec3(value, fallback = [0, 0, 0]) {
   if (!Array.isArray(value) || value.length < 3) return [...fallback];
   return [toFiniteNumber(value[0], fallback[0]), toFiniteNumber(value[1], fallback[1]), toFiniteNumber(value[2], fallback[2])];
+}
+
+function stableSerialize(value) {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableSerialize(value[key])}`).join(',')}}`;
 }
 
 function normalizeCameraKey(key, defaultTime = 0) {
@@ -38,6 +40,7 @@ function normalizeCameraKey(key, defaultTime = 0) {
     timeMs: clampTimeMs(key?.timeMs ?? key?.time ?? defaultTime),
     position: normalizeVec3(key?.position, [0, 7, 7]),
     target: normalizeVec3(key?.target, [0, 0, 0]),
+    rotation: normalizeVec3(key?.rotation, [0, 0, 0]),
     fov: Math.max(5, Math.min(140, toFiniteNumber(key?.fov, 55))),
     easing: key?.easing || 'easeInOutCubic',
     bezier: Array.isArray(key?.bezier) && key.bezier.length === 4 ? key.bezier.map((v, idx) => toFiniteNumber(v, [0.25, 0.1, 0.25, 1][idx])) : [0.25, 0.1, 0.25, 1],
@@ -58,6 +61,8 @@ function normalizeTransformKey(key, defaultTime = 0) {
 }
 
 function normalizeParticleTrack(track = {}) {
+  const style = String(track.params?.renderStyle || '').trim();
+  const normalizedStyle = ['orb', 'spark', 'shard', 'streak', 'smoke'].includes(style) ? style : 'orb';
   return {
     id: track.id || uid('pt'),
     name: track.name || 'Emitter',
@@ -83,6 +88,11 @@ function normalizeParticleTrack(track = {}) {
       spawnRadius: toFiniteNumber(track.params?.spawnRadius, 0.35),
       noiseStrength: toFiniteNumber(track.params?.noiseStrength, 0.2),
       noiseFrequency: toFiniteNumber(track.params?.noiseFrequency, 1.5),
+      renderStyle: normalizedStyle,
+      stretch: toFiniteNumber(track.params?.stretch, 0.35),
+      brightness: toFiniteNumber(track.params?.brightness, 1.2),
+      spinRate: toFiniteNumber(track.params?.spinRate, 0.8),
+      rotationJitter: toFiniteNumber(track.params?.rotationJitter, 0.45),
       material: {
         additive: track.params?.material?.additive ?? true,
         softParticles: track.params?.material?.softParticles ?? true,
@@ -136,31 +146,98 @@ function normalizeOverlayTrack(track = {}) {
 }
 
 function normalizeSoundTrack(track = {}) {
+  const deduped = new Set();
   return {
     id: track.id || uid('snd'),
     name: track.name || 'Sound Track',
-    keys: (Array.isArray(track.keys) ? track.keys : []).map((key, idx) => ({
-      id: key?.id || uid('sndk'),
-      timeMs: clampTimeMs(key?.timeMs ?? key?.time ?? idx * 500),
-      soundId: key?.soundId || '',
-      volume: Math.max(0, Math.min(2, toFiniteNumber(key?.volume, 1))),
-      loop: Boolean(key?.loop),
-      pitch: Math.max(0.25, Math.min(4, toFiniteNumber(key?.pitch, 1))),
-    })).sort((a, b) => a.timeMs - b.timeMs),
+    keys: (Array.isArray(track.keys) ? track.keys : [])
+      .map((key, idx) => ({
+        id: key?.id || uid('sndk'),
+        timeMs: clampTimeMs(key?.timeMs ?? key?.time ?? idx * 500),
+        soundId: key?.soundId || '',
+        volume: Math.max(0, Math.min(2, toFiniteNumber(key?.volume, 1))),
+        loop: Boolean(key?.loop),
+        pitch: Math.max(0.25, Math.min(4, toFiniteNumber(key?.pitch, 1))),
+      }))
+      .filter((key) => {
+        const token = `${key.timeMs}|${key.soundId}|${key.volume}|${key.pitch}|${key.loop}`;
+        if (deduped.has(token)) return false;
+        deduped.add(token);
+        return true;
+      })
+      .sort((a, b) => a.timeMs - b.timeMs),
   };
 }
 
+function normalizeLegacyEventType(type = '', payload = {}) {
+  const eventType = String(type || '').toLowerCase();
+  if (!eventType) return { type: 'custom', payload };
+
+  if (eventType.startsWith('sound_')) {
+    return {
+      type: 'sound_play',
+      payload: {
+        ...payload,
+        soundId: payload.soundId || payload.sound || payload.id || '',
+      },
+    };
+  }
+
+  if (eventType.startsWith('camera_')) {
+    return {
+      type: 'camera:focus',
+      payload: {
+        ...payload,
+        anchor: payload.anchor || 'target',
+      },
+    };
+  }
+
+  if (eventType.startsWith('overlay_')) {
+    const token = eventType.slice('overlay_'.length);
+    if (token.includes('monochrome')) return { type: 'overlay:monochrome', payload: { ...payload } };
+    if (token.includes('color_restore')) return { type: 'overlay:color-fade', payload: { ...payload } };
+    if (token.includes('vignette')) return { type: 'overlay:vignette', payload: { ...payload } };
+    return { type: 'overlay:flash', payload: { ...payload } };
+  }
+
+  if (eventType.startsWith('vfx_')) {
+    return {
+      type: 'vfx:play',
+      payload: {
+        ...payload,
+        effect: payload.effect || eventType.slice('vfx_'.length),
+      },
+    };
+  }
+
+  return { type: type || 'custom', payload };
+}
+
 function normalizeEventTrack(track = {}) {
+  const deduped = new Set();
   return {
     id: track.id || uid('evt'),
     name: track.name || 'Event Track',
-    keys: (Array.isArray(track.keys) ? track.keys : []).map((key, idx) => ({
-      id: key?.id || uid('evtk'),
-      timeMs: clampTimeMs(key?.timeMs ?? key?.time ?? idx * 500),
-      type: key?.type || 'custom',
-      delayMs: clampTimeMs(key?.delayMs ?? key?.delay ?? 0),
-      payload: typeof key?.payload === 'object' && key.payload ? key.payload : {},
-    })).sort((a, b) => a.timeMs - b.timeMs),
+    keys: (Array.isArray(track.keys) ? track.keys : [])
+      .map((key, idx) => {
+        const keyPayload = typeof key?.payload === 'object' && key.payload ? key.payload : {};
+        const normalized = normalizeLegacyEventType(key?.type || 'custom', keyPayload);
+        return {
+          id: key?.id || uid('evtk'),
+          timeMs: clampTimeMs(key?.timeMs ?? key?.time ?? idx * 500),
+          type: normalized.type,
+          delayMs: clampTimeMs(key?.delayMs ?? key?.delay ?? 0),
+          payload: normalized.payload,
+        };
+      })
+      .filter((key) => {
+        const token = `${key.timeMs}|${key.delayMs}|${key.type}|${stableSerialize(key.payload || {})}`;
+        if (deduped.has(token)) return false;
+        deduped.add(token);
+        return true;
+      })
+      .sort((a, b) => a.timeMs - b.timeMs),
   };
 }
 
@@ -231,11 +308,19 @@ export function migrateArcanaStudioCard(input, fallbackId = 'legacy_cutscene') {
       focusSquare: raw.board?.focusSquare || null,
     },
     tracks: {
-      camera: (Array.isArray(raw.tracks?.camera) ? raw.tracks.camera : base.tracks.camera).map((cam, idx) => ({
-        id: cam?.id || uid('cam'),
-        name: cam?.name || `Camera ${idx + 1}`,
-        keys: (Array.isArray(cam?.keys) ? cam.keys : [normalizeCameraKey({ timeMs: 0 }, 0)]).map((key, keyIdx) => normalizeCameraKey(key, keyIdx * 500)).sort((a, b) => a.timeMs - b.timeMs),
-      })),
+      camera: (Array.isArray(raw.tracks?.camera) ? raw.tracks.camera : base.tracks.camera).map((cam, idx) => {
+        const rawKeys = (Array.isArray(cam?.keys) ? cam.keys : [normalizeCameraKey({ timeMs: 0 }, 0)])
+          .map((key, keyIdx) => normalizeCameraKey(key, keyIdx * 500));
+        const keyByTime = new Map();
+        rawKeys.forEach((key) => {
+          keyByTime.set(key.timeMs, key);
+        });
+        return {
+          id: cam?.id || uid('cam'),
+          name: cam?.name || `Camera ${idx + 1}`,
+          keys: [...keyByTime.values()].sort((a, b) => a.timeMs - b.timeMs),
+        };
+      }),
       objects: (Array.isArray(raw.tracks?.objects) ? raw.tracks.objects : []).map((track, idx) => ({
         id: track?.id || uid('obj'),
         name: track?.name || `Object ${idx + 1}`,
@@ -254,7 +339,7 @@ export function migrateArcanaStudioCard(input, fallbackId = 'legacy_cutscene') {
       particles: (Array.isArray(raw.tracks?.particles) ? raw.tracks.particles : []).map((track) => normalizeParticleTrack(track)),
       overlays: (Array.isArray(raw.tracks?.overlays) ? raw.tracks.overlays : []).map((track) => normalizeOverlayTrack(track)),
       sounds: (Array.isArray(raw.tracks?.sounds) ? raw.tracks.sounds : base.tracks.sounds).map((track) => normalizeSoundTrack(track)),
-      events: (Array.isArray(raw.tracks?.events) ? raw.tracks.events : base.tracks.events).map((track) => normalizeEventTrack(track)),
+      events: (Array.isArray(raw.tracks?.events) ? raw.tracks.events : []).map((track) => normalizeEventTrack(track)),
     },
     meta: {
       ...base.meta,
@@ -266,43 +351,3 @@ export function migrateArcanaStudioCard(input, fallbackId = 'legacy_cutscene') {
   return card;
 }
 
-export function loadArcanaStudioCardsMap() {
-  if (!canUseStorage()) {
-    return cloneObject(inMemoryCardsMap, {});
-  }
-
-  try {
-    const raw = globalThis.localStorage.getItem(ARCANA_STUDIO_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-export function saveArcanaStudioCardsMap(cardsMap) {
-  const normalized = cardsMap && typeof cardsMap === 'object' ? cardsMap : {};
-  inMemoryCardsMap = cloneObject(normalized, {});
-
-  if (!canUseStorage()) return;
-
-  try {
-    globalThis.localStorage.setItem(ARCANA_STUDIO_STORAGE_KEY, JSON.stringify(normalized));
-  } catch {
-    // Ignore storage write failures (quota/private mode), keep in-memory fallback.
-  }
-}
-
-export function saveArcanaStudioCard(card) {
-  const migrated = migrateArcanaStudioCard(card, card?.id || 'unnamed');
-  const cards = loadArcanaStudioCardsMap();
-  cards[migrated.id] = migrated;
-  saveArcanaStudioCardsMap(cards);
-  return migrated;
-}
-
-export function getStoredArcanaStudioCard(cardId) {
-  const cards = loadArcanaStudioCardsMap();
-  return cards[cardId] ? migrateArcanaStudioCard(cards[cardId], cardId) : null;
-}

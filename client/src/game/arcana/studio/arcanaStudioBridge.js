@@ -1,5 +1,4 @@
 import { createEmptyArcanaStudioCard, migrateArcanaStudioCard } from './arcanaStudioSchema.js';
-import { buildStudioParticleTracksFromLegacy } from './arcanaStudioVfxPresets.js';
 
 function normalizeOverlayArray(overlay) {
   if (!overlay) return [];
@@ -49,6 +48,79 @@ function resolveLegacySoundFromAction(action, soundMap = {}) {
   return '';
 }
 
+function clampFov(value, fallback = 55) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(5, Math.min(140, parsed));
+}
+
+function mapLegacyOverlayType(action = '') {
+  const token = String(action || '').toLowerCase().replace(/^overlay_/, '');
+  if (!token) return 'overlay:flash';
+  if (token === 'flash' || token.endsWith('_flash')) return 'overlay:flash';
+  if (token.includes('monochrome')) return 'overlay:monochrome';
+  if (token.includes('color_restore')) return 'overlay:color-fade';
+  if (token.includes('vignette')) return 'overlay:vignette';
+  return 'overlay:flash';
+}
+
+function mapLegacyPhaseAction(action, context = {}) {
+  const actionType = String(action || '').toLowerCase();
+  const { soundId, phase, camera, cardId } = context;
+
+  if (actionType.startsWith('sound_')) {
+    return {
+      type: 'sound_play',
+      payload: {
+        soundId: soundId || '',
+        volume: 1,
+        pitch: 1,
+        loop: false,
+      },
+    };
+  }
+
+  if (actionType.startsWith('camera_')) {
+    return {
+      type: 'camera:focus',
+      payload: {
+        anchor: 'target',
+        duration: Number(camera?.duration || 600),
+        holdDuration: Number(camera?.holdDuration || 1000),
+        returnDuration: Number(camera?.returnDuration || camera?.duration || 600),
+        lookAtYOffset: Number(camera?.shots?.[0]?.lookAtYOffset || 0),
+      },
+    };
+  }
+
+  if (actionType.startsWith('overlay_')) {
+    return {
+      type: mapLegacyOverlayType(actionType),
+      payload: {
+        duration: Math.max(100, Number(phase?.duration || 700)),
+      },
+    };
+  }
+
+  if (actionType.startsWith('vfx_')) {
+    return {
+      type: 'vfx:play',
+      payload: {
+        effect: actionType.slice('vfx_'.length),
+        cardId,
+        durationMs: Math.max(100, Number(phase?.duration || 900)),
+      },
+    };
+  }
+
+  return {
+    type: action,
+    payload: {
+      legacyAction: action,
+    },
+  };
+}
+
 export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
   if (!legacyCutscene || typeof legacyCutscene !== 'object') {
     return createEmptyArcanaStudioCard(options.id || 'legacy_cutscene');
@@ -65,7 +137,7 @@ export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
   card.durationMs = Number(legacyCutscene.duration || card.durationMs);
   card.meta = {
     ...card.meta,
-    source: 'legacy-import',
+    source: options.source || 'legacy-import',
     legacyId: legacyCutscene.id,
     legacyImportedAt: Date.now(),
     legacyConfigSnapshot: legacyCutscene,
@@ -89,12 +161,14 @@ export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
 
   let shotStart = 0;
   shots.forEach((shot, index) => {
+    const derivedFov = Math.max(20, Math.min(120, Math.round(60 / Math.max(0.4, Number(shot.zoom || 1)))));
+    const shotFov = typeof shot?.fov === 'number' ? clampFov(shot.fov, derivedFov) : derivedFov;
     cameraTrack.keys.push({
       id: `cam_key_${index}`,
       timeMs: shotStart,
       position: [shot.offset?.[0] || 0, shot.offset?.[1] || 6, shot.offset?.[2] || 6],
       target: [0, shot.lookAtYOffset || 0, 0],
-      fov: Math.max(20, Math.min(120, Math.round(60 / Math.max(0.4, Number(shot.zoom || 1))))),
+      fov: shotFov,
       easing: camera.easing || 'easeInOutCubic',
       blendMode: 'curve',
     });
@@ -102,43 +176,6 @@ export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
   });
 
   card.tracks.camera = [cameraTrack];
-
-  const overlayTrack = {
-    id: 'legacy_overlay',
-    name: 'Legacy Overlay',
-    type: 'panel',
-    space: 'screen',
-    content: '',
-    style: {
-      color: '#ffffff',
-      fontSize: 32,
-      fontFamily: 'Georgia, serif',
-      weight: 700,
-      align: 'center',
-      imageUrl: '',
-      background: 'rgba(0,0,0,0)',
-    },
-    keys: [],
-  };
-
-  normalizeOverlayArray(config.overlay).forEach((ov, idx) => {
-    const phaseStart = phases.find((p) => p.name === ov?.phase)?.startMs || idx * 500;
-    overlayTrack.keys.push({
-      id: `ov_${idx}`,
-      timeMs: phaseStart,
-      x: 50,
-      y: 50,
-      opacity: Math.max(0, Math.min(1, Number(ov?.intensity ?? 1))),
-      scale: 1,
-      rotation: 0,
-      easing: 'easeInOutCubic',
-      text: ov?.effect || 'overlay',
-    });
-  });
-
-  if (overlayTrack.keys.length) {
-    card.tracks.overlays = [overlayTrack];
-  }
 
   const sounds = config.sound || {};
   const soundTrack = {
@@ -160,18 +197,38 @@ export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
     name: 'Legacy Events',
     keys: [],
   };
+  let emittedCardVfx = false;
   phases.forEach((phase, idx) => {
     phase.actions.forEach((action, actionIndex) => {
       const resolvedSoundId = resolveLegacySoundFromAction(action, sounds);
+      let mapped = mapLegacyPhaseAction(action, {
+        soundId: resolvedSoundId,
+        phase,
+        camera,
+        cardId: id,
+      });
+      if (mapped.type === 'vfx:play') {
+        if (emittedCardVfx) {
+          mapped = {
+            type: 'overlay:flash',
+            payload: {
+              duration: Math.max(100, Number(phase?.duration || 420)),
+            },
+          };
+        } else {
+          emittedCardVfx = true;
+        }
+      }
       eventTrack.keys.push({
         id: `evt_${idx}_${actionIndex}`,
         timeMs: phase.startMs,
-        type: action,
+        type: mapped.type,
         delayMs: 0,
         payload: {
           phase: phase.name,
           cardId: id,
           legacyAction: action,
+          ...(mapped.payload || {}),
           soundId: resolvedSoundId || undefined,
           soundMap: sounds,
         },
@@ -180,12 +237,8 @@ export function legacyCutsceneToArcanaStudioCard(legacyCutscene, options = {}) {
   });
   card.tracks.events = [eventTrack];
 
-  card.tracks.particles = buildStudioParticleTracksFromLegacy({
-    cardId: id,
-    legacyConfig: config,
-    durationMs: card.durationMs,
-    objectTrackId: null,
-  });
+  card.tracks.particles = [];
+  card.tracks.overlays = [];
 
   return migrateArcanaStudioCard(card, id);
 }
@@ -201,7 +254,9 @@ export function arcanaStudioCardToLegacyCutscene(cardInput) {
     const nextTime = cameraKeys[idx + 1]?.timeMs ?? duration;
     const segment = Math.max(200, nextTime - key.timeMs);
     const zoom = Math.max(0.2, 60 / Math.max(1, Number(key.fov || 55)));
+    const fov = clampFov(key.fov, 55);
     return {
+      fov,
       zoom,
       duration: Math.max(100, Math.floor(segment * 0.25)),
       holdDuration: Math.max(100, Math.floor(segment * 0.5)),
@@ -211,19 +266,6 @@ export function arcanaStudioCardToLegacyCutscene(cardInput) {
       blendMode: key.blendMode || 'curve',
     };
   });
-
-  const overlayTrack = card.tracks.overlays?.[0];
-  const overlayKeys = Array.isArray(overlayTrack?.keys) ? overlayTrack.keys : [];
-  const overlayConfig = overlayKeys.map((key) => ({
-    effect: overlayTrack?.type || 'flash',
-    color: overlayTrack?.style?.color || '#ffffff',
-    duration: 500,
-    intensity: key.opacity ?? 1,
-    fadeIn: 120,
-    hold: 220,
-    fadeOut: 160,
-    delay: key.timeMs,
-  }));
 
   const soundTrack = card.tracks.sounds?.[0];
   const sound = {};
@@ -259,17 +301,8 @@ export function arcanaStudioCardToLegacyCutscene(cardInput) {
       };
     });
 
-  const particleTrack = card.tracks.particles?.[0];
   const vfx = {
     ...(snapshot?.config?.vfx || {}),
-    emissionRate: particleTrack?.params?.emissionRate,
-    velocityMin: particleTrack?.params?.velocityMin,
-    velocityMax: particleTrack?.params?.velocityMax,
-    lifetimeMin: particleTrack?.params?.lifetimeMin,
-    lifetimeMax: particleTrack?.params?.lifetimeMax,
-    noiseStrength: particleTrack?.params?.noiseStrength,
-    noiseFrequency: particleTrack?.params?.noiseFrequency,
-    subemitters: particleTrack?.params?.subemitters || [],
   };
 
   return {
@@ -283,7 +316,7 @@ export function arcanaStudioCardToLegacyCutscene(cardInput) {
         easing: cameraKeys[0]?.easing || snapshot?.config?.camera?.easing || 'easeInOutCubic',
         shots: cameraShots.length ? cameraShots : (snapshot?.config?.camera?.shots || []),
       },
-      overlay: overlayConfig.length === 1 ? overlayConfig[0] : (overlayConfig.length ? overlayConfig : (snapshot?.config?.overlay || null)),
+      overlay: null,
       vfx,
       sound: Object.keys(sound).length ? sound : (snapshot?.config?.sound || {}),
       phases: phases.length ? phases : (snapshot?.config?.phases || []),

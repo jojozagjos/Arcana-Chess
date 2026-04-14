@@ -8,7 +8,7 @@ export function getArcanaEffectDuration(arcanaId) {
     soft_push: 900,
     pawn_rush: 1000,
     // Quick extras
-    execution: 800,
+    execution: 2200,
     peek_card: 600,
     mirror_image: 900,
     // Medium effects (1-2s)

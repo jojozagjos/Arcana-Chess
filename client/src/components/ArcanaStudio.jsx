@@ -3,37 +3,35 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Html, OrbitControls, TransformControls } from '@react-three/drei';
 import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaStudioTutorial } from './ArcanaStudioTutorial.jsx';
+import { CutsceneOverlay } from './CutsceneOverlay.jsx';
 import {
   createEmptyArcanaStudioCard,
-  loadArcanaStudioCardsMap,
   migrateArcanaStudioCard,
-  saveArcanaStudioCardsMap,
 } from '../game/arcana/studio/arcanaStudioSchema.js';
 import {
   collectTimelineRows,
   sampleCameraTrack,
   sampleObjectTrack,
   sampleOverlayTrack,
-  sampleParticleTrack,
 } from '../game/arcana/studio/arcanaStudioPlayback.js';
 import {
   getScreenOverlaySamples,
   normalizeArcanaStudioEventActions,
   resolveSoundPreviewUrl,
-  scheduleArcanaStudioAudio,
-  scheduleArcanaStudioEvents,
 } from '../game/arcana/studio/arcanaStudioRuntime.js';
+import { getArcanaEffectDuration } from '../game/arcana/arcanaTimings.js';
 import { getAllCutsceneCards, getAllCutsceneConfigs } from '../game/arcana/cutsceneDefinitions.js';
-import { legacyCutsceneToArcanaStudioCard } from '../game/arcana/studio/arcanaStudioBridge.js';
-import { buildParticlePreviewPoints, buildStudioParticleTracksFromLegacy } from '../game/arcana/studio/arcanaStudioVfxPresets.js';
+import { legacyCutsceneToArcanaStudioCard, arcanaStudioCardToLegacyCutscene } from '../game/arcana/studio/arcanaStudioBridge.js';
 import { getArcanaDefinition, listArcanaDefinitions, toStudioArcanaId } from '../game/arcanaCatalog.js';
+import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { soundManager } from '../game/soundManager.js';
 import { squareToPosition } from '../game/arcana/sharedHelpers.jsx';
 import './styles/ArcanaStudio.css';
 
 const DEFAULT_WORLD_ANCHOR = [0, 0.075, 0];
+const EMPTY_VFX_OBJECT = {};
 const EASINGS = ['linear', 'instant', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'easeInCubic', 'easeOutCubic', 'easeInOutCubic', 'customBezier'];
-const TRACK_TYPES = ['camera', 'object', 'particle', 'overlay', 'sound'];
+const TRACK_TYPES = ['camera', 'object', 'sound'];
 const LEGACY_CUTSCENE_CONFIGS = getAllCutsceneConfigs();
 const GAME_ARCANA_DEFINITIONS = listArcanaDefinitions();
 const RARITY_ORDER = {
@@ -53,87 +51,6 @@ const RARITY_COLOR = {
   legendary: '#ffbf6f',
   '???': '#ff7a9c',
 };
-
-const PARTICLE_PRESETS = {
-  arcane_burst: {
-    label: 'Arcane Burst',
-    params: {
-      emissionRate: 32,
-      burstCount: 8,
-      velocityMin: 0.5,
-      velocityMax: 2.0,
-      lifetimeMin: 0.18,
-      lifetimeMax: 1.0,
-      spawnShape: 'sphere',
-      spawnRadius: 0.36,
-      noiseStrength: 0.22,
-      noiseFrequency: 1.6,
-      colorOverLife: ['#a6e4ff', '#61b7ff', '#2b58ff'],
-      sizeOverLife: [1, 0.72, 0.08],
-      gravity: [0, -7, 0],
-      drag: 0.08,
-    },
-  },
-  ember_surge: {
-    label: 'Ember Surge',
-    params: {
-      emissionRate: 44,
-      burstCount: 16,
-      velocityMin: 0.6,
-      velocityMax: 2.35,
-      lifetimeMin: 0.15,
-      lifetimeMax: 0.85,
-      spawnShape: 'cone',
-      spawnRadius: 0.32,
-      noiseStrength: 0.36,
-      noiseFrequency: 1.9,
-      colorOverLife: ['#ffeabf', '#ffb96a', '#ff5d5d'],
-      sizeOverLife: [1.08, 0.8, 0.1],
-      gravity: [0, -8, 0],
-      drag: 0.07,
-    },
-  },
-  astral_ring: {
-    label: 'Astral Ring',
-    params: {
-      emissionRate: 28,
-      burstCount: 4,
-      velocityMin: 0.3,
-      velocityMax: 1.1,
-      lifetimeMin: 0.45,
-      lifetimeMax: 1.8,
-      spawnShape: 'ring',
-      spawnRadius: 0.58,
-      noiseStrength: 0.18,
-      noiseFrequency: 1.2,
-      colorOverLife: ['#f5e4ff', '#bf95ff', '#5d3cff'],
-      sizeOverLife: [0.95, 0.66, 0.2],
-      gravity: [0, -2.4, 0],
-      drag: 0.11,
-    },
-  },
-  toxic_cloud: {
-    label: 'Toxic Cloud',
-    params: {
-      emissionRate: 24,
-      burstCount: 0,
-      velocityMin: 0.15,
-      velocityMax: 0.75,
-      lifetimeMin: 0.9,
-      lifetimeMax: 2.4,
-      spawnShape: 'box',
-      spawnRadius: 0.42,
-      noiseStrength: 0.26,
-      noiseFrequency: 1.05,
-      colorOverLife: ['#d2ffd4', '#72e49d', '#218666'],
-      sizeOverLife: [1.22, 1.0, 0.52],
-      gravity: [0, -1.2, 0],
-      drag: 0.22,
-    },
-  },
-};
-
-const PARTICLE_SPAWN_SHAPES = new Set(['sphere', 'ring', 'cone', 'box']);
 
 const CORE_GAME_EVENT_TYPES = [
   'highlight_squares',
@@ -176,6 +93,58 @@ function uid(prefix = 'id') {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function StudioNumberInput({ value, fallback = 0, onChange, ...props }) {
+  const [draft, setDraft] = useState(String(value ?? fallback));
+  const editingRef = useRef(false);
+
+  useEffect(() => {
+    if (!editingRef.current) {
+      setDraft(String(value ?? fallback));
+    }
+  }, [fallback, value]);
+
+  const commitDraft = (nextDraft) => {
+    const normalized = nextDraft.trim();
+    if (!normalized) {
+      setDraft(String(value ?? fallback));
+      return;
+    }
+
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value ?? fallback));
+      return;
+    }
+
+    onChange(parsed);
+  };
+
+  return (
+    <input
+      {...props}
+      type="text"
+      inputMode="decimal"
+      value={draft}
+      onFocus={() => {
+        editingRef.current = true;
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.currentTarget.blur();
+        }
+      }}
+      onBlur={() => {
+        editingRef.current = false;
+        commitDraft(draft);
+      }}
+      onChange={(event) => {
+        const nextDraft = event.target.value;
+        setDraft(nextDraft);
+      }}
+    />
+  );
 }
 
 function addVec3(a = [0, 0, 0], b = [0, 0, 0]) {
@@ -246,16 +215,31 @@ function getCardRarity(card = {}, definition = null) {
   return 'common';
 }
 
+function computeCanAnimatePiece(cardId, card = {}, definition = null) {
+  const resolvedDefinition = definition || findDefinitionById(cardId);
+  if (resolvedDefinition) {
+    return Boolean(resolvedDefinition.visual?.animation) || Boolean(resolvedDefinition.visual?.cutscene);
+  }
+
+  if (Boolean(card?.meta?.canAnimatePiece) || Boolean(card?.meta?.isCutscene)) {
+    return true;
+  }
+
+  const objectTracks = card?.tracks?.objects || [];
+  if (objectTracks.some((track) => track?.type === 'piece' || track?.isAnimatablePiece)) {
+    return true;
+  }
+
+  return false;
+}
+
 function compareLibraryCards([idA, cardA], [idB, cardB]) {
   const defA = findDefinitionById(idA);
   const defB = findDefinitionById(idB);
-  const isCutsceneA = Boolean(cardA?.meta?.isCutscene || defA?.visual?.cutscene);
-  const isCutsceneB = Boolean(cardB?.meta?.isCutscene || defB?.visual?.cutscene);
-  if (isCutsceneA !== isCutsceneB) return isCutsceneA ? -1 : 1;
 
   const rarityA = getCardRarity(cardA, defA);
   const rarityB = getCardRarity(cardB, defB);
-  const rarityDiff = (RARITY_ORDER[rarityA] || 999) - (RARITY_ORDER[rarityB] || 999);
+  const rarityDiff = (RARITY_ORDER[rarityB] || 0) - (RARITY_ORDER[rarityA] || 0);
   if (rarityDiff !== 0) return rarityDiff;
 
   const categoryA = normalizeCategory(defA?.category || cardA?.meta?.category);
@@ -289,6 +273,16 @@ function trackCollectionName(type) {
   }
 }
 
+function trackTypeLabel(type) {
+  switch (type) {
+    case 'camera': return 'Camera';
+    case 'object': return 'Piece';
+    case 'sound': return 'Audio';
+    case 'event': return 'Event';
+    default: return String(type || 'Track');
+  }
+}
+
 function safeJsonParse(value, fallback = {}) {
   try {
     const parsed = JSON.parse(value);
@@ -301,6 +295,49 @@ function safeJsonParse(value, fallback = {}) {
 function toFiniteNumber(value, fallback = 0) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function getTimelineRequiredDurationMs(card) {
+  if (!card || typeof card !== 'object') return 100;
+  const trackSets = [
+    ...(card?.tracks?.camera || []),
+    ...(card?.tracks?.objects || []),
+    ...(card?.tracks?.particles || []),
+    ...(card?.tracks?.overlays || []),
+    ...(card?.tracks?.sounds || []),
+    ...(card?.tracks?.events || []),
+  ];
+
+  let maxMs = 100;
+  trackSets.forEach((track) => {
+    (track?.keys || []).forEach((key) => {
+      const timeMs = Math.max(0, Number(key?.timeMs) || 0);
+      const delayMs = Math.max(0, Number(key?.delayMs) || 0);
+      maxMs = Math.max(maxMs, timeMs, timeMs + delayMs);
+    });
+  });
+
+  return Math.max(100, Math.round(maxMs));
+}
+
+function getTimelineSnapStepMs(card) {
+  const step = Number(card?.settings?.timelineSnapMs);
+  if (!Number.isFinite(step)) return 50;
+  return Math.max(1, Math.round(step));
+}
+
+function snapTimelineTimeMs(rawTimeMs, card) {
+  const clamped = Math.max(0, Number(rawTimeMs) || 0);
+  const snapEnabled = card?.settings?.timelineSnapEnabled !== false;
+  if (!snapEnabled) return Math.round(clamped);
+  const step = getTimelineSnapStepMs(card);
+  return Math.round(clamped / step) * step;
+}
+
+function isEditableTarget(target) {
+  if (!target || typeof target !== 'object') return false;
+  const tag = String(target.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target.isContentEditable);
 }
 
 function sanitizeColorList(list, fallback = ['#9ad7ff', '#4cb6ff', '#1f4fff']) {
@@ -327,54 +364,6 @@ function sanitizeNumberCurve(value, fallback = [1, 0.7, 0], minLen = 2, maxLen =
   return next;
 }
 
-function sanitizeParticleParams(rawParams = {}) {
-  const params = rawParams || {};
-  const velocityMin = clamp(toFiniteNumber(params.velocityMin, 0.35), 0, 25);
-  const lifetimeMin = clamp(toFiniteNumber(params.lifetimeMin, 0.05), 0.02, 20);
-  const noiseStrength = clamp(toFiniteNumber(params.noiseStrength, 0.2), 0, 5);
-  return {
-    ...params,
-    emissionRate: clamp(toFiniteNumber(params.emissionRate, 30), 0, 500),
-    burstCount: clamp(Math.round(toFiniteNumber(params.burstCount, 0)), 0, 600),
-    velocityMin,
-    velocityMax: clamp(toFiniteNumber(params.velocityMax, Math.max(velocityMin + 0.05, 1.2)), velocityMin + 0.01, 30),
-    lifetimeMin,
-    lifetimeMax: clamp(toFiniteNumber(params.lifetimeMax, Math.max(lifetimeMin + 0.05, 1.2)), lifetimeMin + 0.01, 24),
-    spawnShape: PARTICLE_SPAWN_SHAPES.has(params.spawnShape) ? params.spawnShape : 'sphere',
-    spawnRadius: clamp(toFiniteNumber(params.spawnRadius, 0.35), 0.01, 8),
-    noiseStrength,
-    noiseFrequency: clamp(toFiniteNumber(params.noiseFrequency, 1.4), 0.1, 10),
-    drag: clamp(toFiniteNumber(params.drag, 0.08), 0, 4),
-    gravity: sanitizeVec3(params.gravity, [0, -6, 0]),
-    sizeOverLife: sanitizeNumberCurve(params.sizeOverLife, [1, 0.7, 0.1], 2, 8, 0, 4),
-    colorOverLife: sanitizeColorList(params.colorOverLife, ['#9ad7ff', '#4cb6ff', '#1f4fff']),
-  };
-}
-
-function getParticleCompatibilityWarnings(params = {}) {
-  const warnings = [];
-  const p = sanitizeParticleParams(params);
-  const approxLoad = p.emissionRate + p.burstCount * 0.8;
-  if (approxLoad > 240) warnings.push('High particle load may diverge from runtime FPS on lower-end devices.');
-  if (p.lifetimeMax > 6) warnings.push('Very long lifetime can cause trails to stack more in-game than in editor preview.');
-  if (p.velocityMax > 10) warnings.push('High velocity may clip through camera framing during cutscenes.');
-  if (Math.abs(p.gravity[1]) > 20) warnings.push('Extreme gravity can collapse motion arcs and look unnatural in gameplay context.');
-  if (p.noiseStrength > 1.6 && p.noiseFrequency > 4) warnings.push('High noise strength + frequency can appear jittery at runtime.');
-  if (!Array.isArray(params?.colorOverLife) || params.colorOverLife.length < 2) warnings.push('Using at least 2 colors improves preview/runtime visual parity.');
-  return warnings;
-}
-
-function createParticlePresetParams(presetId = 'arcane_burst') {
-  const preset = PARTICLE_PRESETS[presetId] || PARTICLE_PRESETS.arcane_burst;
-  const params = preset?.params || PARTICLE_PRESETS.arcane_burst.params;
-  return sanitizeParticleParams({
-    ...params,
-    sizeOverLife: [...(params.sizeOverLife || [1, 0.7, 0])],
-    colorOverLife: [...(params.colorOverLife || ['#9ad7ff', '#4cb6ff', '#1f4fff'])],
-    gravity: [...(params.gravity || [0, -6, 0])],
-  });
-}
-
 function normalizeStudioSoundId(rawSoundId = '') {
   const value = String(rawSoundId || '').trim();
   if (!value) return '';
@@ -398,6 +387,7 @@ function normalizeStudioSoundId(rawSoundId = '') {
 
 function makeCardFromGameCard(gameCard, isCutscene = false, forceId = null) {
   const id = forceId || gameCard.id;
+  const cardSoundId = gameCard.soundId || `arcana:${id}`;
   const next = createEmptyArcanaStudioCard(id);
   next.id = id;
   next.name = gameCard.name || id;
@@ -405,16 +395,17 @@ function makeCardFromGameCard(gameCard, isCutscene = false, forceId = null) {
   next.meta = {
     ...(next.meta || {}),
     isCutscene,
+    canAnimatePiece: computeCanAnimatePiece(id, gameCard, gameCard),
     cardPiecePreview: gameCard.cardPiecePreview || null,
     rarity: gameCard.rarity || 'common',
     category: gameCard.category || 'utility',
-    soundKey: gameCard.soundKey || null,
+    soundId: cardSoundId || null,
   };
 
-  if (gameCard.soundKey && (!next.tracks?.sounds || next.tracks.sounds.length === 0)) {
+  if (cardSoundId && (!next.tracks?.sounds || next.tracks.sounds.length === 0)) {
     next.tracks = {
       ...(next.tracks || {}),
-      sounds: [createDefaultSoundTrack(gameCard.soundKey)],
+      sounds: [createDefaultSoundTrack(cardSoundId)],
     };
   }
 
@@ -423,6 +414,52 @@ function makeCardFromGameCard(gameCard, isCutscene = false, forceId = null) {
 
 function normalizeCardId(cardId = '') {
   return toStudioArcanaId(cardId);
+}
+
+function pascalCase(id = '') {
+  return String(id || '')
+    .split(/[_-]/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join('');
+}
+
+function resolveArcanaDefinitionId(rawId, fallbackId, effectsModule = null) {
+  const normalizedRaw = normalizeCardId(rawId || '');
+  const normalizedFallback = normalizeCardId(fallbackId || '');
+  const alias = {
+    filtered_cycle: 'arcane_cycle',
+    arcane_cycle: 'filtered_cycle',
+  };
+
+  const candidates = [
+    normalizedRaw,
+    alias[normalizedRaw] || null,
+    normalizedFallback,
+    alias[normalizedFallback] || null,
+  ].filter(Boolean);
+
+  const uniqueCandidates = [...new Set(candidates)];
+  if (!uniqueCandidates.length) return null;
+
+  if (!effectsModule || typeof effectsModule !== 'object') {
+    return uniqueCandidates[0];
+  }
+
+  for (const candidate of uniqueCandidates) {
+    const componentName = `${pascalCase(candidate)}Effect`;
+    if (effectsModule[componentName]) return candidate;
+  }
+
+  if (effectsModule.LegendaryEffect) {
+    const legendaryCandidate = uniqueCandidates.find((candidate) => {
+      const rarity = findDefinitionById(candidate)?.rarity;
+      return typeof rarity === 'string' && rarity.toLowerCase() === 'legendary';
+    });
+    if (legendaryCandidate) return legendaryCandidate;
+  }
+
+  return uniqueCandidates[0];
 }
 
 function findDefinitionById(cardId = '') {
@@ -440,15 +477,68 @@ function isDefinitionCutscene(cardId = '') {
 
 function hasMeaningfulCutsceneData(card = {}) {
   const cameraKeys = (card.tracks?.camera || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
-  const particleKeys = (card.tracks?.particles || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
-  const overlayKeys = (card.tracks?.overlays || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
+  const objectKeys = (card.tracks?.objects || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
   const soundKeys = (card.tracks?.sounds || []).reduce((acc, track) => acc + (track.keys || []).length, 0);
-  return cameraKeys > 1 || particleKeys > 0 || overlayKeys > 0 || soundKeys > 0;
+  return cameraKeys > 1 || objectKeys > 0 || soundKeys > 0;
 }
 
 function hasLegacyVfxData(config) {
   const vfx = config?.config?.vfx;
   return Boolean(vfx && typeof vfx === 'object' && Object.keys(vfx).length > 0);
+}
+
+function sampleStudioVfxPreview(card, timeMs, effectsModule = null) {
+  const events = card?.tracks?.events || [];
+  const fallbackSquare = card?.meta?.cardPiecePreview || card?.board?.focusSquare || 'e4';
+  let preview = null;
+  let previewStartMs = -1;
+
+  events.forEach((track) => {
+    (track?.keys || []).forEach((key) => {
+      const startMs = Number(key?.timeMs) || 0;
+      if (startMs > timeMs || startMs < previewStartMs) return;
+
+      const actions = Array.isArray(key?.actions) && key.actions.length > 0
+        ? key.actions
+        : normalizeArcanaStudioEventActions({
+          ...key,
+          payload: {
+            ...(key?.payload || {}),
+            cardId: key?.payload?.cardId || card?.id,
+            eventParams: {
+              ...(key?.payload?.eventParams || {}),
+              cardId: key?.payload?.eventParams?.cardId || card?.id,
+              square: key?.payload?.eventParams?.square || fallbackSquare,
+              targetSquare: key?.payload?.eventParams?.targetSquare || fallbackSquare,
+            },
+          },
+        });
+
+      actions.forEach((action) => {
+        if (action?.kind !== 'vfx') return;
+        const resolvedArcanaId = resolveArcanaDefinitionId(action.arcanaId, card?.id, effectsModule);
+        if (!resolvedArcanaId) return;
+
+        const durationMs = Math.max(
+          300,
+          Number(action.durationMs) || getArcanaEffectDuration(resolvedArcanaId) || 1200,
+        );
+        if (timeMs > startMs + durationMs) return;
+
+        previewStartMs = startMs;
+        preview = {
+          arcanaId: resolvedArcanaId,
+          params: {
+            ...(action.params || {}),
+            square: action?.params?.square || action?.params?.targetSquare || fallbackSquare,
+          },
+          key: `studio_vfx_preview_${track?.id || 'track'}_${key?.id || startMs}`,
+        };
+      });
+    });
+  });
+
+  return preview;
 }
 
 function getAllAvailableCards() {
@@ -461,7 +551,9 @@ function getAllAvailableCards() {
 
   const cutsceneCards = getAllCutsceneCards();
   const legacyCutsceneConfigs = getAllCutsceneConfigs();
-  cutsceneIds.forEach((id) => {
+  const overrideIds = new Set(Object.keys(cutsceneCards || {}).map((id) => normalizeCardId(id)));
+  const seedIds = new Set([...cutsceneIds, ...overrideIds]);
+  seedIds.forEach((id) => {
     let card = cutsceneCards?.[id];
     if (!hasMeaningfulCutsceneData(card) && legacyCutsceneConfigs?.[id]) {
       card = legacyCutsceneToArcanaStudioCard(legacyCutsceneConfigs[id], { id });
@@ -479,15 +571,16 @@ function getAllAvailableCards() {
   (GAME_ARCANA_DEFINITIONS || []).forEach((gameCard) => {
     const id = normalizeCardId(gameCard.id);
     const isCutscene = Boolean(gameCard.visual?.cutscene);
+    const hasOverrideCard = Boolean(cards[id]);
     if (!cards[id]) {
       cards[id] = makeCardFromGameCard({ ...gameCard, id }, isCutscene, id);
     } else {
       cards[id].name = cards[id].name || gameCard.name || id;
       cards[id].description = cards[id].description || gameCard.description || '';
-      cards[id].meta = { ...(cards[id].meta || {}), isCutscene };
+      cards[id].meta = { ...(cards[id].meta || {}), isCutscene: Boolean(cards[id].meta?.isCutscene || isCutscene) };
     }
 
-    if (!isCutscene) {
+    if (!isCutscene && !hasOverrideCard) {
       cards[id].tracks = {
         ...(cards[id].tracks || {}),
         camera: [],
@@ -502,24 +595,26 @@ function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
   const id = normalizeCardId(rawCard?.id || fallbackId);
   const migrated = migrateArcanaStudioCard(rawCard, id);
   const definition = findDefinitionById(id);
+  const definitionSoundId = definition?.soundId || `arcana:${id}`;
   const isCutscene = Boolean(definition?.visual?.cutscene);
   const legacyCutscene = LEGACY_CUTSCENE_CONFIGS?.[id] || LEGACY_CUTSCENE_CONFIGS?.[(id === 'filtered_cycle' ? 'arcane_cycle' : id)] || null;
+  const defaultPieceSquare = migrated.meta?.cardPiecePreview || migrated.board?.focusSquare || 'e4';
 
   const tracks = { ...(migrated.tracks || {}) };
   let objects = [...(tracks.objects || [])];
   if (!objects.length) {
-    objects = [createDefaultTrack('object', 0, '', id)];
+    objects = [createDefaultTrack('object', 0, defaultPieceSquare, id, { mainPiece: true })];
   }
 
   const pieceTrackIndex = objects.findIndex((track) => track?.type === 'piece');
   if (pieceTrackIndex < 0) {
-    objects.unshift(createDefaultTrack('object', 0, '', id));
+    objects.unshift(createDefaultTrack('object', 0, defaultPieceSquare, id, { mainPiece: true }));
   } else if (pieceTrackIndex > 0) {
     const [main] = objects.splice(pieceTrackIndex, 1);
     objects.unshift(main);
   }
 
-  const mainPiece = objects[0] || createDefaultTrack('object', 0, '', id);
+  const mainPiece = objects[0] || createDefaultTrack('object', 0, defaultPieceSquare, id);
   const normalizedMainPieceKeys = Array.isArray(mainPiece.keys)
     ? mainPiece.keys.map((key) => ({
       ...key,
@@ -533,52 +628,29 @@ function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
     id: mainPiece.id || uid('obj'),
     name: 'Main Piece',
     type: 'piece',
-    pieceSquare: '',
+    pieceSquare: mainPiece.pieceSquare || defaultPieceSquare,
     pieceType: mainPiece.pieceType || inferPieceTypeFromCard(id),
     pieceColor: mainPiece.pieceColor || 'white',
     isAnimatablePiece: true,
-    attach: { mode: 'world-space', targetId: null, parentId: null, offset: [0, 0, 0], parenting: false },
+    attach: {
+      mode: mainPiece.attach?.mode || 'follow',
+      targetId: mainPiece.attach?.targetId || null,
+      parentId: null,
+      offset: Array.isArray(mainPiece.attach?.offset) && mainPiece.attach.offset.length >= 3
+        ? [Number(mainPiece.attach.offset[0]) || 0, Number(mainPiece.attach.offset[1]) || 0, Number(mainPiece.attach.offset[2]) || 0]
+        : [0, 0, 0],
+      parenting: mainPiece.attach?.parenting ?? true,
+    },
     keys: normalizedMainPieceKeys,
   };
 
-  let particles = [...(tracks.particles || [])];
-  if (id === 'filtered_cycle' && !hasLegacyVfxData(legacyCutscene)) {
-    particles = particles.filter((track) => !String(track?.id || '').startsWith('pt_filtered_cycle_'));
-  }
-  if (particles.length === 0) {
-    const importedTracks = buildStudioParticleTracksFromLegacy({
-      cardId: id,
-      legacyConfig: legacyCutscene?.config || null,
-      durationMs: migrated.durationMs,
-      objectTrackId: objects[0]?.id || null,
-    });
-    if (importedTracks.length > 0) {
-      particles = importedTracks;
-    }
-  }
-
-  const defaultParticleKey = createDefaultTrack('particle', 0, '', id).keys?.[0] || null;
-  particles = particles.map((track, index) => ({
-    ...track,
-    id: track?.id || uid('pt'),
-    name: track?.name || `Particle ${index + 1}`,
-    attach: {
-      ...(track?.attach || {}),
-      mode: track?.attach?.mode || 'follow',
-      targetId: track?.attach?.targetId || objects[0]?.id || null,
-      offset: Array.isArray(track?.attach?.offset) ? track.attach.offset : [0, 0, 0],
-    },
-    keys: Array.isArray(track?.keys) && track.keys.length > 0
-      ? track.keys
-      : (defaultParticleKey ? [{ ...defaultParticleKey, id: uid('ptk') }] : []),
-  }));
-
   tracks.objects = objects;
-  tracks.particles = particles;
+  tracks.particles = [];
+  tracks.overlays = [];
   tracks.camera = isCutscene ? [...(tracks.camera || [])] : [];
 
-  if ((!tracks.sounds || tracks.sounds.length === 0) && definition?.soundKey) {
-    tracks.sounds = [createDefaultSoundTrack(definition.soundKey)];
+  if ((!tracks.sounds || tracks.sounds.length === 0) && definitionSoundId) {
+    tracks.sounds = [createDefaultSoundTrack(definitionSoundId)];
   }
 
   return {
@@ -590,24 +662,19 @@ function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
     meta: {
       ...(migrated.meta || {}),
       isCutscene,
+      canAnimatePiece: computeCanAnimatePiece(id, { ...migrated, tracks }, definition),
       rarity: definition?.rarity || migrated.meta?.rarity || 'common',
       category: definition?.category || migrated.meta?.category || 'utility',
-      soundKey: definition?.soundKey || migrated.meta?.soundKey || null,
+      soundId: definitionSoundId || migrated.meta?.soundId || null,
     },
   };
 }
 
-function buildStudioCardsMap(options = {}) {
-  const { includeStored = true } = options;
+function buildStudioCardsMap() {
   const base = getAllAvailableCards();
-  const storedCards = includeStored ? loadArcanaStudioCardsMap() : {};
   const normalized = {};
 
   Object.entries(base).forEach(([id, card]) => {
-    normalized[id] = sanitizeCardForStudio(card, id);
-  });
-
-  Object.entries(storedCards || {}).forEach(([id, card]) => {
     normalized[id] = sanitizeCardForStudio(card, id);
   });
 
@@ -621,7 +688,7 @@ function buildStudioCardsMap(options = {}) {
   return normalized;
 }
 
-function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'e4', cardId = '') {
+function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'e4', cardId = '', options = {}) {
   if (type === 'camera') {
     return {
       id: uid('cam'),
@@ -634,43 +701,30 @@ function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'e4', cardId = '
         target: [0, 0, 0],
         fov: 55,
         easing: 'easeInOutCubic',
-        blendMode: 'curve',
-        bezier: [0.25, 0.1, 0.25, 1],
+        bezier: [0.25, 0.1, 0.25, 1]
       }],
     };
   }
 
   if (type === 'object') {
+    const isMainPiece = options.mainPiece === true;
     return {
       id: uid('obj'),
-      name: 'Main Piece',
+      name: isMainPiece ? 'Main Piece' : 'Cube',
       active: true,
-      type: 'piece',
+      type: isMainPiece ? 'piece' : 'mesh',
       parentId: null,
       layer: 0,
-      pieceSquare: '',
-      pieceType: inferPieceTypeFromCard(cardId),
+      pieceSquare,
+      pieceType: isMainPiece ? inferPieceTypeFromCard(cardId) : null,
       pieceColor: 'white',
       clipName: null,
       clipOffsetMs: 0,
       clipLoop: true,
       previewPlayAnimation: false,
-      isAnimatablePiece: true,
-      attach: { mode: 'world-space', targetId: null, parentId: null, offset: [0, 0, 0], parenting: false },
-      keys: [],
-    };
-  }
-
-  if (type === 'particle') {
-    const defaultPreset = createParticlePresetParams('arcane_burst');
-    const seed = 1337 + Math.floor(Math.random() * 100000);
-    return {
-      id: uid('pt'),
-      name: 'Particle FX',
-      active: true,
+      isAnimatablePiece: isMainPiece,
       attach: { mode: 'follow', targetId: null, parentId: null, offset: [0, 0, 0], parenting: true },
-      params: sanitizeParticleParams(defaultPreset),
-      keys: [{ id: uid('ptk'), timeMs: playheadMs, enabled: true, seed, easing: 'linear', overrides: {} }],
+      keys: [],
     };
   }
 
@@ -731,7 +785,7 @@ function resolveTrackStates(card, boardPieces, timeMs) {
     if (piece) return piece.targetPosition;
     if (/^[a-h][1-8]$/i.test(track?.pieceSquare || '')) {
       const [x, , z] = squareToPosition(track.pieceSquare.toLowerCase());
-      return [x, 0.15, z];
+      return [x, 0.075, z];
     }
     return DEFAULT_WORLD_ANCHOR;
   };
@@ -859,46 +913,6 @@ function CameraKeyGizmos({ tracks, visible }) {
   );
 }
 
-function StudioParticlePreview({ track, sample, anchor }) {
-  const points = useMemo(() => buildParticlePreviewPoints({ sample, anchor, maxPoints: 84 }), [sample, anchor]);
-  const meshRefs = useRef([]);
-
-  useFrame(({ clock }) => {
-    const elapsed = clock.elapsedTime;
-    meshRefs.current.forEach((mesh, idx) => {
-      const point = points[idx];
-      if (!mesh || !point) return;
-      const direction = Array.isArray(point.direction) && point.direction.length >= 3 ? point.direction : [0, 1, 0];
-      const drift = ((elapsed * ((point.velocityScale || 1) * 0.22)) + idx * 0.11) % 1;
-      const wobble = Math.sin(elapsed * 2.2 + idx * 0.7) * 0.03;
-      mesh.position.set(
-        (point.position?.[0] || 0) + direction[0] * drift * 0.26 + wobble,
-        (point.position?.[1] || 0) + direction[1] * drift * 0.3,
-        (point.position?.[2] || 0) + direction[2] * drift * 0.26 + wobble,
-      );
-    });
-  });
-
-  if (!points.length) return null;
-
-  return (
-    <group>
-      {points.map((point, idx) => (
-        <mesh
-          key={`${track.id}_${idx}`}
-          position={point.position}
-          ref={(node) => {
-            meshRefs.current[idx] = node;
-          }}
-        >
-          <sphereGeometry args={[point.size || 0.05, 8, 8]} />
-          <meshStandardMaterial color={point.color} emissive={point.color} emissiveIntensity={0.85} transparent opacity={point.opacity || 0.76} depthWrite={false} />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
 function TrackFallbackMesh({ track, piece }) {
   if (track.type === 'piece') {
     const renderedPiece = piece || {
@@ -907,7 +921,8 @@ function TrackFallbackMesh({ track, piece }) {
       isWhite: (track.pieceColor || 'white') !== 'black',
       targetPosition: [0, 0.075, 0],
     };
-    return <ChessPiece {...renderedPiece} targetPosition={[0, 0.075, 0]} />;
+    // Keep local target at origin so the world anchor controls board alignment.
+    return <ChessPiece {...renderedPiece} targetPosition={[0, 0, 0]} />;
   }
 
   return (
@@ -994,15 +1009,17 @@ function StudioScene({
   selectedCameraKey,
   cameraTransformTarget,
   onTransformCameraKey,
+  onCameraSnapshotChange,
   previewMode,
   isPlaying,
   showCameraGizmos,
+  activeVisualArcana,
+  effectsModule,
 }) {
   const controlsRef = useRef(null);
   const { camera } = useThree();
 
   const activeObjects = useMemo(() => card.tracks?.objects || [], [card]);
-  const activeParticles = useMemo(() => card.tracks?.particles || [], [card]);
   const activeOverlays = useMemo(() => sampledOverlays || [], [sampledOverlays]);
   const pieceBySquare = useMemo(() => new Map(boardPieces.map((piece) => [piece.square, piece])), [boardPieces]);
 
@@ -1012,14 +1029,23 @@ function StudioScene({
   );
 
   useEffect(() => {
-    const shouldDriveCamera = Boolean(sampledCamera) && (isPlaying || selection?.trackType === 'camera');
+    const shouldDriveCamera = Boolean(sampledCamera);
     if (!shouldDriveCamera) return;
     camera.position.set(...(sampledCamera.position || [7, 8, 7]));
     camera.fov = sampledCamera.fov || 55;
     camera.updateProjectionMatrix();
     controlsRef.current?.target.set(...(sampledCamera.target || [0, 0, 0]));
     controlsRef.current?.update();
-  }, [camera, sampledCamera, isPlaying, selection?.trackType]);
+  }, [camera, sampledCamera]);
+
+  useFrame(() => {
+    onCameraSnapshotChange?.({
+      position: [camera.position.x, camera.position.y, camera.position.z],
+      target: controlsRef.current ? [controlsRef.current.target.x, controlsRef.current.target.y, controlsRef.current.target.z] : [0, 0, 0],
+      rotation: [camera.rotation.x, camera.rotation.y, camera.rotation.z],
+      fov: camera.fov,
+    });
+  });
 
   return (
     <>
@@ -1046,6 +1072,14 @@ function StudioScene({
 
       {activeObjects.map((track) => {
         let piece = pieceBySquare.get(track.pieceSquare || '');
+        if (!piece && track.type === 'piece' && ['target', 'source', 'center'].includes((track.pieceSquare || '').toLowerCase())) {
+          piece = {
+            type: track.pieceType || 'p',
+            isWhite: (track.pieceColor || 'white') !== 'black',
+            square: 'e4',
+            targetPosition: [0, 0.15, 0],
+          };
+        }
         if (!piece && /^[a-h][1-8]$/i.test(track.pieceSquare || '') && track.type === 'piece') {
           piece = squareToPiece(track.pieceSquare, track.pieceType || 'p', (track.pieceColor || 'white') !== 'black');
         }
@@ -1067,21 +1101,6 @@ function StudioScene({
               if (controlsRef.current) controlsRef.current.enabled = !isDragging;
               onTransformInteraction?.(isDragging);
             }}
-          />
-        );
-      })}
-
-      {activeParticles.map((track) => {
-        const sample = sampleParticleTrack(track, playheadMs);
-        const anchor = track.attach?.targetId && objectStates[track.attach.targetId]
-          ? objectStates[track.attach.targetId].worldPosition
-          : DEFAULT_WORLD_ANCHOR;
-        return (
-          <StudioParticlePreview
-            key={track.id}
-            track={track}
-            sample={sample}
-            anchor={addVec3(anchor, track.attach?.offset || [0, 0, 0])}
           />
         );
       })}
@@ -1127,7 +1146,7 @@ function StudioScene({
 
       {selection?.trackType === 'camera' && selectedCameraKey ? (
         <TransformControls
-          mode="translate"
+          mode={cameraTransformTarget === 'target' ? 'translate' : (transformMode === 'scale' ? 'translate' : transformMode)}
           onMouseDown={() => {
             if (controlsRef.current) controlsRef.current.enabled = false;
             onTransformInteraction?.(true);
@@ -1139,8 +1158,17 @@ function StudioScene({
           onObjectChange={(event) => {
             const node = event?.target?.object;
             if (!node) return;
-            const key = cameraTransformTarget === 'target' ? 'target' : 'position';
-            onTransformCameraKey?.({ [key]: [node.position.x, node.position.y, node.position.z] });
+            if (cameraTransformTarget === 'target') {
+              onTransformCameraKey?.({ target: [node.position.x, node.position.y, node.position.z] });
+              return;
+            }
+
+            if (transformMode === 'rotate') {
+              onTransformCameraKey?.({ rotation: [node.rotation.x, node.rotation.y, node.rotation.z] });
+              return;
+            }
+
+            onTransformCameraKey?.({ position: [node.position.x, node.position.y, node.position.z] });
           }}
         >
           <mesh position={(cameraTransformTarget === 'target' ? selectedCameraKey.target : selectedCameraKey.position) || [7, 8, 7]}>
@@ -1153,6 +1181,15 @@ function StudioScene({
           </mesh>
         </TransformControls>
       ) : null}
+
+      <ArcanaVisualHost
+        effectsModule={effectsModule}
+        activeVisualArcana={activeVisualArcana}
+        gameState={{ activeEffects: {} }}
+        pawnShields={null}
+        showFog={false}
+        viewerColorCode={null}
+      />
 
       <CameraKeyGizmos tracks={card.tracks?.camera || []} visible={showCameraGizmos} />
       <OrbitControls ref={controlsRef} makeDefault />
@@ -1170,6 +1207,46 @@ function downloadJson(name, value) {
   a.click();
   a.remove();
   URL.revokeObjectURL(href);
+}
+
+function parseLegacyCutsceneInput(rawText, fallbackId, fallbackDurationMs) {
+  const source = String(rawText || '').trim();
+  if (!source) throw new Error('Legacy cutscene input is empty');
+
+  let text = source
+    .replace(/^\s*export\s+const\s+[A-Za-z_$][\w$]*\s*=\s*/m, '')
+    .replace(/;\s*$/, '')
+    .replace(/^\s*\/\/[^\n]*$/gm, '');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    try {
+      // Accept object-literal style config snippets copied from JS source.
+      parsed = Function('return (' + text + ');')();
+    } catch (error) {
+      throw new Error(`Could not parse legacy cutscene input: ${error.message}`);
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Legacy cutscene input must evaluate to an object');
+  }
+
+  if (parsed.id && parsed.config && typeof parsed.config === 'object') {
+    return parsed;
+  }
+
+  if (parsed.camera || parsed.overlay || parsed.vfx || parsed.sound || parsed.phases) {
+    return {
+      id: fallbackId,
+      duration: Number(fallbackDurationMs) || 3000,
+      config: parsed,
+    };
+  }
+
+  throw new Error('Legacy cutscene must include id + config or a config object with camera/vfx/sound/phases');
 }
 
 function truncate(text = '', max = 110) {
@@ -1244,11 +1321,17 @@ export function ArcanaStudio({ onBack }) {
   const [cameraTransformTarget, setCameraTransformTarget] = useState('position');
   const [cardSearch, setCardSearch] = useState('');
   const [status, setStatus] = useState('Ready');
+  const [legacyVfxDraft, setLegacyVfxDraft] = useState('{}');
   const [runtimeNotices, setRuntimeNotices] = useState([]);
+  const [activeVisualArcana, setActiveVisualArcana] = useState(null);
+  const [effectsModule, setEffectsModule] = useState(null);
   const [dragKey, setDragKey] = useState(null);
+  const [selectedKeyIds, setSelectedKeyIds] = useState([]);
   const [overlayDrag, setOverlayDrag] = useState(null);
   const suppressDeselectUntilRef = useRef(0);
   const overlayStageRef = useRef(null);
+  const overlayRuntimeRef = useRef(null);
+  const cameraSnapshotRef = useRef({ position: [7, 8, 7], target: [0, 0, 0], rotation: [0, 0, 0], fov: 55 });
 
   const laneRefs = useRef({});
   const playbackFrameRef = useRef(null);
@@ -1256,6 +1339,16 @@ export function ArcanaStudio({ onBack }) {
   const playbackOriginRef = useRef(0);
   const audioTimersRef = useRef([]);
   const audioNodesRef = useRef([]);
+  const visualTimersRef = useRef([]);
+  const studioPlaybackPrevPlayheadRef = useRef(0);
+  const studioPlaybackLoopRef = useRef(0);
+  const studioPlaybackFiredSoundRef = useRef(new Set());
+  const studioPlaybackFiredEventRef = useRef(new Set());
+  const studioPlaybackFiredVfxRef = useRef(new Map());
+  const studioScrubPreviewKeyRef = useRef(null);
+  const keyClipboardRef = useRef(null);
+  const undoStackRef = useRef([]);
+  const suppressHistoryRef = useRef(false);
 
   const studioSoundManager = useMemo(() => ({
     play: (rawSoundId, options = {}) => {
@@ -1316,31 +1409,202 @@ export function ArcanaStudio({ onBack }) {
   }, [selectedCard, selection]);
 
   const selectedKey = useMemo(() => {
-    if (!selectedTrack || !selection?.keyId) return null;
-    return (selectedTrack.keys || []).find((key) => key.id === selection.keyId) || null;
-  }, [selectedTrack, selection]);
+    if (!selectedTrack) return null;
+    if (selection?.keyId) {
+      return (selectedTrack.keys || []).find((key) => key.id === selection.keyId) || null;
+    }
+    if (selectedKeyIds.length > 0) {
+      const selectedSet = new Set(selectedKeyIds);
+      return (selectedTrack.keys || []).find((key) => selectedSet.has(key.id)) || null;
+    }
+    return null;
+  }, [selectedTrack, selection, selectedKeyIds]);
 
   const screenOverlays = useMemo(
     () => getScreenOverlaySamples(selectedCard, playheadMs),
     [playheadMs, selectedCard],
   );
-  const particleCompatibilityWarnings = useMemo(() => {
-    if (selection?.trackType !== 'particle' || !selectedTrack?.params) return [];
-    return getParticleCompatibilityWarnings(selectedTrack.params);
-  }, [selection?.trackType, selectedTrack?.params]);
   const selectedCardDescription = useMemo(() => getCardDescription(selectedCard) || 'No description', [selectedCard]);
+  const selectedLegacyVfx = useMemo(() => {
+    const metaVfx = selectedCard?.meta?.legacyConfigSnapshot?.config?.vfx || selectedCard?.meta?.legacyCutsceneSnapshot?.config?.vfx;
+    if (metaVfx && typeof metaVfx === 'object') return metaVfx;
+    const canonicalId = selectedId === 'filtered_cycle' ? 'arcane_cycle' : selectedId;
+    const fallbackVfx = LEGACY_CUTSCENE_CONFIGS?.[canonicalId]?.config?.vfx;
+    return fallbackVfx && typeof fallbackVfx === 'object' ? fallbackVfx : EMPTY_VFX_OBJECT;
+  }, [selectedCard?.meta?.legacyConfigSnapshot?.config?.vfx, selectedCard?.meta?.legacyCutsceneSnapshot?.config?.vfx, selectedId]);
 
   useEffect(() => {
-    const handleSpace = (event) => {
+    setLegacyVfxDraft(JSON.stringify(selectedLegacyVfx || {}, null, 2));
+  }, [selectedLegacyVfx]);
+
+  const cardHasVfxEvents = useMemo(() => {
+    return (selectedCard.tracks?.events || []).some((track) =>
+      (track?.keys || []).some((key) => {
+        const type = typeof key?.type === 'string' ? key.type.toLowerCase() : '';
+        return type.startsWith('vfx_') || type === 'vfx:play' || type === 'vfx_play';
+      }),
+    );
+  }, [selectedCard]);
+
+  const scrubbedVisualArcana = useMemo(
+    () => sampleStudioVfxPreview(selectedCard, playheadMs, effectsModule),
+    [effectsModule, playheadMs, selectedCard],
+  );
+
+  useEffect(() => {
+    if (isPlaying) {
+      studioScrubPreviewKeyRef.current = null;
+      return;
+    }
+
+    const nextKey = scrubbedVisualArcana?.key || null;
+    if (studioScrubPreviewKeyRef.current === nextKey) return;
+    studioScrubPreviewKeyRef.current = nextKey;
+    setActiveVisualArcana(scrubbedVisualArcana || null);
+  }, [isPlaying, scrubbedVisualArcana]);
+
+  useEffect(() => {
+    if (effectsModule || (!cardHasVfxEvents && !activeVisualArcana)) return;
+    import('../game/arcana/arcanaVisuals.jsx')
+      .then((module) => setEffectsModule(module))
+      .catch(() => {
+        // Keep Studio usable if visual module fails to load.
+        setEffectsModule({});
+      });
+  }, [activeVisualArcana, cardHasVfxEvents, effectsModule]);
+
+
+  function undoLastEdit() {
+    const previous = undoStackRef.current.pop();
+    if (!previous) {
+      setStatus('Nothing to undo');
+      return;
+    }
+    suppressHistoryRef.current = true;
+    setCards(previous.cards);
+    if (previous.selectedId) setSelectedId(previous.selectedId);
+    if (previous.selection !== undefined) setSelection(previous.selection);
+    if (typeof previous.playheadMs === 'number') setPlayheadMs(previous.playheadMs);
+    setStatus('Undo');
+  }
+
+  function copySelectedKeyToClipboard() {
+    if (!selection?.trackType || !selection?.trackId || !selection?.keyId || !selectedTrack || !selectedKey) {
+      setStatus('Select a keyframe to copy');
+      return;
+    }
+    keyClipboardRef.current = {
+      trackType: selection.trackType,
+      sourceTrackId: selection.trackId,
+      key: JSON.parse(JSON.stringify(selectedKey)),
+    };
+    setStatus('Copied keyframe');
+  }
+
+  function pasteClipboardKey() {
+    const clip = keyClipboardRef.current;
+    if (!clip?.key || !selection?.trackType || !selection?.trackId || !selectedTrack) {
+      setStatus('Select a destination track before pasting');
+      return;
+    }
+
+    if (clip.trackType !== selection.trackType) {
+      setStatus('Paste requires the same track type');
+      return;
+    }
+
+    const pastedKeyId = uid(`${selection.trackType.slice(0, 3)}k`);
+    const pastedKey = {
+      ...JSON.parse(JSON.stringify(clip.key)),
+      id: pastedKeyId,
+      timeMs: Math.round(playheadMs),
+    };
+
+    updateSelectedCard((card) => {
+      const collection = trackCollectionName(selection.trackType);
+      const list = [...(card.tracks?.[collection] || [])];
+      const idx = list.findIndex((track) => track.id === selection.trackId);
+      if (idx < 0) return card;
+
+      const track = { ...list[idx], keys: [...(list[idx].keys || [])] };
+      track.keys.push(pastedKey);
+      track.keys.sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0));
+      list[idx] = track;
+
+      return {
+        ...card,
+        tracks: {
+          ...card.tracks,
+          [collection]: list,
+        },
+      };
+    }, 'Pasted keyframe');
+
+    setSelection({
+      trackType: selection.trackType,
+      trackId: selection.trackId,
+      keyId: pastedKeyId,
+    });
+  }
+
+  useEffect(() => {
+    const handleKeydown = (event) => {
+      if (isEditableTarget(event.target)) return;
+
+      const key = String(event.key || '').toLowerCase();
+      const withMod = event.ctrlKey || event.metaKey;
+
+      if (withMod && key === 'c') {
+        event.preventDefault();
+        copySelectedKeyToClipboard();
+        return;
+      }
+
+      if (withMod && key === 'v') {
+        event.preventDefault();
+        pasteClipboardKey();
+        return;
+      }
+
+      if (key === 'c' && event.shiftKey && !withMod) {
+        event.preventDefault();
+        captureSelectedCameraKey();
+        return;
+      }
+
+      if (withMod && key === 'z') {
+        event.preventDefault();
+        undoLastEdit();
+        return;
+      }
+
       if (event.code === 'Space') {
         event.preventDefault();
         setIsPlaying((value) => !value);
+        return;
+      }
+
+      if (key === 'w') {
+        setTransformMode('translate');
+        setStatus('Transform mode: Move');
+        return;
+      }
+
+      if (key === 'e') {
+        setTransformMode('rotate');
+        setStatus('Transform mode: Rotate');
+        return;
+      }
+
+      if (key === 'r') {
+        setTransformMode('scale');
+        setStatus('Transform mode: Scale');
       }
     };
 
-    window.addEventListener('keydown', handleSpace);
-    return () => window.removeEventListener('keydown', handleSpace);
-  }, []);
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
+  }, [playheadMs, selectedKey, selectedTrack, selection, selectedKeyIds]);
 
   useEffect(() => {
     const handleBeforeUnload = (event) => {
@@ -1360,7 +1624,7 @@ export function ArcanaStudio({ onBack }) {
     if (hasObjects) return;
 
     const defaultSquare = boardPieces[0]?.square || selectedCard.board?.focusSquare || selectedCard.meta?.cardPiecePreview || 'e4';
-    const defaultTrack = createDefaultTrack('object', 0, defaultSquare, selectedCard.id);
+    const defaultTrack = createDefaultTrack('object', 0, defaultSquare, selectedCard.id, { mainPiece: true });
 
     setCards((prev) => {
       const current = migrateArcanaStudioCard(prev[selectedId] || selectedCard, selectedId);
@@ -1390,8 +1654,44 @@ export function ArcanaStudio({ onBack }) {
       if (!laneEl) return;
       const rect = laneEl.getBoundingClientRect();
       const ratio = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-      const timeMs = Math.round(ratio * Math.max(1, selectedCard.durationMs || 1));
-      updateKeyField(dragKey.trackType, dragKey.trackId, dragKey.keyId, { timeMs }, false);
+      const rawTimeMs = ratio * Math.max(1, selectedCard.durationMs || 1);
+      const timeMs = snapTimelineTimeMs(rawTimeMs, selectedCard);
+
+      if (dragKey.keyIds && dragKey.keyIds.length > 1) {
+        const anchorBaseTime = Number(dragKey.anchorBaseTimeMs) || 0;
+        const delta = timeMs - anchorBaseTime;
+        const baseTimes = dragKey.baseTimes || {};
+        const selectedSet = new Set(dragKey.keyIds);
+
+        updateSelectedCard((card) => {
+          const collection = trackCollectionName(dragKey.trackType);
+          const list = [...(card.tracks?.[collection] || [])];
+          const idx = list.findIndex((track) => track.id === dragKey.trackId);
+          if (idx < 0) return card;
+
+          const track = { ...list[idx], keys: [...(list[idx].keys || [])] };
+          track.keys = track.keys.map((key) => {
+            if (!selectedSet.has(key.id)) return key;
+            const baseTime = Number(baseTimes[key.id]);
+            const nextRaw = Number.isFinite(baseTime) ? baseTime + delta : (Number(key.timeMs) || 0);
+            const snapped = snapTimelineTimeMs(nextRaw, selectedCard);
+            return { ...key, timeMs: Math.max(0, snapped) };
+          });
+          track.keys.sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0));
+          list[idx] = track;
+
+          return {
+            ...card,
+            tracks: {
+              ...card.tracks,
+              [collection]: list,
+            },
+          };
+        }, '');
+      } else {
+        updateKeyField(dragKey.trackType, dragKey.trackId, dragKey.keyId, { timeMs }, false);
+      }
+
       setPlayheadMs(timeMs);
     };
 
@@ -1407,7 +1707,7 @@ export function ArcanaStudio({ onBack }) {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
-  }, [dragKey, selectedCard.durationMs]);
+  }, [dragKey, selectedCard]);
 
   useEffect(() => {
     if (!overlayDrag) return undefined;
@@ -1479,6 +1779,9 @@ export function ArcanaStudio({ onBack }) {
   useEffect(() => {
     audioTimersRef.current.forEach((timer) => clearTimeout(timer));
     audioTimersRef.current = [];
+    visualTimersRef.current.forEach((timer) => clearTimeout(timer));
+    visualTimersRef.current = [];
+    setActiveVisualArcana(null);
 
     audioNodesRef.current.forEach((node) => {
       try {
@@ -1490,21 +1793,90 @@ export function ArcanaStudio({ onBack }) {
     });
     audioNodesRef.current = [];
 
-    if (!isPlaying) return undefined;
+    studioPlaybackFiredSoundRef.current = new Set();
+    studioPlaybackFiredEventRef.current = new Set();
+    studioPlaybackFiredVfxRef.current = new Map();
+    studioPlaybackLoopRef.current = playbackLoopCycle;
+    // Offset by 1ms so keys exactly at the starting playhead (often 0ms) fire on first frame.
+    studioPlaybackPrevPlayheadRef.current = Math.max(-1, Number(playbackOriginRef.current) - 1);
 
+    if (!isPlaying) return undefined;
     setRuntimeNotices([]);
 
-    scheduleArcanaStudioAudio(selectedCard, {
-      playheadMs,
-      registerTimeout: (timer) => audioTimersRef.current.push(timer),
-      soundManager: studioSoundManager,
+    return () => {
+      audioTimersRef.current.forEach((timer) => clearTimeout(timer));
+      audioTimersRef.current = [];
+      visualTimersRef.current.forEach((timer) => clearTimeout(timer));
+      visualTimersRef.current = [];
+      setActiveVisualArcana(null);
+      audioNodesRef.current.forEach((node) => {
+        try {
+          node.pause();
+        } catch {
+          // ignore
+        }
+      });
+      audioNodesRef.current = [];
+    };
+  }, [isPlaying, playbackLoopCycle]);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    let previousMs = Number(studioPlaybackPrevPlayheadRef.current);
+    if (!Number.isFinite(previousMs)) previousMs = -1;
+    const currentMs = Math.max(0, Number(playheadMs) || 0);
+    const loopChanged = studioPlaybackLoopRef.current !== playbackLoopCycle;
+
+    if (loopChanged || currentMs < previousMs) {
+      studioPlaybackFiredSoundRef.current = new Set();
+      studioPlaybackFiredEventRef.current = new Set();
+      studioPlaybackFiredVfxRef.current = new Map();
+      previousMs = -1;
+      studioPlaybackLoopRef.current = playbackLoopCycle;
+    }
+
+    const didCross = (timeMs) => {
+      const t = Math.max(0, Number(timeMs) || 0);
+      return t > previousMs && t <= currentMs;
+    };
+
+    (selectedCard?.tracks?.sounds || []).forEach((track) => {
+      (track?.keys || []).forEach((key) => {
+        if (!didCross(key?.timeMs)) return;
+        const token = `${track?.id || 'track'}:${key?.id || key?.timeMs}`;
+        if (studioPlaybackFiredSoundRef.current.has(token)) return;
+        studioPlaybackFiredSoundRef.current.add(token);
+
+        if (!key?.soundId) return;
+        studioSoundManager.play(key.soundId, {
+          volume: key.volume,
+          pitch: key.pitch,
+          loop: key.loop,
+        });
+      });
     });
 
-    scheduleArcanaStudioEvents(selectedCard, {
-      playheadMs,
-      registerTimeout: (timer) => audioTimersRef.current.push(timer),
-      eventParams: { cardId: selectedCard.id },
-      onEvent: (eventKey) => {
+    (selectedCard?.tracks?.events || []).forEach((track) => {
+      (track?.keys || []).forEach((key) => {
+        const eventTimeMs = (Number(key?.timeMs) || 0) + (Number(key?.delayMs) || 0);
+        if (!didCross(eventTimeMs)) return;
+        const token = `${track?.id || 'track'}:${key?.id || eventTimeMs}`;
+        if (studioPlaybackFiredEventRef.current.has(token)) return;
+        studioPlaybackFiredEventRef.current.add(token);
+
+        const eventKey = {
+          ...key,
+          payload: {
+            ...(key?.payload || {}),
+            eventParams: {
+              cardId: selectedCard.id,
+              square: selectedCard.board?.focusSquare || boardPieces[0]?.square || selectedCard.meta?.cardPiecePreview || 'e4',
+              targetSquare: selectedCard.board?.focusSquare || boardPieces[0]?.square || selectedCard.meta?.cardPiecePreview || 'e4',
+            },
+          },
+        };
+
         const actions = Array.isArray(eventKey?.actions) && eventKey.actions.length > 0
           ? eventKey.actions
           : normalizeArcanaStudioEventActions(eventKey);
@@ -1514,6 +1886,7 @@ export function ArcanaStudio({ onBack }) {
               if (action.kind === 'sound') return `sound:${action.soundId}`;
               if (action.kind === 'camera') return `camera:${action.square}`;
               if (action.kind === 'overlay') return `overlay:${action.effect}`;
+              if (action.kind === 'vfx') return `vfx:${action.arcanaId || selectedCard.id}`;
               if (action.kind === 'highlight') return `highlight:${action.squares.join(',')}`;
               return action.kind;
             }).join(' | ')
@@ -1526,6 +1899,38 @@ export function ArcanaStudio({ onBack }) {
               pitch: action.pitch,
               loop: action.loop,
             });
+            return;
+          }
+
+          if (action.kind === 'overlay') {
+            if (action.effect === 'flash') return;
+            overlayRuntimeRef.current?.playEffect?.({
+              effect: action.effect,
+              duration: action.duration,
+              intensity: action.intensity,
+              color: action.color,
+              fadeIn: action.fadeIn,
+              hold: action.hold,
+              fadeOut: action.fadeOut,
+            });
+            return;
+          }
+
+          if (action.kind === 'vfx') {
+            const resolvedArcanaId = resolveArcanaDefinitionId(action.arcanaId, selectedCard.id, effectsModule);
+            if (!resolvedArcanaId) return;
+            const now = Date.now();
+            const dedupeKey = `${action.vfxKey || action.params?.effect || resolvedArcanaId}:${action.params?.square || ''}:${resolvedArcanaId}`;
+            const lastAt = studioPlaybackFiredVfxRef.current.get(dedupeKey) || 0;
+            if ((now - lastAt) < 280) return;
+            studioPlaybackFiredVfxRef.current.set(dedupeKey, now);
+            setActiveVisualArcana({
+              arcanaId: resolvedArcanaId,
+              params: action.params || {},
+              key: `studio_vfx_${Date.now()}_${Math.random()}`,
+            });
+            const clearTimer = setTimeout(() => setActiveVisualArcana(null), Math.max(300, Number(action.durationMs) || 1200));
+            visualTimersRef.current.push(clearTimer);
           }
         });
 
@@ -1533,45 +1938,79 @@ export function ArcanaStudio({ onBack }) {
           ...current.slice(-5),
           { kind: 'event', label: `${eventKey?.type || 'event'}${actionLabel ? ` • ${actionLabel}` : ''}` },
         ]);
-      },
+      });
     });
 
-    return () => {
-      audioTimersRef.current.forEach((timer) => clearTimeout(timer));
-      audioTimersRef.current = [];
-      audioNodesRef.current.forEach((node) => {
-        try {
-          node.pause();
-        } catch {
-          // ignore
-        }
-      });
-      audioNodesRef.current = [];
-    };
-  }, [isPlaying, playbackLoopCycle, selectedCard, studioSoundManager]);
+    studioPlaybackPrevPlayheadRef.current = currentMs;
+  }, [boardPieces, effectsModule, isPlaying, playheadMs, playbackLoopCycle, selectedCard, studioSoundManager]);
 
-  function updateCards(next, statusText = '') {
+  function updateCards(next, statusText = '', options = {}) {
     const normalized = {};
     Object.entries(next || {}).forEach(([id, card]) => {
       normalized[id] = sanitizeCardForStudio(card, id);
     });
-    saveArcanaStudioCardsMap(normalized);
+
+    const shouldRecordHistory = options.recordHistory !== false && !suppressHistoryRef.current;
+    if (shouldRecordHistory) {
+      undoStackRef.current.push({
+        cards,
+        selectedId,
+        selection,
+        playheadMs,
+      });
+      if (undoStackRef.current.length > 80) {
+        undoStackRef.current = undoStackRef.current.slice(-80);
+      }
+    }
+    suppressHistoryRef.current = false;
     setCards(normalized);
     if (statusText) setStatus(statusText);
   }
 
   function updateSelectedCard(patcher, statusText = '') {
     const current = migrateArcanaStudioCard(cards[selectedId] || selectedCard, selectedId);
-    const patched = sanitizeCardForStudio(migrateArcanaStudioCard(patcher(current), selectedId), selectedId);
+    const nextRaw = migrateArcanaStudioCard(patcher(current), selectedId);
+    const requiredDurationMs = getTimelineRequiredDurationMs(nextRaw);
+    const patched = sanitizeCardForStudio(migrateArcanaStudioCard({
+      ...nextRaw,
+      durationMs: Math.max(Number(nextRaw.durationMs) || 100, requiredDurationMs),
+    }, selectedId), selectedId);
     updateCards({ ...cards, [selectedId]: patched }, statusText);
   }
 
   function selectTrack(trackType, trackId, keyId = null) {
     setSelection({ trackType, trackId, keyId });
+    if (!keyId) setSelectedKeyIds([]);
   }
 
-  function selectKey(trackType, trackId, keyId) {
+  function selectKey(trackType, trackId, keyId, options = {}) {
+    const append = Boolean(options.append);
+    const toggle = Boolean(options.toggle);
+
+    if (!keyId) {
+      setSelection({ trackType, trackId, keyId: null });
+      setSelectedKeyIds([]);
+      return;
+    }
+
+    if (append || toggle) {
+      setSelectedKeyIds((prev) => {
+        const sameTrack = selection?.trackType === trackType && selection?.trackId === trackId;
+        const base = sameTrack ? prev : [];
+        const exists = base.includes(keyId);
+        const next = toggle && exists ? base.filter((id) => id !== keyId) : [...base.filter((id) => id !== keyId), keyId];
+        if (next.length > 0) {
+          setSelection({ trackType, trackId, keyId: next[next.length - 1] });
+        } else {
+          setSelection({ trackType, trackId, keyId: null });
+        }
+        return next;
+      });
+      return;
+    }
+
     setSelection({ trackType, trackId, keyId });
+    setSelectedKeyIds([keyId]);
   }
 
   function addTrack(type) {
@@ -1582,7 +2021,13 @@ export function ArcanaStudio({ onBack }) {
     }
 
     const previewSquare = selectedCard.meta?.cardPiecePreview || boardPieces[0]?.square || selectedCard.board?.focusSquare || 'e4';
-    const track = createDefaultTrack(type, Math.round(playheadMs), previewSquare, selectedCard.id);
+    const track = createDefaultTrack(
+      type,
+      Math.round(playheadMs),
+      previewSquare,
+      selectedCard.id,
+      type === 'object' ? { mainPiece: false } : {},
+    );
 
     updateSelectedCard((card) => {
       const collection = trackCollectionName(type);
@@ -1606,24 +2051,64 @@ export function ArcanaStudio({ onBack }) {
       if (idx < 0) return card;
 
       const track = { ...list[idx], keys: [...(list[idx].keys || [])] };
+      const keyTimeMs = snapTimelineTimeMs(playheadMs, selectedCard);
       let key;
 
       if (trackType === 'camera') {
-        key = { id: uid('camk'), timeMs: Math.round(playheadMs), position: [7, 8, 7], target: [0, 0, 0], fov: 55, easing: 'easeInOutCubic', bezier: [0.25, 0.1, 0.25, 1], blendMode: 'curve' };
+        const sampled = sampleCameraTrack(track, playheadMs);
+        key = {
+          id: uid('camk'),
+          timeMs: keyTimeMs,
+          position: sampled.position || [7, 8, 7],
+          target: sampled.target || [0, 0, 0],
+          rotation: sampled.rotation || [0, 0, 0],
+          fov: sampled.fov || 55,
+          easing: 'easeInOutCubic',
+          bezier: [0.25, 0.1, 0.25, 1]
+        };
       } else if (trackType === 'object') {
+        const sampled = sampleObjectTrack(track, playheadMs);
         const defaultScale = track.isAnimatablePiece ? [1.8, 1.8, 1.8] : [1, 1, 1];
-        key = { id: uid('objk'), timeMs: Math.round(playheadMs), position: [0, 0, 0], rotation: [0, 0, 0], scale: defaultScale, easing: 'easeInOutCubic', bezier: [0.25, 0.1, 0.25, 1] };
-      } else if (trackType === 'particle') {
-        key = { id: uid('ptk'), timeMs: Math.round(playheadMs), enabled: true, seed: 1337, easing: 'linear', overrides: {} };
+        key = {
+          id: uid('objk'),
+          timeMs: keyTimeMs,
+          position: sampled.position || [0, 0, 0],
+          rotation: sampled.rotation || [0, 0, 0],
+          scale: sampled.scale || defaultScale,
+          easing: 'easeInOutCubic',
+          bezier: [0.25, 0.1, 0.25, 1],
+        };
       } else if (trackType === 'overlay') {
-        key = { id: uid('ovk'), timeMs: Math.round(playheadMs), x: 50, y: 50, opacity: 1, scale: 1, rotation: 0, easing: 'easeInOutCubic', bezier: [0.25, 0.1, 0.25, 1], text: null };
+        const sampled = sampleOverlayTrack(track, playheadMs);
+        key = {
+          id: uid('ovk'),
+          timeMs: keyTimeMs,
+          x: sampled?.x ?? 50,
+          y: sampled?.y ?? 50,
+          opacity: sampled?.opacity ?? 1,
+          scale: sampled?.scale ?? 1,
+          rotation: sampled?.rotation ?? 0,
+          easing: 'easeInOutCubic',
+          bezier: [0.25, 0.1, 0.25, 1],
+          text: sampled?.text ?? null,
+        };
       } else if (trackType === 'sound') {
-        key = { id: uid('sdk'), timeMs: Math.round(playheadMs), soundId: 'arcana:shield_pawn', volume: 1, pitch: 1, loop: false };
+        key = { id: uid('sdk'), timeMs: keyTimeMs, soundId: 'arcana:shield_pawn', volume: 1, pitch: 1, loop: false };
       } else {
-        key = { id: uid('evk'), timeMs: Math.round(playheadMs), type: 'highlight:set', delayMs: 0, payload: {} };
+        key = { id: uid('evk'), timeMs: keyTimeMs, type: 'highlight:set', delayMs: 0, payload: {} };
       }
 
-      track.keys.push(key);
+      if (trackType === 'camera') {
+        const existingIdx = track.keys.findIndex((entry) => (Number(entry?.timeMs) || 0) === keyTimeMs);
+        if (existingIdx >= 0) {
+          const existing = track.keys[existingIdx] || {};
+          track.keys[existingIdx] = { ...existing, ...key, id: existing.id || key.id };
+        } else {
+          track.keys.push(key);
+        }
+      } else {
+        track.keys.push(key);
+      }
       track.keys.sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0));
       list[idx] = track;
 
@@ -1638,9 +2123,12 @@ export function ArcanaStudio({ onBack }) {
   }
 
   function removeSelectedKey() {
-    if (!selection?.trackType || !selection?.trackId || !selection?.keyId) return;
+    if (!selection?.trackType || !selection?.trackId) return;
 
     const { trackType, trackId, keyId } = selection;
+    const idsToRemove = selectedKeyIds.length > 0 ? selectedKeyIds : (keyId ? [keyId] : []);
+    if (idsToRemove.length === 0) return;
+    const selectedSet = new Set(idsToRemove);
 
     updateSelectedCard((card) => {
       const collection = trackCollectionName(trackType);
@@ -1650,7 +2138,7 @@ export function ArcanaStudio({ onBack }) {
 
       list[idx] = {
         ...list[idx],
-        keys: (list[idx].keys || []).filter((key) => key.id !== keyId),
+        keys: (list[idx].keys || []).filter((key) => !selectedSet.has(key.id)),
       };
 
       return {
@@ -1663,6 +2151,7 @@ export function ArcanaStudio({ onBack }) {
     }, 'Removed keyframe');
 
     setSelection({ trackType, trackId, keyId: null });
+    setSelectedKeyIds([]);
   }
 
   function updateTrackField(trackType, trackId, patch) {
@@ -1672,23 +2161,8 @@ export function ArcanaStudio({ onBack }) {
       const idx = list.findIndex((entry) => entry.id === trackId);
       if (idx < 0) return card;
 
-      if (trackType === 'particle') {
-        const nextPatch = { ...(patch || {}) };
-        if (nextPatch.params) {
-          nextPatch.params = sanitizeParticleParams({
-            ...(list[idx].params || {}),
-            ...(nextPatch.params || {}),
-          });
-        }
-        if (Array.isArray(nextPatch.keys)) {
-          nextPatch.keys = nextPatch.keys.map((key) => ({
-            ...key,
-            seed: Math.max(0, Math.round(toFiniteNumber(key?.seed, 1337))),
-          }));
-        }
-        list[idx] = { ...list[idx], ...nextPatch };
-      } else if (trackType === 'object' && list[idx].isAnimatablePiece && Object.prototype.hasOwnProperty.call(patch || {}, 'name')) {
-        const { name, ...rest } = patch || {};
+      if (trackType === 'object' && idx === 0 && list[idx].isAnimatablePiece) {
+        const { name, type, pieceType, ...rest } = patch || {};
         list[idx] = { ...list[idx], ...rest };
       } else {
         list[idx] = { ...list[idx], ...patch };
@@ -1771,6 +2245,54 @@ export function ArcanaStudio({ onBack }) {
     updateKeyField('camera', selection.trackId, selection.keyId, patch, false);
   }
 
+  function captureSelectedCameraKey() {
+    const cameraTrack = selection?.trackType === 'camera'
+      ? selectedTrack
+      : (selectedCard.tracks?.camera || [])[0] || null;
+    if (!cameraTrack) {
+      setStatus('Add or select a camera track first');
+      return;
+    }
+
+    const snapshot = cameraSnapshotRef.current || {};
+    const timeMs = snapTimelineTimeMs(playheadMs, selectedCard);
+    updateSelectedCard((card) => {
+      const list = [...(card.tracks?.camera || [])];
+      const idx = list.findIndex((track) => track.id === cameraTrack.id);
+      if (idx < 0) return card;
+
+      const track = { ...list[idx], keys: [...(list[idx].keys || [])] };
+      const capturedKey = {
+        id: uid('camk'),
+        timeMs,
+        position: Array.isArray(snapshot.position) ? snapshot.position : [7, 8, 7],
+        target: Array.isArray(snapshot.target) ? snapshot.target : [0, 0, 0],
+        rotation: Array.isArray(snapshot.rotation) ? snapshot.rotation : [0, 0, 0],
+        fov: Number(snapshot.fov) || 55,
+        easing: 'easeInOutCubic',
+        bezier: [0.25, 0.1, 0.25, 1]
+      };
+      const existingIdx = track.keys.findIndex((entry) => (Number(entry?.timeMs) || 0) === timeMs);
+      if (existingIdx >= 0) {
+        const existing = track.keys[existingIdx] || {};
+        track.keys[existingIdx] = { ...existing, ...capturedKey, id: existing.id || capturedKey.id };
+      } else {
+        track.keys.push(capturedKey);
+      }
+      track.keys.sort((a, b) => (a.timeMs || 0) - (b.timeMs || 0));
+      list[idx] = track;
+
+      return {
+        ...card,
+        tracks: {
+          ...card.tracks,
+          camera: list,
+        },
+      };
+    }, 'Captured camera keyframe');
+    setSelection({ trackType: 'camera', trackId: cameraTrack.id, keyId: null });
+  }
+
   function resolveOverlayKeyId(track) {
     if (!track) return null;
 
@@ -1845,28 +2367,44 @@ export function ArcanaStudio({ onBack }) {
     setOverlayDrag({ trackId: track.id, keyId });
   }
 
-  function exportCard() {
-    downloadJson(`${selectedId}.arcana-studio.json`, selectedCard);
-    setStatus(`Exported ${selectedId}`);
+  function exportCardForGame() {
+    const fullCard = sanitizeCardForStudio(migrateArcanaStudioCard(selectedCard, selectedId), selectedId);
+    downloadJson(`${selectedId}.arcana.json`, fullCard);
+    setStatus(`Exported Studio card for ${selectedId}`);
   }
 
-  function exportAllCards() {
-    downloadJson('arcana-studio-card-pack.json', {
-      version: 1,
-      source: 'arcana-studio',
-      exportedAt: Date.now(),
-      cards,
-    });
-    setStatus('Exported all current cards');
-  }
+  function createNewCard() {
+    const rawId = window.prompt('New card id (snake_case)', 'new_card');
+    const normalizedId = normalizeCardId(String(rawId || '').trim());
+    if (!normalizedId) {
+      setStatus('Create cancelled');
+      return;
+    }
 
-  function importCurrentCards() {
-    const base = buildStudioCardsMap({ includeStored: false });
-    const firstId = Object.keys(base)[0] || 'new_cutscene';
-    updateCards(base, 'Imported current game cards (custom imports cleared)');
-    setSelectedId(firstId);
+    if (cards[normalizedId]) {
+      setSelectedId(normalizedId);
+      setSelection(null);
+      setPlayheadMs(0);
+      setStatus(`Loaded existing card: ${normalizedId}`);
+      return;
+    }
+
+    const definition = findDefinitionById(normalizedId);
+    const base = definition
+      ? makeCardFromGameCard({ ...definition, id: normalizedId }, Boolean(definition.visual?.cutscene), normalizedId)
+      : createEmptyArcanaStudioCard(normalizedId);
+
+    const card = sanitizeCardForStudio(migrateArcanaStudioCard({ ...base, id: normalizedId }, normalizedId), normalizedId);
+    updateCards({ ...cards, [normalizedId]: card }, `Created card: ${normalizedId}`);
+    setSelectedId(normalizedId);
     setSelection(null);
     setPlayheadMs(0);
+  }
+
+  async function saveCardToGame() {
+    const fullCard = sanitizeCardForStudio(migrateArcanaStudioCard(selectedCard, selectedId), selectedId);
+    downloadJson(`${selectedId}.arcana.json`, fullCard);
+    setStatus(`Exported ${selectedId}. Apply with: npm run studio:apply`);
   }
 
   function applyOverlayPreset(trackId, preset) {
@@ -1939,26 +2477,6 @@ export function ArcanaStudio({ onBack }) {
     }
   }
 
-  function applyParticlePreset(trackId, presetId) {
-    if (!trackId || !presetId || !PARTICLE_PRESETS[presetId]) return;
-    const params = sanitizeParticleParams(createParticlePresetParams(presetId));
-    const seed = 1337 + Math.floor(Math.random() * 100000);
-    const nextKeys = (selectedTrack?.keys || []).length > 0
-      ? (selectedTrack.keys || [])
-      : [{ id: uid('ptk'), timeMs: Math.round(playheadMs), enabled: true, seed, easing: 'linear', overrides: {} }];
-
-    updateTrackField('particle', trackId, {
-      params: {
-        ...(selectedTrack?.params || {}),
-        ...params,
-      },
-      keys: nextKeys.map((key, idx) => ({
-        ...key,
-        seed: idx === 0 ? seed : (key.seed ?? seed + idx * 13),
-      })),
-    });
-  }
-
   function importJsonCard(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -1967,7 +2485,14 @@ export function ArcanaStudio({ onBack }) {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result || '{}'));
+        const rawText = String(reader.result || '').trim();
+        let parsed;
+        try {
+          parsed = JSON.parse(rawText || '{}');
+        } catch {
+          // Accept exported JS snippet / object-literal style from game config exports.
+          parsed = parseLegacyCutsceneInput(rawText, selectedId || 'imported_cutscene', selectedCard?.durationMs || 3000);
+        }
         const importedCards = normalizeImportedStudioCardsPayload(parsed);
         if (!Array.isArray(importedCards) || importedCards.length === 0) {
           throw new Error('No importable cards found in JSON');
@@ -1993,7 +2518,7 @@ export function ArcanaStudio({ onBack }) {
           if (!firstImportedId) firstImportedId = card.id;
         });
 
-        updateCards(nextCards, importedCards.length === 1 ? `Imported ${firstImportedId}` : `Imported ${importedCards.length} cards`);
+        updateCards(nextCards, importedCards.length === 1 ? `Imported game card ${firstImportedId}` : `Imported ${importedCards.length} game cards`);
         if (firstImportedId) setSelectedId(firstImportedId);
       } catch (err) {
         setStatus(`Import failed: ${err.message}`);
@@ -2002,8 +2527,84 @@ export function ArcanaStudio({ onBack }) {
     reader.readAsText(file);
   }
 
+  function importAllCurrentCards() {
+    const nextCards = buildStudioCardsMap();
+    const nextIds = Object.keys(nextCards);
+    const existingIds = Object.keys(cards || {});
+    const overwriteCount = existingIds.filter((id) => Object.prototype.hasOwnProperty.call(nextCards, id)).length;
+    const selectedExists = selectedId && Object.prototype.hasOwnProperty.call(nextCards, selectedId);
+    const confirmMessage = [
+      `Import ${nextIds.length} current cards from definitions and Studio overrides?`,
+      overwriteCount > 0 ? `${overwriteCount} existing Studio cards will be refreshed.` : 'No existing cards will be overwritten.',
+      'Unsaved local edits to those cards will be replaced.',
+    ].join('\n');
+
+    if (!window.confirm(confirmMessage)) return;
+
+    updateCards(nextCards, `Imported ${nextIds.length} current cards`);
+    if (selectedExists) {
+      setSelectedId(selectedId);
+    } else if (nextIds.length > 0) {
+      setSelectedId(nextIds[0]);
+    }
+    setSelection(null);
+    setPlayheadMs(0);
+  }
+
+  function applyLegacyVfxDraft() {
+    try {
+      const parsedVfx = safeJsonParse(legacyVfxDraft, null);
+      if (!parsedVfx || typeof parsedVfx !== 'object' || Array.isArray(parsedVfx)) {
+        throw new Error('VFX draft must be a JSON object');
+      }
+
+      const legacy = arcanaStudioCardToLegacyCutscene(selectedCard);
+      const nextLegacy = {
+        ...legacy,
+        config: {
+          ...(legacy.config || {}),
+          vfx: {
+            ...(legacy.config?.vfx || {}),
+            ...parsedVfx,
+          },
+        },
+      };
+
+      const converted = legacyCutsceneToArcanaStudioCard(nextLegacy, { id: selectedId, name: selectedCard.name || selectedId });
+      const merged = sanitizeCardForStudio(
+        migrateArcanaStudioCard(
+          {
+            ...selectedCard,
+            ...converted,
+            id: selectedId,
+            name: selectedCard.name || converted.name || selectedId,
+            description: selectedCard.description || converted.description || '',
+            meta: {
+              ...(selectedCard.meta || {}),
+              ...(converted.meta || {}),
+              legacyCutscene: nextLegacy,
+            },
+          },
+          selectedId,
+        ),
+        selectedId,
+      );
+
+      updateCards({ ...cards, [selectedId]: merged }, `Applied legacy VFX for ${selectedId}`);
+      setSelection(null);
+      setPlayheadMs(0);
+    } catch (error) {
+      setStatus(`Legacy VFX apply failed: ${error.message}`);
+    }
+  }
+
   function removeSelectedTrack() {
     if (!selection?.trackType || !selection?.trackId) return;
+
+    if (selection.trackType === 'event') {
+      setStatus('Event track cannot be deleted');
+      return;
+    }
 
     if (selection.trackType === 'object') {
       const objects = selectedCard.tracks?.objects || [];
@@ -2025,15 +2626,7 @@ export function ArcanaStudio({ onBack }) {
     setSelection(null);
   }
 
-  function setCardPiecePreview(square) {
-    updateSelectedCard((card) => ({
-      ...card,
-      meta: {
-        ...(card.meta || {}),
-        cardPiecePreview: square,
-      },
-    }), 'Updated card preview piece');
-  }
+
 
   const cardEntries = useMemo(() => {
     return Object.entries(cards).sort(compareLibraryCards);
@@ -2056,24 +2649,23 @@ export function ArcanaStudio({ onBack }) {
 
   return (
     <div className="arcana-studio-shell">
-      {showTutorial ? <ArcanaStudioTutorial onClose={() => setShowTutorial(false)} /> : null}
+      {showTutorial ? <ArcanaStudioTutorial onClose={() => setShowTutorial(false)} eventTypes={KNOWN_GAME_EVENT_TYPES} /> : null}
 
       <header className="arcana-studio-header">
         <div>
           <h1>Arcana Studio</h1>
-          <p className="arcana-studio-subtitle">Board-first spell cinema built for Arcana Chess.</p>
           <p className="arcana-studio-status">{status}</p>
         </div>
         <div className="arcana-studio-actions">
           <button onClick={onBack}>Back</button>
-          <button onClick={() => setShowTutorial(true)}>Field Guide</button>
-          <button onClick={importCurrentCards}>Import Current Cards</button>
+          <button onClick={createNewCard}>New Card</button>
+          <button onClick={saveCardToGame}>Export JSON</button>
+          <button onClick={importAllCurrentCards}>Import All Cards</button>
           <label className="file-like-button">
-            Import JSON
-            <input type="file" accept="application/json" onChange={importJsonCard} />
+            Import Game Card
+            <input type="file" accept="application/json,.json,.arcana.json" onChange={importJsonCard} />
           </label>
-          <button onClick={exportCard}>Export Card</button>
-          <button onClick={exportAllCards}>Export All Cards</button>
+          <button onClick={() => setShowTutorial(true)}>Field Guide</button>
         </div>
       </header>
 
@@ -2092,18 +2684,18 @@ export function ArcanaStudio({ onBack }) {
                 const definition = findDefinitionById(id);
                 const rarity = getCardRarity(card, definition);
                 const rarityColor = RARITY_COLOR[rarity] || '#b9c8da';
+                const canAnimatePiece = computeCanAnimatePiece(id, card, definition);
                 return (
                 <button key={id} className={`card-item rarity-${rarity} ${id === selectedId ? 'selected' : ''}`} onClick={() => { setSelectedId(id); setSelection(null); setPlayheadMs(0); }}>
                   <div className="card-item-top">
                     <strong>{card.name || definition?.name || id}</strong>
                     <span className="card-item-badges">
                       {card.meta?.isCutscene ? <span className="pill cutscene">Cutscene</span> : null}
+                      <span className={`pill ${canAnimatePiece ? 'anim-piece' : 'static-piece'}`}>{canAnimatePiece ? 'Piece Anim' : 'No Piece Anim'}</span>
                       <span className="pill rarity-pill" style={{ color: rarityColor, borderColor: `${rarityColor}88` }}>{rarity.toUpperCase()}</span>
                     </span>
                   </div>
-                  <div className="card-item-meta" style={{ color: rarityColor }}>{rarity.toUpperCase()} • {(definition?.category || card.meta?.category || 'uncategorized')}</div>
-                  <span className="card-item-id">{id}</span>
-                  <p className="card-item-desc">{truncate(getCardDescription(card) || 'No description', 140)}</p>
+                  <div className="card-item-meta" style={{ color: rarityColor }}>{definition?.category || card.meta?.category || 'uncategorized'}</div>
                 </button>
                 );
               })}
@@ -2111,13 +2703,11 @@ export function ArcanaStudio({ onBack }) {
           </div>
 
           <div className="arcana-panel">
-            <div className="arcana-panel-title">Arcana Layers</div>
+            <div className="arcana-panel-title">Timeline Tracks</div>
             <div className="arcana-add-row">
-              <button onClick={() => addTrack('camera')}>+ Lens</button>
-              <button onClick={() => addTrack('object')}>+ Actor</button>
-              <button onClick={() => addTrack('particle')}>+ Aether</button>
-              <button onClick={() => addTrack('overlay')}>+ Sigil</button>
-              <button onClick={() => addTrack('sound')}>+ Chime</button>
+              <button onClick={() => addTrack('camera')}>+ Camera Track</button>
+              <button onClick={() => addTrack('object')}>+ Cube Track</button>
+              <button onClick={() => addTrack('sound')}>+ Audio Track</button>
             </div>
 
             <div className="outliner-list">
@@ -2125,7 +2715,7 @@ export function ArcanaStudio({ onBack }) {
                 return (
                   <div key={`${row.type}_${row.id}`} className={`outliner-item ${selection?.trackType === row.type && selection?.trackId === row.id ? 'selected' : ''}`}>
                     <button className="outliner-main" onClick={() => selectTrack(row.type, row.id)}>
-                      <span>{row.type}</span>
+                      <span>{trackTypeLabel(row.type)}</span>
                       <strong>{row.label}</strong>
                     </button>
                   </div>
@@ -2147,7 +2737,48 @@ export function ArcanaStudio({ onBack }) {
             </label>
             <label>
               Duration (ms)
-              <input type="number" min={100} value={selectedCard.durationMs} onChange={(event) => updateSelectedCard((card) => ({ ...card, durationMs: Math.max(100, Number(event.target.value) || 100) }))} />
+              <StudioNumberInput
+                min={100}
+                value={selectedCard.durationMs}
+                fallback={selectedCard.durationMs || 100}
+                onChange={(nextValue) => updateSelectedCard((card) => {
+                  const requested = Math.max(100, Number(nextValue) || 100);
+                  const minRequired = getTimelineRequiredDurationMs(card);
+                  return { ...card, durationMs: Math.max(requested, minRequired) };
+                })}
+              />
+            </label>
+            <label>
+              Snap To Timeline
+              <select
+                value={selectedCard.settings?.timelineSnapEnabled === false ? 'off' : 'on'}
+                onChange={(event) => updateSelectedCard((card) => ({
+                  ...card,
+                  settings: {
+                    ...card.settings,
+                    timelineSnapEnabled: event.target.value !== 'off',
+                  },
+                }), 'Updated timeline snap mode')}
+              >
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
+            <label>
+              Snap Step (ms)
+              <StudioNumberInput
+                min={1}
+                max={2000}
+                value={getTimelineSnapStepMs(selectedCard)}
+                fallback={getTimelineSnapStepMs(selectedCard)}
+                onChange={(nextValue) => updateSelectedCard((card) => ({
+                  ...card,
+                  settings: {
+                    ...card.settings,
+                    timelineSnapMs: Math.max(1, Number(nextValue) || 1),
+                  },
+                }), 'Updated timeline snap step')}
+              />
             </label>
             <label>
               Preview Mode
@@ -2155,10 +2786,6 @@ export function ArcanaStudio({ onBack }) {
                 <option value="plane">Plane</option>
                 <option value="board">Board</option>
               </select>
-            </label>
-            <label>
-              Card Preview Piece
-              <input value={selectedCard.meta?.cardPiecePreview || ''} placeholder="e4" onChange={(event) => setCardPiecePreview(event.target.value.toLowerCase())} />
             </label>
             <label>
               Show Camera Gizmos
@@ -2184,6 +2811,30 @@ export function ArcanaStudio({ onBack }) {
                 </select>
               </label>
             ) : null}
+          </div>
+
+          <div className="arcana-panel compact legacy-config-panel">
+            <div className="legacy-config-card">
+              <div className="legacy-config-card-head">
+                <h4>VFX</h4>
+                <span className="legacy-config-badge">direct json</span>
+              </div>
+              <p>Edit the card&apos;s <code>config.vfx</code> object directly.</p>
+              <textarea
+                className="legacy-config-textarea"
+                value={legacyVfxDraft}
+                onChange={(event) => setLegacyVfxDraft(event.target.value)}
+              />
+              <div className="legacy-config-actions">
+                <button onClick={applyLegacyVfxDraft}>Apply</button>
+                <button
+                  type="button"
+                  onClick={() => setLegacyVfxDraft(JSON.stringify(selectedLegacyVfx || {}, null, 2))}
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="arcana-workspace">
@@ -2212,11 +2863,18 @@ export function ArcanaStudio({ onBack }) {
                   selectedCameraKey={selection?.trackType === 'camera' ? selectedKey : null}
                   cameraTransformTarget={cameraTransformTarget}
                   onTransformCameraKey={updateSelectedCameraTransform}
+                  onCameraSnapshotChange={(snapshot) => {
+                    cameraSnapshotRef.current = snapshot;
+                  }}
                   previewMode={selectedCard.settings?.previewMode || 'plane'}
                   isPlaying={isPlaying}
                   showCameraGizmos={showCameraGizmos}
+                  activeVisualArcana={activeVisualArcana}
+                  effectsModule={effectsModule}
                 />
               </Canvas>
+
+              <CutsceneOverlay ref={overlayRuntimeRef} />
 
               <div className="arcana-overlay-stage" ref={overlayStageRef}>
                 {screenOverlays.map(({ track, sample, composedLayer }) => {
@@ -2276,9 +2934,13 @@ export function ArcanaStudio({ onBack }) {
                         color: '#eaf4ff',
                         border: '1px solid rgba(112, 184, 255, 0.22)',
                         boxShadow: '0 12px 26px rgba(0, 0, 0, 0.22)',
-                        fontSize: 12,
+                        fontSize: notice.kind === 'sound' ? 10 : 12,
                         letterSpacing: '0.02em',
                         textTransform: 'uppercase',
+                        maxWidth: 320,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
                       }}
                     >
                       {notice.label}
@@ -2294,9 +2956,24 @@ export function ArcanaStudio({ onBack }) {
                 <button onClick={() => setIsPlaying((value) => !value)}>{isPlaying ? 'Pause' : 'Play'}</button>
                 <button onClick={() => setPlayheadMs((value) => clamp(value - 100, 0, selectedCard.durationMs || 1))}>-100ms</button>
                 <button onClick={() => setPlayheadMs((value) => clamp(value + 100, 0, selectedCard.durationMs || 1))}>+100ms</button>
-                {selectedTrack ? <button onClick={() => addKeyToTrack(selection.trackType, selectedTrack.id)}>Add Moment</button> : null}
+                {selectedTrack ? (
+                  <button onClick={() => addKeyToTrack(selection.trackType, selectedTrack.id)}>
+                    {selection.trackType === 'camera' ? 'Capture Camera' : 'Add Moment'}
+                  </button>
+                ) : null}
                 {selectedKey ? <button onClick={removeSelectedKey}>Delete Moment</button> : null}
                 {selectedTrack ? <button className="danger-button" onClick={removeSelectedTrack}>Delete Layer</button> : null}
+              </div>
+
+              <div className="shortcut-strip">
+                <span>Shortcuts</span>
+                <span>Space Play/Pause</span>
+                <span>Ctrl/Cmd+C Copy</span>
+                <span>Ctrl/Cmd+V Paste</span>
+                <span>Ctrl/Cmd+Z Undo</span>
+                <span>Shift/Ctrl Click Multi-select</span>
+                <span>W/E/R Move/Rotate/Scale</span>
+                <span>Shift+C Capture Camera</span>
               </div>
 
               <div className="playhead-slider-wrap">
@@ -2317,6 +2994,13 @@ export function ArcanaStudio({ onBack }) {
                     const track = findTrack(selectedCard, row.type, row.id);
                     const keys = track?.keys || [];
                     const laneId = `${row.type}_${row.id}`;
+                    const keyStacks = new Map();
+                    keys.forEach((key) => {
+                      const t = Math.round(Number(key?.timeMs) || 0);
+                      const stack = keyStacks.get(t) || [];
+                      stack.push(key.id);
+                      keyStacks.set(t, stack);
+                    });
 
                     return (
                       <div key={laneId} className={`timeline-row ${selection?.trackType === row.type && selection?.trackId === row.id ? 'selected' : ''}`}>
@@ -2327,26 +3011,78 @@ export function ArcanaStudio({ onBack }) {
                         <div
                           className="timeline-lane"
                           ref={(el) => { laneRefs.current[laneId] = el; }}
+                          onPointerDown={(event) => {
+                            // Clicking empty lane space should unselect keyframes.
+                            if (event.target === event.currentTarget) {
+                              setSelectedKeyIds([]);
+                              setSelection({ trackType: row.type, trackId: row.id, keyId: null });
+                            }
+                          }}
                           onDoubleClick={() => addKeyToTrack(row.type, row.id)}
                         >
                           <div className="timeline-playhead" style={{ left: `${(playheadMs / Math.max(1, selectedCard.durationMs)) * 100}%` }} />
                           {keys.map((key) => (
-                            <button
-                              key={key.id}
-                              className={`timeline-key ${selection?.keyId === key.id ? 'selected' : ''}`}
-                              style={{ left: `${((key.timeMs || 0) / Math.max(1, selectedCard.durationMs)) * 100}%` }}
-                              onMouseDown={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                selectKey(row.type, row.id, key.id);
-                                setDragKey({ trackType: row.type, trackId: row.id, keyId: key.id });
-                              }}
-                              onClick={() => {
-                                setPlayheadMs(key.timeMs || 0);
-                                selectKey(row.type, row.id, key.id);
-                              }}
-                              title={`${row.type} key @ ${key.timeMs}ms`}
-                            />
+                            (() => {
+                              const timeBucket = Math.round(Number(key?.timeMs) || 0);
+                              const stack = keyStacks.get(timeBucket) || [key.id];
+                              const stackSize = stack.length;
+                              const stackIndex = Math.max(0, stack.indexOf(key.id));
+                              const yOffset = (stackIndex - ((stackSize - 1) / 2)) * 9;
+                              const isSelectedKey = selectedKeyIds.includes(key.id) || selection?.keyId === key.id;
+                              return (
+                                <button
+                                  key={key.id}
+                                  className={`timeline-key ${isSelectedKey ? 'selected' : ''} ${stackSize > 1 ? 'stacked' : ''}`}
+                                  style={{
+                                    left: `${((key.timeMs || 0) / Math.max(1, selectedCard.durationMs)) * 100}%`,
+                                    top: `calc(50% + ${yOffset}px)`,
+                                    zIndex: 5 + stackIndex,
+                                  }}
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    const withMulti = event.shiftKey || event.ctrlKey || event.metaKey;
+                                    if (withMulti) {
+                                      selectKey(row.type, row.id, key.id, { toggle: true });
+                                      return;
+                                    }
+
+                                    const activeSelected = selectedKeyIds.length > 0 ? selectedKeyIds : (selection?.keyId ? [selection.keyId] : []);
+                                    const canGroupDrag =
+                                      activeSelected.length > 1
+                                      && selection?.trackType === row.type
+                                      && selection?.trackId === row.id
+                                      && activeSelected.includes(key.id);
+
+                                    if (canGroupDrag) {
+                                      const baseTimes = {};
+                                      keys.forEach((entry) => {
+                                        if (activeSelected.includes(entry.id)) {
+                                          baseTimes[entry.id] = Number(entry.timeMs) || 0;
+                                        }
+                                      });
+                                      setDragKey({
+                                        trackType: row.type,
+                                        trackId: row.id,
+                                        keyId: key.id,
+                                        keyIds: activeSelected,
+                                        baseTimes,
+                                        anchorBaseTimeMs: Number(baseTimes[key.id]) || 0,
+                                      });
+                                    } else {
+                                      selectKey(row.type, row.id, key.id);
+                                      setDragKey({ trackType: row.type, trackId: row.id, keyId: key.id });
+                                    }
+                                  }}
+                                  onClick={() => {
+                                    setPlayheadMs(key.timeMs || 0);
+                                    const isMulti = selection?.trackType === row.type && selection?.trackId === row.id && selectedKeyIds.length > 1;
+                                    if (!isMulti) selectKey(row.type, row.id, key.id);
+                                  }}
+                                  title={`${row.type} key @ ${key.timeMs}ms${stackSize > 1 ? ` • stack ${stackIndex + 1}/${stackSize}` : ''}`}
+                                />
+                              );
+                            })()
                           ))}
                         </div>
                       </div>
@@ -2374,32 +3110,20 @@ export function ArcanaStudio({ onBack }) {
               <>
                 <label>
                   Layer Name
-                  <input value={selectedTrack.name || ''} onChange={(event) => updateTrackField(selection.trackType, selectedTrack.id, { name: event.target.value })} />
+                  <input
+                    value={selectedTrack.name || ''}
+                    readOnly={selection.trackType === 'object' && selectedCard.tracks?.objects?.[0]?.id === selectedTrack.id && selectedTrack.isAnimatablePiece}
+                    onChange={(event) => updateTrackField(selection.trackType, selectedTrack.id, { name: event.target.value })}
+                  />
                 </label>
 
                 {selection.trackType === 'object' ? (
                   <>
-                    <label>
-                      Type
-                      <select value={selectedTrack.type || (selectedTrack.isAnimatablePiece ? 'piece' : 'mesh')} onChange={(event) => updateTrackField('object', selectedTrack.id, { type: event.target.value })}>
-                        <option value="piece">Piece</option>
-                        <option value="mesh">Mesh</option>
-                        <option value="part">Part</option>
-                      </select>
-                    </label>
-
                     {(selectedTrack.type || (selectedTrack.isAnimatablePiece ? 'piece' : 'mesh')) === 'piece' ? (
                       <>
                         <label>
                           Piece
-                          <select value={selectedTrack.pieceType || 'p'} onChange={(event) => updateTrackField('object', selectedTrack.id, { pieceType: event.target.value })}>
-                            <option value="p">Pawn</option>
-                            <option value="n">Knight</option>
-                            <option value="b">Bishop</option>
-                            <option value="r">Rook</option>
-                            <option value="q">Queen</option>
-                            <option value="k">King</option>
-                          </select>
+                          <input value={selectedTrack.pieceType || 'p'} readOnly />
                         </label>
                         <label>
                           Color
@@ -2422,7 +3146,7 @@ export function ArcanaStudio({ onBack }) {
                         </label>
                         <label>
                           Clip Offset (ms)
-                          <input type="number" value={selectedTrack.clipOffsetMs || 0} onChange={(event) => updateTrackField('object', selectedTrack.id, { clipOffsetMs: Number(event.target.value) || 0 })} />
+                          <StudioNumberInput value={selectedTrack.clipOffsetMs ?? 0} fallback={0} onChange={(nextValue) => updateTrackField('object', selectedTrack.id, { clipOffsetMs: Number(nextValue) || 0 })} />
                         </label>
                         <label>
                           Loop Clip
@@ -2491,7 +3215,7 @@ export function ArcanaStudio({ onBack }) {
                     </label>
                     <label>
                       Layer
-                      <input type="number" value={selectedTrack.layer || 0} onChange={(event) => updateTrackField('overlay', selectedTrack.id, { layer: Number(event.target.value) || 0 })} />
+                      <StudioNumberInput value={selectedTrack.layer ?? 0} fallback={0} onChange={(nextValue) => updateTrackField('overlay', selectedTrack.id, { layer: Number(nextValue) || 0 })} />
                     </label>
                     <label>
                       Content
@@ -2503,7 +3227,7 @@ export function ArcanaStudio({ onBack }) {
                     </label>
                     <label>
                       Font Size
-                      <input type="number" value={selectedTrack.style?.fontSize || 36} onChange={(event) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), fontSize: Number(event.target.value) || 1 } })} />
+                      <StudioNumberInput value={selectedTrack.style?.fontSize ?? 36} fallback={36} onChange={(nextValue) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), fontSize: Number(nextValue) || 1 } })} />
                     </label>
                     <label>
                       Image URL
@@ -2513,137 +3237,18 @@ export function ArcanaStudio({ onBack }) {
                       <>
                         <label>
                           Width (%)
-                          <input type="number" value={selectedTrack.style?.width ?? 100} onChange={(event) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), width: Number(event.target.value) || 100 } })} />
+                          <StudioNumberInput value={selectedTrack.style?.width ?? 100} fallback={100} onChange={(nextValue) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), width: Number(nextValue) || 100 } })} />
                         </label>
                         <label>
                           Height (%)
-                          <input type="number" value={selectedTrack.style?.height ?? 100} onChange={(event) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), height: Number(event.target.value) || 100 } })} />
+                          <StudioNumberInput value={selectedTrack.style?.height ?? 100} fallback={100} onChange={(nextValue) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), height: Number(nextValue) || 100 } })} />
                         </label>
                         <label>
                           Border Radius (px)
-                          <input type="number" value={selectedTrack.style?.borderRadius ?? 0} onChange={(event) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), borderRadius: Number(event.target.value) || 0 } })} />
+                          <StudioNumberInput value={selectedTrack.style?.borderRadius ?? 0} fallback={0} onChange={(nextValue) => updateTrackField('overlay', selectedTrack.id, { style: { ...(selectedTrack.style || {}), borderRadius: Number(nextValue) || 0 } })} />
                         </label>
                       </>
                     ) : null}
-                  </>
-                ) : null}
-
-                {selection.trackType === 'particle' ? (
-                  <>
-                    <label>
-                      Particle Preset
-                      <select value="" onChange={(event) => { applyParticlePreset(selectedTrack.id, event.target.value); event.target.value = ''; }}>
-                        <option value="">Choose preset...</option>
-                        {Object.entries(PARTICLE_PRESETS).map(([id, preset]) => (
-                          <option key={id} value={id}>{preset.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="particle-preset-grid" role="list" aria-label="Particle Presets">
-                      {Object.entries(PARTICLE_PRESETS).map(([id, preset]) => {
-                        const preview = sanitizeParticleParams(createParticlePresetParams(id));
-                        return (
-                          <button
-                            key={id}
-                            type="button"
-                            className="particle-preset-tile"
-                            onClick={() => applyParticlePreset(selectedTrack.id, id)}
-                            title={`${preset.label}: ${preview.spawnShape}, emit ${preview.emissionRate}/s, burst ${preview.burstCount}`}
-                          >
-                            <div className="particle-preset-title">{preset.label}</div>
-                            <div className="particle-preset-preview" style={{ background: `linear-gradient(135deg, ${preview.colorOverLife[0]}, ${preview.colorOverLife[preview.colorOverLife.length - 1]})` }}>
-                              {[0, 1, 2, 3, 4, 5].map((dot) => (
-                                <span
-                                  key={`${id}_${dot}`}
-                                  className="particle-preset-dot"
-                                  style={{
-                                    left: `${12 + dot * 14}%`,
-                                    animationDelay: `${dot * 0.08}s`,
-                                    opacity: 0.45 + dot * 0.08,
-                                  }}
-                                />
-                              ))}
-                            </div>
-                            <div className="particle-preset-meta">{preview.spawnShape} • {preview.emissionRate}/s • b{preview.burstCount}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <label>
-                      Attach Target Track ID
-                      <input value={selectedTrack.attach?.targetId || ''} onChange={(event) => updateTrackField('particle', selectedTrack.id, { attach: { ...(selectedTrack.attach || {}), targetId: event.target.value || null } })} />
-                    </label>
-                    <label>
-                      Spawn Shape
-                      <select value={selectedTrack.params?.spawnShape || 'sphere'} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), spawnShape: event.target.value } })}>
-                        <option value="sphere">sphere</option>
-                        <option value="ring">ring</option>
-                        <option value="cone">cone</option>
-                        <option value="box">box</option>
-                      </select>
-                    </label>
-                    <label>
-                      Emission Rate
-                      <input type="number" value={selectedTrack.params?.emissionRate || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), emissionRate: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Burst Count
-                      <input type="number" value={selectedTrack.params?.burstCount || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), burstCount: Math.max(0, Number(event.target.value) || 0) } })} />
-                    </label>
-                    <label>
-                      Spawn Radius
-                      <input type="number" step="0.01" value={selectedTrack.params?.spawnRadius || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), spawnRadius: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Velocity Min
-                      <input type="number" step="0.01" value={selectedTrack.params?.velocityMin || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), velocityMin: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Velocity Max
-                      <input type="number" step="0.01" value={selectedTrack.params?.velocityMax || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), velocityMax: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Lifetime Min
-                      <input type="number" step="0.01" value={selectedTrack.params?.lifetimeMin || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), lifetimeMin: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Lifetime Max
-                      <input type="number" step="0.01" value={selectedTrack.params?.lifetimeMax || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), lifetimeMax: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Noise Strength
-                      <input type="number" step="0.01" value={selectedTrack.params?.noiseStrength || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), noiseStrength: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Noise Frequency
-                      <input type="number" step="0.01" value={selectedTrack.params?.noiseFrequency || 1.4} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), noiseFrequency: Number(event.target.value) || 1.4 } })} />
-                    </label>
-                    <label>
-                      Drag
-                      <input type="number" step="0.01" value={selectedTrack.params?.drag || 0} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), drag: Number(event.target.value) || 0 } })} />
-                    </label>
-                    <label>
-                      Gravity (x,y,z)
-                      <input value={JSON.stringify(selectedTrack.params?.gravity || [0, -6, 0])} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), gravity: safeJsonParse(event.target.value, [0, -6, 0]) } })} />
-                    </label>
-                    <label>
-                      Size Over Life (JSON)
-                      <textarea value={JSON.stringify(selectedTrack.params?.sizeOverLife || [1, 0.7, 0], null, 2)} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), sizeOverLife: safeJsonParse(event.target.value, [1, 0.7, 0]) } })} />
-                    </label>
-                    <label>
-                      Color Over Life (JSON)
-                      <textarea value={JSON.stringify(selectedTrack.params?.colorOverLife || ['#ffffff'], null, 2)} onChange={(event) => updateTrackField('particle', selectedTrack.id, { params: { ...(selectedTrack.params || {}), colorOverLife: safeJsonParse(event.target.value, ['#ffffff']) } })} />
-                    </label>
-                    {particleCompatibilityWarnings.length ? (
-                      <div className="particle-compatibility-box">
-                        <strong>Runtime Compatibility</strong>
-                        {particleCompatibilityWarnings.map((warning, idx) => (
-                          <div key={`pcw_${idx}`}>• {warning}</div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="graph-caption">Runtime compatibility looks good for this particle track.</div>
-                    )}
                   </>
                 ) : null}
 
@@ -2653,7 +3258,7 @@ export function ArcanaStudio({ onBack }) {
                     <h4>Moment</h4>
                     <label>
                       Time (ms)
-                      <input type="number" value={selectedKey.timeMs || 0} onChange={(event) => updateKeyField(selection.trackType, selectedTrack.id, selectedKey.id, { timeMs: Math.max(0, Number(event.target.value) || 0) })} />
+                      <StudioNumberInput value={selectedKey.timeMs ?? 0} fallback={0} onChange={(nextValue) => updateKeyField(selection.trackType, selectedTrack.id, selectedKey.id, { timeMs: Math.max(0, Number(nextValue) || 0) })} />
                     </label>
 
                     {'easing' in selectedKey ? (
@@ -2676,15 +3281,12 @@ export function ArcanaStudio({ onBack }) {
                           <input value={(selectedKey.target || [0, 0, 0]).join(', ')} onChange={(event) => updateKeyField('camera', selectedTrack.id, selectedKey.id, { target: event.target.value.split(',').map((v) => Number(v.trim()) || 0).slice(0, 3) })} />
                         </label>
                         <label>
-                          FOV
-                          <input type="number" value={selectedKey.fov || 55} onChange={(event) => updateKeyField('camera', selectedTrack.id, selectedKey.id, { fov: Number(event.target.value) || 55 })} />
+                          Rotation (x,y,z)
+                          <input value={(selectedKey.rotation || [0, 0, 0]).join(', ')} onChange={(event) => updateKeyField('camera', selectedTrack.id, selectedKey.id, { rotation: event.target.value.split(',').map((v) => Number(v.trim()) || 0).slice(0, 3) })} />
                         </label>
                         <label>
-                          Blend Mode
-                          <select value={selectedKey.blendMode || 'curve'} onChange={(event) => updateKeyField('camera', selectedTrack.id, selectedKey.id, { blendMode: event.target.value })}>
-                            <option value="curve">Curve</option>
-                            <option value="cut">Cut</option>
-                          </select>
+                          FOV
+                          <StudioNumberInput value={selectedKey.fov ?? 55} fallback={55} onChange={(nextValue) => updateKeyField('camera', selectedTrack.id, selectedKey.id, { fov: Number(nextValue) || 55 })} />
                         </label>
                       </>
                     ) : null}
@@ -2724,23 +3326,23 @@ export function ArcanaStudio({ onBack }) {
                         </label>
                         <label>
                           X (%)
-                          <input type="number" value={selectedKey.x ?? 50} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: Number(event.target.value) || 0 })} />
+                          <StudioNumberInput value={selectedKey.x ?? 50} fallback={50} onChange={(nextValue) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: Number(nextValue) || 0 })} />
                         </label>
                         <label>
                           Y (%)
-                          <input type="number" value={selectedKey.y ?? 50} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { y: Number(event.target.value) || 0 })} />
+                          <StudioNumberInput value={selectedKey.y ?? 50} fallback={50} onChange={(nextValue) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { y: Number(nextValue) || 0 })} />
                         </label>
                         <label>
                           Opacity
-                          <input type="number" step="0.05" value={selectedKey.opacity ?? 1} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { opacity: Number(event.target.value) || 0 })} />
+                          <StudioNumberInput step="0.05" value={selectedKey.opacity ?? 1} fallback={1} onChange={(nextValue) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { opacity: Number(nextValue) || 0 })} />
                         </label>
                         <label>
                           Scale
-                          <input type="number" step="0.05" value={selectedKey.scale ?? 1} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { scale: Number(event.target.value) || 1 })} />
+                          <StudioNumberInput step="0.05" value={selectedKey.scale ?? 1} fallback={1} onChange={(nextValue) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { scale: Number(nextValue) || 1 })} />
                         </label>
                         <label>
                           Rotation (deg)
-                          <input type="number" step="0.1" value={selectedKey.rotation ?? 0} onChange={(event) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { rotation: Number(event.target.value) || 0 })} />
+                          <StudioNumberInput step="0.1" value={selectedKey.rotation ?? 0} fallback={0} onChange={(nextValue) => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { rotation: Number(nextValue) || 0 })} />
                         </label>
                         <div className="overlay-nudge-grid">
                           <button type="button" onClick={() => updateKeyField('overlay', selectedTrack.id, selectedKey.id, { x: clamp((selectedKey.x ?? 50) - 1, 0, 100) }, false)}>◀ 1</button>
@@ -2755,43 +3357,20 @@ export function ArcanaStudio({ onBack }) {
                       </>
                     ) : null}
 
-                    {selection.trackType === 'particle' ? (
-                      <>
-                        <label>
-                          Enabled
-                          <select value={selectedKey.enabled ? 'on' : 'off'} onChange={(event) => updateKeyField('particle', selectedTrack.id, selectedKey.id, { enabled: event.target.value === 'on' })}>
-                            <option value="on">On</option>
-                            <option value="off">Off</option>
-                          </select>
-                        </label>
-                        <label>
-                          Seed
-                          <input type="number" value={selectedKey.seed ?? 1337} onChange={(event) => updateKeyField('particle', selectedTrack.id, selectedKey.id, { seed: Math.round(Number(event.target.value) || 0) })} />
-                        </label>
-                        <label>
-                          Overrides (JSON)
-                          <textarea
-                            value={JSON.stringify(selectedKey.overrides || {}, null, 2)}
-                            onChange={(event) => updateKeyField('particle', selectedTrack.id, selectedKey.id, { overrides: safeJsonParse(event.target.value, {}) })}
-                          />
-                        </label>
-                      </>
-                    ) : null}
-
                     {selection.trackType === 'sound' ? (
                       <>
-                        <label>
+                        <label className="sound-id-field">
                           Sound ID
                           <input value={selectedKey.soundId || ''} onChange={(event) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { soundId: normalizeStudioSoundId(event.target.value) })} />
                         </label>
                         <div className="graph-caption">Tip: use arcana:execution, music:menu, move, capture, or /sounds/... path.</div>
                         <label>
                           Volume
-                          <input type="number" step="0.05" value={selectedKey.volume ?? 1} onChange={(event) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { volume: Number(event.target.value) || 1 })} />
+                          <StudioNumberInput step="0.05" value={selectedKey.volume ?? 1} fallback={1} onChange={(nextValue) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { volume: Number(nextValue) || 1 })} />
                         </label>
                         <label>
                           Pitch
-                          <input type="number" step="0.05" value={selectedKey.pitch ?? 1} onChange={(event) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { pitch: Number(event.target.value) || 1 })} />
+                          <StudioNumberInput step="0.05" value={selectedKey.pitch ?? 1} fallback={1} onChange={(nextValue) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { pitch: Number(nextValue) || 1 })} />
                         </label>
                         <label>
                           Loop
@@ -2815,7 +3394,7 @@ export function ArcanaStudio({ onBack }) {
                         <div className="graph-caption">Includes all known game/cutscene actions plus runtime event actions.</div>
                         <label>
                           Delay (ms)
-                          <input type="number" value={selectedKey.delayMs || 0} onChange={(event) => updateKeyField('event', selectedTrack.id, selectedKey.id, { delayMs: Math.max(0, Number(event.target.value) || 0) })} />
+                          <StudioNumberInput value={selectedKey.delayMs ?? 0} fallback={0} onChange={(nextValue) => updateKeyField('event', selectedTrack.id, selectedKey.id, { delayMs: Math.max(0, Number(nextValue) || 0) })} />
                         </label>
                         <label>
                           Payload (JSON)

@@ -17,13 +17,14 @@ const TARGET_TYPES = Object.freeze({
   cursed_square: 'emptySquare',
   mind_control: 'enemyPiece',
   breaking_point: 'enemyPiece',
-  edgerunner_overdrive: 'pieceNoKing',
+  edgerunner_overdrive: 'pieceNoKingWithMoves',
 });
 
 const TARGET_LABELS = Object.freeze({
   pawn: 'pawn',
   piece: 'piece',
   pieceNoKing: 'piece (not king)',
+  pieceNoKingWithMoves: 'piece (not king) with legal moves',
   pieceNoQueenKing: 'piece (not queen or king)',
   pieceWithMoves: 'piece that has legal moves',
   pieceWithPushTarget: 'piece that can be pushed',
@@ -117,6 +118,9 @@ export function getValidTargetSquares(chess, arcanaId, colorChar, gameState = {}
         case 'pieceNoKing':
           if (piece && piece.color === colorChar && piece.type !== 'k') validSquares.push(square);
           break;
+        case 'pieceNoKingWithMoves':
+          if (piece && piece.color === colorChar && piece.type !== 'k' && chess.moves({ square, verbose: true })?.length > 0) validSquares.push(square);
+          break;
         case 'pieceNoQueenKing':
           if (piece && piece.color === colorChar && piece.type !== 'k' && piece.type !== 'q') validSquares.push(square);
           break;
@@ -175,6 +179,10 @@ export function validateArcanaTarget(chess, arcanaId, square, colorChar, gameSta
       return piece && piece.color === colorChar ? { ok: true } : { ok: false, reason: 'Target must be one of your pieces' };
     case 'pieceNoKing':
       return piece && piece.color === colorChar && piece.type !== 'k' ? { ok: true } : { ok: false, reason: 'Target must be one of your pieces except king' };
+    case 'pieceNoKingWithMoves':
+      return piece && piece.color === colorChar && piece.type !== 'k' && (chess.moves({ square, verbose: true })?.length > 0)
+        ? { ok: true }
+        : { ok: false, reason: 'Target must be one of your non-king pieces with legal moves' };
     case 'pieceNoQueenKing':
       return piece && piece.color === colorChar && piece.type !== 'k' && piece.type !== 'q' ? { ok: true } : { ok: false, reason: 'Target must be one of your pieces except queen and king' };
     case 'pieceWithMoves':

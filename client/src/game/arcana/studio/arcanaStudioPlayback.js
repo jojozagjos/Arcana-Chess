@@ -80,12 +80,13 @@ function getSegment(keys = [], timeMs = 0) {
 export function sampleCameraTrack(track, timeMs = 0) {
   const { from, to, alpha } = getSegment(track?.keys || [], timeMs);
   if (!from) {
-    return { position: [0, 7, 7], target: [0, 0, 0], fov: 55, easing: 'linear', blendMode: 'curve' };
+    return { position: [0, 7, 7], target: [0, 0, 0], rotation: [0, 0, 0], fov: 55, easing: 'linear', blendMode: 'curve' };
   }
   if (!to || from === to || to.blendMode === 'cut') {
     return {
       position: from.position || [0, 7, 7],
       target: from.target || [0, 0, 0],
+      rotation: from.rotation || [0, 0, 0],
       fov: from.fov || 55,
       easing: from.easing || 'linear',
       blendMode: from.blendMode || 'curve',
@@ -96,6 +97,7 @@ export function sampleCameraTrack(track, timeMs = 0) {
   return {
     position: lerpVec3(from.position, to.position, eased),
     target: lerpVec3(from.target, to.target, eased),
+    rotation: lerpVec3(from.rotation, to.rotation, eased),
     fov: lerp(from.fov || 55, to.fov || 55, eased),
     easing: to.easing || from.easing || 'linear',
     blendMode: to.blendMode || from.blendMode || 'curve',

@@ -21,6 +21,7 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
       let x = currentPos.current[0];
       let y = currentPos.current[1];
       let z = currentPos.current[2];
+      groupRef.current.scale.set(1, 1, 1);
 
       if (cutsceneMotion?.active) {
         const t = state.clock.elapsedTime;
@@ -28,7 +29,24 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
         const profile = cutsceneMotion.profile || 'pulse';
         const phase = cutsceneMotion.phase || 0;
 
-        if (profile === 'overdrive') {
+        if (cutsceneMotion.mode === 'studio-runtime') {
+          const positionOffset = Array.isArray(cutsceneMotion.positionOffset) ? cutsceneMotion.positionOffset : [0, 0, 0];
+          const rotation = Array.isArray(cutsceneMotion.rotation) ? cutsceneMotion.rotation : [0, 0, 0];
+          const scale = Array.isArray(cutsceneMotion.scale) ? cutsceneMotion.scale : [1, 1, 1];
+          x += Number(positionOffset[0]) || 0;
+          y += Number(positionOffset[1]) || 0;
+          z += Number(positionOffset[2]) || 0;
+          groupRef.current.rotation.set(
+            Number(rotation[0]) || 0,
+            Number(rotation[1]) || 0,
+            Number(rotation[2]) || 0,
+          );
+          groupRef.current.scale.set(
+            Math.max(0.001, Number(scale[0]) || 1),
+            Math.max(0.001, Number(scale[1]) || 1),
+            Math.max(0.001, Number(scale[2]) || 1),
+          );
+        } else if (profile === 'overdrive') {
           y += Math.sin(t * 20 + phase) * intensity * 0.22 + intensity * 0.16;
           x += Math.cos(t * 16 + phase) * intensity * 0.05;
           z += Math.sin(t * 14 + phase) * intensity * 0.05;

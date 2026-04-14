@@ -3,47 +3,46 @@ import React, { useMemo, useState } from 'react';
 const STEPS = [
   {
     id: 'quickstart',
-    title: 'Quick Invocation',
+    title: 'New Quickstart',
     bullets: [
       'Pick a card from the left library.',
-      'Each card starts with one Main Piece actor so you can block a sequence instantly.',
-      'Use Move, Rotate, and Scale on selected actors; click open ground to clear selection.',
-      'If an actor has no moment yet, moving it auto-creates the first moment at the current time.',
-      'Layer Aether particles, Sigil overlays, and Chime audio at matching times.',
-      'Preview in place, then export for backup or sharing.',
+      'Use Piece and Audio tracks for timeline authoring in the new lightweight Studio flow.',
+      'Legacy Game Config gives direct JSON control for camera, phases, sounds, and timing.',
+      'Legacy VFX Values lets you edit effect numbers directly (size, amount, delays, intensity).',
+      'Card Visual Config is available for every card so you can edit/import visual JSON globally.',
+      'Play, retime, and export once the sequence matches the in-game feel.',
     ],
   },
   {
-    id: 'arcana-flow',
-    title: 'Arcana-First Workflow',
+    id: 'events',
+    title: 'Studio Event Catalog',
     bullets: [
-      'Arcana Layers are modular spell channels: Lens, Actor, Aether, Sigil, and Chime.',
-      'Moments define exactly when each layer changes and how it blends.',
-      'Event moments trigger camera focus, highlights, overlays, and combat logs.',
-      'Sigil overlays can be screen-space ritual UI or world-space floating runes.',
-      'Chime layers trigger precise SFX/music beats during your sequence.',
+      'Event track keys use Event Type + Payload JSON and are normalized at runtime.',
+      'Supported families: highlight_*, sound_*, camera_*, overlay_*, vfx_*, and log/combat_log/status_log.',
+      'Use Delay (ms) plus payload values to sync events with camera shots, sounds, and overlays.',
+      'Legacy phase action names are supported, so imported cutscene cards still play correctly.',
     ],
   },
   {
-    id: 'board-logic',
-    title: 'Board Logic and Facing',
+    id: 'legacy-vfx',
+    title: 'Blade and Blood Editing',
     bullets: [
-      'Actor animation applies only to the selected actor layer; add more actor layers for multi-piece choreography.',
-      'Main Piece stays world-space centered for cards that do not target a board square.',
-      'Positive Z is forward by default; use rotation moments to set facing style.',
-      'Non-cutscene cards intentionally disable Lens layers to keep gameplay cards lightweight.',
-      'Use piece type and color as identity, then drive behavior through moments.',
+      'Execution blade and blood values are in Legacy VFX Values under config.vfx.',
+      'Edit fields like bladeDuration, bloodExplosionDelay, bloodParticles, and destructionIntensity.',
+      'Apply VFX Values to update the selected card and keep it in sync with cutscene timing.',
+      'Use Apply Legacy Config when you need to change whole phase/action timing blocks.',
+      'The same VFX edit flow works for all cutscene cards that expose config.vfx fields.',
     ],
   },
   {
-    id: 'example',
-    title: 'Example: Antidote Heal Jump',
+    id: 'all-cards-visuals',
+    title: 'Visuals For Every Card',
     bullets: [
-      'Actor layer: moments at 0ms (rest), 220ms (rise), 450ms (land).',
-      'Aether layer: burst on at 220ms, gentle glow off by 520ms.',
-      'Sigil layer: text "Purified" fades in at 250ms and out at 900ms.',
-      'Chime layer: play arcana:heal at 200ms, then ui:success at 470ms.',
-      'Use easeOutCubic going up and easeInCubic coming down.',
+      'Card Visual Config is imported from the selected card definition visual object.',
+      'You can edit booleans and any additional visual metadata as raw JSON.',
+      'Apply Visual Config stores per-card overrides inside Studio card metadata.',
+      'Reset Visual Draft restores the current card visual source object.',
+      'This editor is available for every card, not only cutscene cards.',
     ],
   },
   {
@@ -53,17 +52,20 @@ const STEPS = [
       'Space toggles preview play and pause.',
       'Drag moment diamonds to retime beats quickly.',
       'Use Loop Playback for quick polish passes.',
-      'Use particle compatibility warnings to avoid runtime-heavy settings.',
-      'Cards without cutscenes skip Lens moments by design.',
+      'Use Event Payload JSON to line up camera, overlay, and VFX action timing.',
+      'Validate by running gameplay and checking event alignment against card outcome timing.',
       'Export all cards as one package when balancing is complete.',
     ],
   },
 ];
 
-export function ArcanaStudioTutorial({ onClose }) {
+export function ArcanaStudioTutorial({ onClose, eventTypes = [] }) {
   const [active, setActive] = useState(STEPS[0].id);
   const section = useMemo(() => STEPS.find((x) => x.id === active) || STEPS[0], [active]);
   const currentIndex = Math.max(0, STEPS.findIndex((x) => x.id === section.id));
+  const normalizedEventTypes = useMemo(() => {
+    return [...new Set((eventTypes || []).map((entry) => String(entry || '').trim()).filter(Boolean))].sort();
+  }, [eventTypes]);
 
   return (
     <div className="tutorial-overlay">
@@ -92,6 +94,16 @@ export function ArcanaStudioTutorial({ onClose }) {
             <ul>
               {section.bullets.map((line) => <li key={line}>{line}</li>)}
             </ul>
+            {section.id === 'events' ? (
+              <>
+                <div className="tutorial-progress" style={{ marginTop: 12 }}>All Event Types In This Build ({normalizedEventTypes.length})</div>
+                <div className="tutorial-event-grid">
+                  {normalizedEventTypes.map((eventType) => (
+                    <span key={eventType} className="tutorial-event-chip">{eventType}</span>
+                  ))}
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
       </div>
