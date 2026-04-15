@@ -3,7 +3,7 @@ export const STUDIO_CARD_OVERRIDE = {
   "version": 1,
   "id": "shield_pawn",
   "name": "Shield Pawn",
-  "durationMs": 4000,
+  "durationMs": 750,
   "settings": {
     "autoKey": true,
     "fps": 60,
@@ -23,7 +23,7 @@ export const STUDIO_CARD_OVERRIDE = {
         "id": "obj_hggrnt0x",
         "name": "Main Piece",
         "type": "piece",
-        "pieceSquare": "e4",
+        "pieceSquare": "center",
         "previewPlayAnimation": false,
         "attach": {
           "mode": "follow",
@@ -176,7 +176,7 @@ export const STUDIO_CARD_OVERRIDE = {
   "meta": {
     "source": "arcana-studio",
     "createdAt": 1775802796896,
-    "updatedAt": 1776207546932,
+    "updatedAt": 1776283510623,
     "usedPieces": [],
     "isCutscene": false,
     "canAnimatePiece": true,

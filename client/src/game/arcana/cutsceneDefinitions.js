@@ -713,7 +713,7 @@ const BASE_CUTSCENE_CONFIGS = {
 };
 
 function normalizeRuntimeCardId(cardId = '') {
-  if (cardId === 'arcane_cycle') return 'filtered_cycle';
+  if (cardId === 'arcane_cycle' || cardId === 'filtered_cycle') return 'filtered_cycle';
   return cardId;
 }
 

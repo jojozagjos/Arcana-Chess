@@ -1287,6 +1287,14 @@ export class GameManager {
       throw new Error('Not your turn');
     }
 
+    const mindControlledEntry = (gameState.activeEffects?.mindControlled || []).find((entry) => {
+      const controller = entry?.controller || entry?.controlledBy;
+      return controller === moverColor;
+    }) || null;
+    if (mindControlledEntry && move?.from !== mindControlledEntry.square) {
+      throw new Error('Mind Control: you must move the controlled piece first');
+    }
+
     // Work with verbose moves so we can inspect captures and types
     const legalMoves = chess.moves({ verbose: true });
     let candidate = legalMoves.find((m) => {
@@ -1303,12 +1311,17 @@ export class GameManager {
       const mindControlled = gameState.activeEffects?.mindControlled || [];
       const controlEntry = mindControlled.find(c => c.square === move.from);
       
-      if (pieceAtFrom && controlEntry && controlEntry.controller === moverColor) {
+      const controlOwner = controlEntry?.controller || controlEntry?.controlledBy;
+      if (pieceAtFrom && controlEntry && controlOwner === moverColor) {
         // This IS an enemy piece being mind-controlled by current player
         // Validate it's a legal move for that piece
-        const tempChess = new Chess(chess.fen());
+        const tempChess = new Chess();
+        safeLoadFen(tempChess, chess.fen());
         // Temporarily pretend the piece belongs to the controlling player
         const piece = tempChess.get(move.from);
+        if (!piece) {
+          throw new Error('Controlled piece is no longer available');
+        }
         const originalColor = piece.color;
         tempChess.remove(move.from);
         tempChess.put({ type: piece.type, color: moverColor }, move.from);
@@ -1369,8 +1382,10 @@ export class GameManager {
     if (candidate.piece === 'p') {
       const fromRank = parseInt(candidate.from[1], 10);
       const toRank = parseInt(candidate.to[1], 10);
-      const isTwoSquareAdvance = Math.abs(toRank - fromRank) === 2;
-      if (isTwoSquareAdvance && hasPawnLeftStartingSquareBefore(gameState, candidate.from, moverColor)) {
+      const isForwardTwoSquareAdvance = candidate.from[0] === candidate.to[0]
+        && Math.abs(toRank - fromRank) === 2;
+
+      if (isForwardTwoSquareAdvance && hasPawnLeftStartingSquareBefore(gameState, candidate.from, moverColor)) {
         throw new Error('Pawn can move two squares only on its first move');
       }
     }
@@ -1694,6 +1709,7 @@ export class GameManager {
       if (controlledEntry) {
         // Track the new position so it reverts at the correct square
         controlledEntry.square = result.to;
+        gameState.activeEffects.mindControlled = gameState.activeEffects.mindControlled.filter((c) => c !== controlledEntry);
       }
     }
 
@@ -1757,6 +1773,7 @@ export class GameManager {
           this.io.to(protectedOwnerId).emit('squireSupportBounce', {
             from: result.from,
             to: result.to,
+            attackerColor: moverColor,
           });
         }
       }
@@ -2123,58 +2140,83 @@ export class GameManager {
     gameState.arcanaUsedThisTurn = {};
 
     let outcome = null;
-    if (chess.isCheckmate()) {
-      const checkmatedColor = chess.turn(); // The player who is checkmated ('w' or 'b')
-      
-      // Check if Divine Intervention can save the checkmated player
-      if (gameState.activeEffects.divineIntervention[checkmatedColor]) {
-        // Divine Intervention triggers: block checkmate and spawn a pawn
-        gameState.activeEffects.divineIntervention[checkmatedColor] = false;
-        
-        // Find an empty square on the second rank (pawn starting rank) to spawn a pawn.
-        // Pawns on back rank (1/8) are immovable; use rank 2 for white, rank 7 for black.
-        const pawnSpawnRank = checkmatedColor === 'w' ? 2 : 7;
-        const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-        let spawnSquare = null;
-        for (const file of files) {
-          const square = `${file}${pawnSpawnRank}`;
-          if (!chess.get(square)) {
-            spawnSquare = square;
-            break;
-          }
-        }
-        
-        // Spawn the pawn if an empty square was found
-        if (spawnSquare) {
-          chess.put({ type: 'p', color: checkmatedColor }, spawnSquare);
-          
-          // Emit divine intervention event to clients
-          for (const pid of gameState.playerIds) {
-            if (!pid.startsWith('AI-')) {
-              this.io.to(pid).emit('divineIntervention', {
-                savedPlayer: checkmatedColor,
-                pawnSquare: spawnSquare
-              });
-            }
-          }
-          
-          // Checkmate is blocked - game continues
-          outcome = null;
-        } else {
-          // No empty square available - Divine Intervention fails
-          gameState.status = 'finished';
-          const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
-          const winnerSocketId = findPlayerIdByColor(gameState.playerColors, winnerColor);
-          outcome = { type: 'checkmate', winnerSocketId };
-        }
-      } else {
-        // No Divine Intervention - checkmate occurs
-        gameState.status = 'finished';
-        const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
-        const winnerSocketId = findPlayerIdByColor(gameState.playerColors, winnerColor);
-        outcome = { type: 'checkmate', winnerSocketId };
+    const activeColor = chess.turn();
+    const maybeTriggerDivineIntervention = () => {
+      const checkedColor = activeColor;
+      const divineState = gameState.activeEffects.divineIntervention?.[checkedColor];
+      const divineActive = divineState === true || (typeof divineState === 'object' && divineState?.active);
+      if (!divineActive) return false;
+
+      const kingSquare = findKing(chess, checkedColor);
+      if (!kingSquare) return false;
+
+      const attackerColor = checkedColor === 'w' ? 'b' : 'w';
+      const attackers = getMovesForColor(chess, attackerColor).filter((move) => move.to === kingSquare && move.from);
+      const lineAttacker = attackers.find((move) => {
+        const fromFile = move.from.charCodeAt(0) - 97;
+        const fromRank = parseInt(move.from[1], 10);
+        const kingFile = kingSquare.charCodeAt(0) - 97;
+        const kingRank = parseInt(kingSquare[1], 10);
+        const fileDelta = Math.sign(kingFile - fromFile);
+        const rankDelta = Math.sign(kingRank - fromRank);
+        const isSameFile = fromFile === kingFile;
+        const isSameRank = fromRank === kingRank;
+        const isDiagonal = Math.abs(kingFile - fromFile) === Math.abs(kingRank - fromRank);
+        return isSameFile || isSameRank || isDiagonal;
+      });
+      if (!lineAttacker) return false;
+
+      const fromFile = lineAttacker.from.charCodeAt(0) - 97;
+      const fromRank = parseInt(lineAttacker.from[1], 10);
+      const kingFile = kingSquare.charCodeAt(0) - 97;
+      const kingRank = parseInt(kingSquare[1], 10);
+      const fileStep = Math.sign(kingFile - fromFile);
+      const rankStep = Math.sign(kingRank - fromRank);
+      if (fileStep === 0 && rankStep === 0) return false;
+
+      const candidateSquares = [];
+      let file = fromFile + fileStep;
+      let rank = fromRank + rankStep;
+      while (file !== kingFile || rank !== kingRank) {
+        candidateSquares.push(`${String.fromCharCode(97 + file)}${rank}`);
+        file += fileStep;
+        rank += rankStep;
       }
-    } else if (chess.isStalemate() || chess.isDraw()) {
+
+      const spawnSquare = candidateSquares.find((square) => !chess.get(square));
+      if (!spawnSquare) return false;
+
+      gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
+      chess.put({ type: 'p', color: checkedColor }, spawnSquare);
+
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          this.io.to(pid).emit('divineIntervention', {
+            savedPlayer: checkedColor,
+            pawnSquare: spawnSquare,
+          });
+        }
+      }
+
+      return true;
+    };
+
+    const initialInCheck = chess.isCheck();
+    if (initialInCheck) {
+      maybeTriggerDivineIntervention();
+    }
+
+    const noLegalMoves = (chess.moves({ verbose: true }) || []).length === 0;
+    const inCheck = chess.isCheck();
+    if (noLegalMoves && inCheck) {
+      gameState.status = 'finished';
+      const winnerColor = chess.turn() === 'w' ? 'b' : 'w';
+      const winnerSocketId = findPlayerIdByColor(gameState.playerColors, winnerColor);
+      outcome = { type: 'checkmate', winnerSocketId };
+    } else if (noLegalMoves && !inCheck) {
+      gameState.status = 'finished';
+      outcome = { type: 'draw' };
+    } else if (chess.isDraw()) {
       gameState.status = 'finished';
       outcome = { type: 'draw' };
     }
@@ -2430,7 +2472,7 @@ export class GameManager {
           'quiet_thought': 2.5,      // Draw helper
           'en_passant_master': 3,    // En passant power
           'sacrifice': 2.5,          // Risky move
-          'arcane_cycle': 3,         // Arcana cycling
+          'filtered_cycle': 3,       // Arcana cycling
           'royal_swap': 4,           // King position swap
         };
 
@@ -2725,9 +2767,11 @@ export class GameManager {
     // Decrement effects after AI move
     this.decrementEffects(gameState);
 
-    if (chess.isCheckmate()) {
+    const aiNoLegalMoves = (chess.moves({ verbose: true }) || []).length === 0;
+    const aiInCheck = chess.isCheck();
+    if (aiNoLegalMoves && aiInCheck) {
       gameState.status = 'finished';
-    } else if (chess.isStalemate() || chess.isDraw()) {
+    } else if ((aiNoLegalMoves && !aiInCheck) || chess.isDraw()) {
       gameState.status = 'finished';
     }
   }
@@ -2742,7 +2786,7 @@ export class GameManager {
       'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
       'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
       'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning', 'necromancy',
-      'astral_rebirth', 'arcane_cycle', 'quiet_thought', 'en_passant_master',
+      'astral_rebirth', 'filtered_cycle', 'quiet_thought', 'en_passant_master',
       'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress'
     ];
     

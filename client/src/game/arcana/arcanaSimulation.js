@@ -976,11 +976,11 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         }
         break;
 
-      case 'arcane_cycle':
+      case 'filtered_cycle':
         result.success = true;
-        result.message = 'Arcane Cycle: Discard a card and draw a new one';
-        result.visualEffect = 'arcane_cycle';
-        result.soundEffect = 'arcana:arcane_cycle';
+        result.message = 'Filtered Cycle: Discard a card and draw a new one';
+        result.visualEffect = 'filtered_cycle';
+        result.soundEffect = 'arcana:filtered_cycle';
         break;
 
       case 'peek_card':

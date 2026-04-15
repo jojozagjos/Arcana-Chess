@@ -7,6 +7,7 @@ import { soundManager } from '../game/soundManager.js';
 import { effectResourcePool } from '../game/effectResourcePool.js';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
+import { AscensionScreenFx } from './AscensionScreenFx.jsx';
 import { ReplayOverlay } from './ReplayOverlay.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
@@ -137,6 +138,11 @@ function safeLoadFen(chess, fen) {
   }
 }
 
+function getControlledPieceEntry(gameState, square, controllerColor) {
+  const entries = gameState?.activeEffects?.mindControlled || [];
+  return entries.find((entry) => entry?.square === square && (entry?.controller || entry?.controlledBy) === controllerColor) || null;
+}
+
 export function GameScene({ gameState, initialReplayPayload, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const MAX_STUDIO_RUNTIME_MS = 14000;
   const CUTSCENE_BOARD_LOCK_CARDS = new Set(['execution', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive']);
@@ -258,6 +264,22 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     return c;
   }, [gameState?.fen]);
 
+  const mySocketId = socket.id;
+  const myColor = useMemo(() => {
+    if (!gameState?.playerColors || !mySocketId) return 'white';
+    return gameState.playerColors[mySocketId] || 'white';
+  }, [gameState?.playerColors, mySocketId]);
+
+  // Helper to convert color name to chess.js color code
+  const toColorCode = (color) => color === 'white' ? 'w' : 'b';
+  const myColorCode = toColorCode(myColor);
+
+  const mindControlledEntry = useMemo(() => {
+    const entries = gameState?.activeEffects?.mindControlled || [];
+    const currentColorCode = myColor === 'white' ? 'w' : 'b';
+    return entries.find((entry) => (entry?.controller || entry?.controlledBy) === currentColorCode) || null;
+  }, [gameState?.activeEffects?.mindControlled, myColor]);
+
   // Track move keys for which we've already played a sound (de-dup across async paths)
   const playedMoveKeysRef = useRef(new Set());
   const recentMoveSoundKeysRef = useRef(new Map());
@@ -279,7 +301,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const lastActiveVisualKeyRef = useRef(null);
   const lastSocketArcanaRef = useRef({ key: null, at: 0 });
   const firedRuntimeVfxRef = useRef(new Map());
-  const USE_CARD_ANIM_MS = 2500;
+  const cardAnimationLockRef = useRef(false);
   const OPPONENT_DRAW_REVEAL_MS = 1800;
   const FILTERED_CYCLE_CATEGORY_META = {
     offense: { label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
@@ -362,16 +384,6 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     lastAscensionFxAtRef.current = now;
     setAscensionFxToken((v) => v + 1);
   }, []);
-
-  const mySocketId = socket.id;
-  const myColor = useMemo(() => {
-    if (!gameState?.playerColors || !mySocketId) return 'white';
-    return gameState.playerColors[mySocketId] || 'white';
-  }, [gameState?.playerColors, mySocketId]);
-
-  // Helper to convert color name to chess.js color code
-  const toColorCode = (color) => color === 'white' ? 'w' : 'b';
-  const myColorCode = toColorCode(myColor);
 
   // Initial camera position: place the camera on the same side as the player's color.
   // White views from positive Z (rank 1 side), Black views from negative Z (rank 8 side).
@@ -1182,7 +1194,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (lastArcanaEvent.at && lastProcessedArcanaAtRef.current === lastArcanaEvent.at) return;
 
     // If a card animation is playing, queue the arcana event to be processed after animation finishes
-    if (isCardAnimationPlaying) {
+      if (isCardAnimationPlaying || cardAnimationLockRef.current) {
       pendingLastArcanaRef.current.push(lastArcanaEvent);
       return;
     }
@@ -1317,22 +1329,9 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       console.log('[CLIENT] Received arcanaUsed event:', data);
       soundManager.play('cardUse');
       appendCombatLog({ type: 'arcana_used', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} used ${data.arcana?.name || data.arcana?.id || 'Arcana'}`, playerId: data.playerId, arcana: data.arcana ? { id: data.arcana.id, name: data.arcana.name, rarity: data.arcana.rarity } : null });
-      const isMyUse = data.playerId === socket?.id;
-
-      // Play the "Use Card" animation immediately.
-      // Real card visuals are owned by arcanaTriggered to avoid duplicate firing.
-      if (isMyUse) {
-        setIsCardAnimationPlaying(true);
-      }
+      cardAnimationLockRef.current = true;
+      setIsCardAnimationPlaying(true);
       setCardReveal({ arcana: data.arcana, playerId: data.playerId, type: 'use', stayUntilClick: false });
-
-      // End the local card-use lock after the reveal animation.
-      const useTimeout = setTimeout(() => {
-        if (isMyUse) {
-          setIsCardAnimationPlaying(false);
-        }
-      }, USE_CARD_ANIM_MS);
-      timeoutsRef.current.push(useTimeout);
     };
 
     const handleAscended = () => {
@@ -1351,7 +1350,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         console.warn('Failed to play arcana trigger sound', e);
       }
 
-      const { arcanaId, params, owner } = payload || {};
+      const rawArcanaId = payload?.arcanaId || '';
+      const arcanaId = rawArcanaId === 'arcane_cycle' ? 'filtered_cycle' : rawArcanaId;
+      const params = payload?.params;
+      const owner = payload?.owner;
       const triggerKey = `${arcanaId || ''}:${params?.targetSquare || params?.square || ''}`;
       lastSocketArcanaRef.current = { key: triggerKey, at: Date.now() };
 
@@ -1434,6 +1436,21 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           setActiveVisualArcana({
             arcanaId: 'time_freeze',
             params: { frozenColor: params?.frozenColor || null },
+          });
+          break;
+        }
+        case 'chaos_theory': {
+          const squares = Array.isArray(params?.shuffledSquares)
+            ? params.shuffledSquares
+            : Array.isArray(params?.highlightSquares)
+              ? params.highlightSquares
+              : [];
+          setActiveVisualArcana({
+            arcanaId: 'chaos_theory',
+            params: {
+              shuffledSquares: squares,
+              square: squares[0] || params?.square || null,
+            },
           });
           break;
         }
@@ -1655,34 +1672,37 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     const handleSquireSupportBounce = (data) => {
       const from = data?.from;
       const to = data?.to;
+      const attackerColor = data?.attackerColor;
       if (!from || !to) return;
 
-      // Phase 1: attacker lunges to capture square.
+      const isAttackerWhite = attackerColor === 'w';
+
+      // Phase 1: attacker lunges to the protected piece.
       setPiecesState((prev) => {
-        const attacker = prev.find((p) => p.square === from);
+        const attacker = prev.find((p) => p.square === from && (attackerColor ? p.isWhite === isAttackerWhite : true));
         if (!attacker) return prev;
         return prev.map((p) => (p.uid === attacker.uid ? { ...p, targetPosition: toWorldPos(to) } : p));
       });
 
       const t1 = setTimeout(() => {
-        // Phase 2: defender bumps the attacker back.
+        // Phase 2: attacker bounces back to the origin square.
         setPiecesState((prev) => {
-          const attacker = prev.find((p) => p.square === from);
-          const defender = prev.find((p) => p.square === to);
-          return prev.map((p) => {
-            if (attacker && p.uid === attacker.uid) return { ...p, targetPosition: toWorldPos(from) };
-            if (defender && p.uid === defender.uid) return { ...p, targetPosition: toWorldPos(from) };
-            return p;
-          });
+          const attacker = prev.find((p) => p.square === from && (attackerColor ? p.isWhite === isAttackerWhite : true));
+          if (!attacker) return prev;
+          return prev.map((p) => (p.uid === attacker.uid ? { ...p, targetPosition: toWorldPos(from) } : p));
         });
       }, 260);
 
       const t2 = setTimeout(() => {
-        // Phase 3: defender returns to original square.
+        // Phase 3: settle both pieces back on their board squares.
         setPiecesState((prev) => {
+          const attacker = prev.find((p) => p.square === from && (attackerColor ? p.isWhite === isAttackerWhite : true));
           const defender = prev.find((p) => p.square === to);
-          if (!defender) return prev;
-          return prev.map((p) => (p.uid === defender.uid ? { ...p, targetPosition: toWorldPos(to) } : p));
+          return prev.map((p) => {
+            if (attacker && p.uid === attacker.uid) return { ...p, targetPosition: toWorldPos(from) };
+            if (defender && p.uid === defender.uid) return { ...p, targetPosition: toWorldPos(to) };
+            return p;
+          });
         });
       }, 520);
 
@@ -1814,7 +1834,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (!selectedSquare) {
       const piece = chess.get(square);
       if (!piece) return;
-      if (piece.color !== myColorCode) return;
+      const controlledEntry = getControlledPieceEntry(gameState, square, myColorCode);
+      if (mindControlledEntry && square !== mindControlledEntry.square) {
+        setPendingMoveError('Mind Control: you must move the controlled piece first.');
+        return;
+      }
+      if (piece.color !== myColorCode && !controlledEntry) return;
 
       setSelectedSquare(square);
       const moves = getArcanaEnhancedMoves(chess, square, gameState, myColor);
@@ -1898,7 +1923,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       );
     } else {
       const piece = chess.get(square);
-      if (piece && piece.color === myColorCode) {
+      const controlledEntry = getControlledPieceEntry(gameState, square, myColorCode);
+      if (mindControlledEntry && square !== mindControlledEntry.square) {
+        setSelectedSquare(null);
+        setLegalTargets([]);
+        setPendingMoveError('Mind Control: move the controlled piece first.');
+        return;
+      }
+      if (piece && (piece.color === myColorCode || controlledEntry)) {
         setSelectedSquare(square);
         const moves = getArcanaEnhancedMoves(chess, square, gameState, myColor);
         setLegalTargets(moves.map((m) => m.to));
@@ -1970,6 +2002,21 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   };
 
   const lastMove = gameState?.lastMove || null;
+  const displayLastMove = useMemo(() => {
+    if (!lastMove) return null;
+
+    const royalSwap = gameState?.activeEffects?.royalSwap;
+    if (!royalSwap || typeof royalSwap !== 'object') return lastMove;
+
+    const isRoyalSwapReturnMove = Object.values(royalSwap).some((swap) => (
+      swap
+      && typeof swap === 'object'
+      && swap.piece1 === lastMove.to
+      && swap.piece2 === lastMove.from
+    ));
+
+    return isRoyalSwapReturnMove ? null : lastMove;
+  }, [lastMove, gameState?.activeEffects?.royalSwap]);
 
   const cinematicMotionBySquare = useMemo(() => {
     if (!activeVisualArcana?.arcanaId) return new Map();
@@ -2328,6 +2375,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         </div>
       )}
       <Canvas 
+        key={`board-${myColor}`}
         camera={{ position: cameraPosition, fov: 40 }} 
         shadows
         gl={{ 
@@ -2393,7 +2441,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         <Board
           selectedSquare={selectedSquare}
           legalTargets={settings.gameplay.showLegalMoves ? legalTargets : []}
-          lastMove={settings.gameplay.highlightLastMove ? lastMove : null}
+          lastMove={settings.gameplay.highlightLastMove ? displayLastMove : null}
           pawnShields={gameState?.pawnShields}
           blockedEffectSquares={blockedEffectSquares}
           onTileClick={handleTileClick}
@@ -2469,6 +2517,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         <group>
           {piecesState.map((p) => {
             const studioMotion = studioPieceMotions[p.square] || null;
+            const controlledByMe = mindControlledEntry?.square === p.square;
             return (
               <ChessPiece
                 key={p.uid}
@@ -2477,6 +2526,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                 targetPosition={p.targetPosition}
                 square={p.square}
                 isMirrorDuplicate={mirrorImageSquares.has(p.square)}
+                accentColor={controlledByMe ? '#b48ead' : null}
                 cutsceneMotion={studioMotion || cinematicMotionBySquare.get(p.square) || null}
                 onClickSquare={(sq) => {
                   const fileIndex = 'abcdefgh'.indexOf(sq[0]);
@@ -2694,7 +2744,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                 return;
               }
 
-              if (arcanaId === 'arcane_cycle') {
+              if (arcanaId === 'filtered_cycle') {
                 setFilteredCycleDialog({ arcanaId });
                 setSelectedArcanaId(null);
                 setTargetingMode(null);
@@ -3181,6 +3231,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       {/* activeVisualArcana overlay removed - CardRevealAnimation handles all card displays */}
 
+      {Boolean(
+        activeVisualArcana?.arcanaId === 'time_freeze'
+        || gameState?.activeEffects?.timeFrozen?.w
+        || gameState?.activeEffects?.timeFrozen?.b
+        || gameState?.activeEffects?.timeFreezeArcanaLock?.w
+        || gameState?.activeEffects?.timeFreezeArcanaLock?.b
+      ) && (
+        <div style={styles.timeFreezeMonochromeOverlay} />
+      )}
+
       {cardReveal && !showMenu && !isReplayMode && (
         <CardRevealAnimation
           arcana={cardReveal.arcana}
@@ -3198,16 +3258,17 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             } catch (e) {}
             setCardReveal(null);
             // Unlock interactions after draw/use animation ends
+            cardAnimationLockRef.current = false;
             setIsCardAnimationPlaying(false);
           }}
         />
       )}
 
       {/* Fog of War effect particles - persist while fog is active */}
-      {(activeFogEffects.w || activeFogEffects.b) && (
+      {activeFogEffects?.[myColorCode] && (
         <Suspense fallback={null}>
           <ParticleOverlay
-            key={`fog-${activeFogEffects.w ? 'w' : ''}${activeFogEffects.b ? 'b' : ''}`}
+            key={`fog-${myColorCode}`}
             type="fog"
             rarity="rare"
             active={true}
@@ -3414,101 +3475,6 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, blockedEff
 }
 
 
-function AscensionScreenFx({ token }) {
-  const [state, setState] = useState({ visible: false, progress: 1 });
-
-  useEffect(() => {
-    if (!token) return;
-
-    const durationMs = 2200;
-    let rafId = null;
-    let hideTimer = null;
-    const start = performance.now();
-    setState({ visible: true, progress: 0 });
-
-    const animate = (now) => {
-      const progress = Math.min((now - start) / durationMs, 1);
-      setState({ visible: true, progress });
-      if (progress < 1) {
-        rafId = requestAnimationFrame(animate);
-      } else {
-        hideTimer = setTimeout(() => {
-          setState({ visible: false, progress: 1 });
-        }, 120);
-      }
-    };
-
-    rafId = requestAnimationFrame(animate);
-
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      if (hideTimer) clearTimeout(hideTimer);
-    };
-  }, [token]);
-
-  if (!state.visible) return null;
-
-  const p = state.progress;
-  const burst = Math.sin(Math.min(1, p * 1.25) * Math.PI);
-  const veilOpacity = Math.max(0, (1 - p) * 0.9);
-  const ringScale = 0.5 + p * 1.9;
-  const ringOpacity = Math.max(0, (1 - p) * 0.65);
-  const titleOpacity = Math.max(0, Math.sin(Math.min(1, p * 1.2) * Math.PI));
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        zIndex: 1400,
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: `radial-gradient(circle at 50% 50%, rgba(136,192,208,${0.36 * burst}) 0%, rgba(111,66,193,${0.22 * burst}) 32%, rgba(6,12,24,${veilOpacity}) 75%)`,
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: '50%',
-          transform: `translate(-50%, -50%) scale(${ringScale})`,
-          width: '42vmin',
-          height: '42vmin',
-          borderRadius: '999px',
-          border: `2px solid rgba(168,230,255,${ringOpacity})`,
-          boxShadow: `0 0 70px rgba(122, 201, 255, ${ringOpacity})`,
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: '50%',
-          transform: `translate(-50%, -52%) scale(${1 + burst * 0.08})`,
-          fontSize: 'clamp(2rem, 7vw, 5.4rem)',
-          letterSpacing: '0.14em',
-          fontWeight: 800,
-          color: 'rgba(226,245,255,0.98)',
-          textShadow: '0 0 24px rgba(136,192,208,0.88), 0 0 52px rgba(94,155,255,0.55)',
-          opacity: titleOpacity,
-          textTransform: 'uppercase',
-          textAlign: 'center',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        Ascension!
-      </div>
-    </div>
-  );
-}
-
-
 function AscensionRing() {
   const segments = 32;
   const radius = 4.2;
@@ -3556,7 +3522,12 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       }
       groups.get(card.id).indices.push(index);
     });
-    return Array.from(groups.values());
+    const rarityOrder = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4, '???': 5 };
+    return Array.from(groups.values()).sort((a, b) => {
+      const rarityDiff = (rarityOrder[a.card?.rarity] ?? 999) - (rarityOrder[b.card?.rarity] ?? 999);
+      if (rarityDiff !== 0) return rarityDiff;
+      return String(a.card?.name || a.card?.id || '').localeCompare(String(b.card?.name || b.card?.id || ''));
+    });
   }, [availableArcana]);
   const getTargetDescription = (targetType) => {
     switch(targetType) {
@@ -4722,6 +4693,15 @@ const styles = {
   arcanaText: {
     color: '#eceff4',
   },
+  timeFreezeMonochromeOverlay: {
+    position: 'absolute',
+    inset: 0,
+    pointerEvents: 'none',
+    zIndex: 11,
+    backdropFilter: 'grayscale(1) contrast(1.05) saturate(0.35)',
+    background: 'rgba(210, 222, 238, 0.08)',
+    mixBlendMode: 'screen',
+  },
   arcanaBottomPanel: {
     position: 'absolute',
     bottom: 12,
@@ -4802,10 +4782,10 @@ const styles = {
   arcanaCardRow: {
     display: 'flex',
     flexWrap: 'nowrap',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
     gap: 8,
     paddingBottom: 4,
-    alignItems: 'flex-start',
+    alignItems: 'center',
     overflowX: 'auto',
     overflowY: 'hidden',
     maxHeight: '9rem',

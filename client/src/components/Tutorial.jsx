@@ -4,8 +4,12 @@ import { OrbitControls } from '@react-three/drei';
 import { Chess } from 'chess.js';
 import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaCard } from './ArcanaCard.jsx';
+import { AscensionScreenFx } from './AscensionScreenFx.jsx';
 import { soundManager } from '../game/soundManager.js';
 import { ARCANA_DEFINITIONS } from '../game/arcanaDefinitions.js';
+import { getCutsceneCard } from '../game/arcana/cutsceneDefinitions.js';
+import { ArcanaStudioRuntimeHost } from '../game/arcana/studio/ArcanaStudioRuntimeHost.jsx';
+import { createArcanaStudioRuntimeSession, scheduleArcanaStudioAudio, scheduleArcanaStudioEvents, normalizeArcanaStudioEventActions } from '../game/arcana/studio/arcanaStudioRuntime.js';
 
 // Load particle overlay for 2D effects
 const ParticleOverlay = React.lazy(() =>
@@ -172,11 +176,12 @@ const TUTORIAL_STEPS = [
     id: 12,
     title: 'Winning the Game',
     description:
-      'The goal is checkmate: trap the enemy king so it cannot escape. Check means the king is under attack. Checkmate means check with no legal escape.',
-    instruction: 'Move the queen from d1 to h5 to put the black king in check!',
-    setupFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1',
-    highlightSquares: ['d1', 'h5'],
-    requireMove: { from: 'd1', to: 'h5' },
+      'The goal is checkmate: trap the enemy king so it cannot escape. In this position, you can deliver a real checkmate in one move.',
+    instruction: 'Deliver checkmate: move the queen from h5 to f7.',
+    setupFen: 'r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1KBNR w KQkq - 0 4',
+    highlightSquares: ['h5', 'f7'],
+    requireMove: { from: 'h5', to: 'f7', capture: true },
+    requireCheckmate: true,
     resetPosition: true,
     showCards: false,
   },
@@ -207,11 +212,21 @@ export function Tutorial({ onBack }) {
   const [isCardAnimationPlaying, setIsCardAnimationPlaying] = useState(false);
   const [cardReveal, setCardReveal] = useState(null);
   const [ascensionFxToken, setAscensionFxToken] = useState(0);
+  const [studioRuntimeSession, setStudioRuntimeSession] = useState(null);
+  const [studioPieceMotions, setStudioPieceMotions] = useState({});
+  const [pendingStudioShieldTarget, setPendingStudioShieldTarget] = useState(null);
   const forceResetOnStepRef = useRef(false);
+  const controlsRef = useRef(null);
+  const timeoutsRef = useRef([]);
 
   const step = TUTORIAL_STEPS[currentStep];
 
   const [localFen, setLocalFen] = useState(step.setupFen || null);
+
+  const clearManagedTimeouts = () => {
+    timeoutsRef.current.forEach((timeoutId) => clearTimeout(timeoutId));
+    timeoutsRef.current = [];
+  };
 
   // Helper: parse a FEN string into an array of piece objects
   const parseFenPieces = (fen) => {
@@ -301,6 +316,10 @@ export function Tutorial({ onBack }) {
     setDemoCardAvailable(false);
     setIsCardAnimationPlaying(false);
     setPawnShields({ w: null, b: null });
+    clearManagedTimeouts();
+    setStudioRuntimeSession(null);
+    setStudioPieceMotions({});
+    setPendingStudioShieldTarget(null);
 
     // Trigger ascension visual only at the ascension step
     if (step.triggerAscension) {
@@ -316,6 +335,12 @@ export function Tutorial({ onBack }) {
       setHasAscended(false);
     }
   }, [step.id, step.setupFen]);
+
+  useEffect(() => {
+    return () => {
+      clearManagedTimeouts();
+    };
+  }, []);
 
   const chess = useMemo(() => {
     if (!localFen) return null;
@@ -387,6 +412,59 @@ export function Tutorial({ onBack }) {
     return [file - 3.5, 0.15, rank - 3.5];
   };
 
+  const playTutorialStudioShieldPawn = (targetSquare) => {
+    const studioCard = getCutsceneCard('shield_pawn');
+    const hasStudioTimeline = Boolean(studioCard && (
+      (studioCard.tracks?.camera || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.objects || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.events || []).some((track) => (track?.keys || []).length > 0)
+      || (studioCard.tracks?.sounds || []).some((track) => (track?.keys || []).some((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0))
+    ));
+
+    if (!hasStudioTimeline) return false;
+
+    clearManagedTimeouts();
+    const runtimeParams = {
+      fen: localFen,
+      targetSquare,
+      square: targetSquare,
+      cameraAnchorSquare: targetSquare,
+      cameraAnchorMode: 'piece',
+      actorColor: 'w',
+      ownerColor: 'w',
+      cardId: 'shield_pawn',
+    };
+
+    const session = createArcanaStudioRuntimeSession(studioCard, runtimeParams);
+    setPendingStudioShieldTarget(targetSquare);
+    setStudioRuntimeSession(session);
+    setIsCardAnimationPlaying(true);
+
+    scheduleArcanaStudioAudio(studioCard, {
+      soundManager,
+      registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
+    });
+
+    scheduleArcanaStudioEvents(studioCard, {
+      eventParams: runtimeParams,
+      registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
+      onEvent: (eventKey) => {
+        const actions = normalizeArcanaStudioEventActions(eventKey);
+        actions.forEach((action) => {
+          if (action.kind === 'sound' && action.soundId) {
+            soundManager.play(action.soundId, {
+              volume: action.volume,
+              pitch: action.pitch,
+              loop: action.loop,
+            });
+          }
+        });
+      },
+    });
+
+    return true;
+  };
+
   // Handle card click for demo
   const handleCardClick = (card) => {
     if (!card) return;
@@ -419,6 +497,7 @@ export function Tutorial({ onBack }) {
 
   const handleTileClick = (square) => {
     if (!chess) return;
+    if (studioRuntimeSession) return;
 
     const isSpecialEnPassantStep = step.specialMove === 'en-passant';
 
@@ -426,14 +505,24 @@ export function Tutorial({ onBack }) {
     if (selectedCard && cardTargets.includes(square)) {
       // Card target selected!
       if (step.cardTargeting && step.demoCard === selectedCard.id) {
-        // Trigger use animation for the card
-        try { soundManager.play('arcana:shield_pawn'); } catch {}
-        setCardReveal({ arcana: selectedCard, type: 'use', targetSquare: square });
-        setIsCardAnimationPlaying(true);
-        
-        // Shield Pawn protects the pawn itself
-        if (selectedCard.id === 'shield_pawn') {
+        const startedStudioRuntime = selectedCard.id === 'shield_pawn' && playTutorialStudioShieldPawn(square);
+
+        if (startedStudioRuntime && selectedCard.id === 'shield_pawn') {
+          // Apply the shield indicator immediately so the protected pawn is visible
+          // as soon as the card is used, matching in-game expectations.
           setPawnShields({ w: { square }, b: null });
+        }
+
+        if (!startedStudioRuntime) {
+          // Fallback for cards without Studio timeline
+          try { soundManager.play('arcana:shield_pawn'); } catch {}
+          setCardReveal({ arcana: selectedCard, type: 'use', targetSquare: square });
+          setIsCardAnimationPlaying(true);
+
+          // Shield Pawn protects the pawn itself
+          if (selectedCard.id === 'shield_pawn') {
+            setPawnShields({ w: { square }, b: null });
+          }
         }
       } else {
         setFeedback(`✓ ${selectedCard.name} effect demonstrated on ${square}!`);
@@ -529,6 +618,28 @@ export function Tutorial({ onBack }) {
           const isCastleMove = Boolean(move.flags && (move.flags.includes('k') || move.flags.includes('q')));
           const isEnPassantMove = Boolean(move.flags && move.flags.includes('e'));
 
+          if (step.requireCheck || step.requireCheckmate) {
+            const probe = new Chess();
+            try {
+              probe.load(localFen);
+              probe.move(move);
+              const inCheck = typeof probe.isCheck === 'function' ? probe.isCheck() : probe.inCheck();
+
+              if (step.requireCheckmate) {
+                const isMate = typeof probe.isCheckmate === 'function' ? probe.isCheckmate() : probe.inCheckmate();
+                if (!isMate) {
+                  setFeedback('That move is legal, but it is not checkmate. Try the instructed mating move.');
+                  return;
+                }
+              } else if (!inCheck) {
+                setFeedback('That move is legal, but it does not put the king in check. Try the instructed move.');
+                return;
+              }
+            } catch {
+              // If probe fails unexpectedly, continue with normal handling.
+            }
+          }
+
           setPiecesState((prev) => {
             let nextPieces = prev;
 
@@ -615,13 +726,8 @@ export function Tutorial({ onBack }) {
     }
   };
 
-  const canProceed = (
-    !step.requireMove ||
-    feedback.includes('✓') ||
-    (step.demoCard && cardActivated) ||
-    (step.requireDraw && cardActivated) ||
-    (step.cardTargeting && cardActivated)
-  );
+  const requiresCompletion = Boolean(step.requireMove || step.requireDraw || step.cardTargeting);
+  const canProceed = !requiresCompletion || feedback.includes('✓') || (step.requireDraw && cardActivated) || (step.cardTargeting && cardActivated);
 
   const isDrawOnlyStep = step.requireDraw && !step.cardTargeting;
   const isTargetingStep = Boolean(step.cardTargeting);
@@ -676,10 +782,29 @@ export function Tutorial({ onBack }) {
                     isWhite={p.isWhite}
                     targetPosition={p.targetPosition}
                     square={p.square}
+                    cutsceneMotion={studioPieceMotions[p.square] || null}
                     onClickSquare={handleTileClick}
                   />
                 ))}
               </group>
+              <ArcanaStudioRuntimeHost
+                session={studioRuntimeSession}
+                controlsRef={controlsRef}
+                myColor="white"
+                runtimePieces={piecesState}
+                onPieceMotionsChange={setStudioPieceMotions}
+                onComplete={() => {
+                  setStudioRuntimeSession(null);
+                  setStudioPieceMotions({});
+                  setIsCardAnimationPlaying(false);
+                  if (pendingStudioShieldTarget) {
+                    setPawnShields({ w: { square: pendingStudioShieldTarget }, b: null });
+                    setCardActivated(true);
+                    setFeedback(`✓ ${DEMO_CARD?.name || 'Shield Pawn'} applied to ${pendingStudioShieldTarget}! This pawn is now protected from capture. Click Next to continue.`);
+                    setPendingStudioShieldTarget(null);
+                  }
+                }}
+              />
               {/* Shield effect visuals */}
               {pawnShields.w?.square && (
                 <React.Suspense fallback={null}>
@@ -694,7 +819,9 @@ export function Tutorial({ onBack }) {
             </>
           )}
           <OrbitControls
+            ref={controlsRef}
             enablePan={false}
+            enabled={!studioRuntimeSession}
             maxPolarAngle={Math.PI / 2.2}
             minDistance={6}
             maxDistance={20}
@@ -1047,100 +1174,6 @@ function TutorialPieces({ fen, onClickSquare }) {
   }
 
   return <group>{pieces}</group>;
-}
-
-function AscensionScreenFx({ token }) {
-  const [state, setState] = useState({ visible: false, progress: 1 });
-
-  useEffect(() => {
-    if (!token) return;
-
-    const durationMs = 2200;
-    let rafId = null;
-    let hideTimer = null;
-    const start = performance.now();
-    setState({ visible: true, progress: 0 });
-
-    const animate = (now) => {
-      const progress = Math.min((now - start) / durationMs, 1);
-      setState({ visible: true, progress });
-      if (progress < 1) {
-        rafId = requestAnimationFrame(animate);
-      } else {
-        hideTimer = setTimeout(() => {
-          setState({ visible: false, progress: 1 });
-        }, 120);
-      }
-    };
-
-    rafId = requestAnimationFrame(animate);
-
-    return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      if (hideTimer) clearTimeout(hideTimer);
-    };
-  }, [token]);
-
-  if (!state.visible) return null;
-
-  const p = state.progress;
-  const burst = Math.sin(Math.min(1, p * 1.25) * Math.PI);
-  const veilOpacity = Math.max(0, (1 - p) * 0.9);
-  const ringScale = 0.5 + p * 1.9;
-  const ringOpacity = Math.max(0, (1 - p) * 0.65);
-  const titleOpacity = Math.max(0, Math.sin(Math.min(1, p * 1.2) * Math.PI));
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        zIndex: 1400,
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: `radial-gradient(circle at 50% 50%, rgba(136,192,208,${0.36 * burst}) 0%, rgba(111,66,193,${0.22 * burst}) 32%, rgba(6,12,24,${veilOpacity}) 75%)`,
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: '50%',
-          transform: `translate(-50%, -50%) scale(${ringScale})`,
-          width: '42vmin',
-          height: '42vmin',
-          borderRadius: '999px',
-          border: `2px solid rgba(168,230,255,${ringOpacity})`,
-          boxShadow: `0 0 70px rgba(122, 201, 255, ${ringOpacity})`,
-        }}
-      />
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: '50%',
-          transform: `translate(-50%, -52%) scale(${1 + burst * 0.08})`,
-          fontSize: 'clamp(2rem, 7vw, 5.4rem)',
-          letterSpacing: '0.14em',
-          fontWeight: 800,
-          color: 'rgba(226,245,255,0.98)',
-          textShadow: '0 0 24px rgba(136,192,208,0.88), 0 0 52px rgba(94,155,255,0.55)',
-          opacity: titleOpacity,
-          textTransform: 'uppercase',
-          textAlign: 'center',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        Ascension!
-      </div>
-    </div>
-  );
 }
 
 function CardRevealAnimation({ arcana, type, onDismiss }) {

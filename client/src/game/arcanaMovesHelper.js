@@ -1,5 +1,62 @@
 // Helper to generate custom legal moves when arcana effects are active
 // These moves go beyond standard chess rules
+import { Chess } from 'chess.js';
+
+function cloneChessFromFen(sourceChess) {
+  if (!sourceChess || typeof sourceChess.fen !== 'function') return null;
+  const fen = sourceChess.fen();
+  const temp = new Chess();
+  try {
+    temp.load(fen);
+    return temp;
+  } catch {
+    // Mirror client-side safe FEN fallback used elsewhere to tolerate edge-rank pawns.
+    const parts = String(fen || '').split(' ');
+    if (!parts[0]) return null;
+    const ranks = parts[0].split('/');
+    if (ranks.length !== 8) return null;
+
+    const expandRank = (rank) => {
+      let out = '';
+      for (const ch of rank) {
+        if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
+        else out += ch;
+      }
+      return out;
+    };
+
+    const compressRank = (expanded) => {
+      let out = '';
+      let empty = 0;
+      for (const ch of expanded) {
+        if (ch === '.') {
+          empty += 1;
+        } else {
+          if (empty > 0) {
+            out += String(empty);
+            empty = 0;
+          }
+          out += ch;
+        }
+      }
+      if (empty > 0) out += String(empty);
+      return out;
+    };
+
+    const top = expandRank(ranks[0]).replace(/p/g, 'n');
+    const bottom = expandRank(ranks[7]).replace(/P/g, 'N');
+    const patchedRanks = [...ranks];
+    patchedRanks[0] = compressRank(top);
+    patchedRanks[7] = compressRank(bottom);
+    const patchedFen = [patchedRanks.join('/'), ...parts.slice(1)].join(' ');
+    try {
+      temp.load(patchedFen);
+      return temp;
+    } catch {
+      return null;
+    }
+  }
+}
 
 export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
   const standardMoves = chess.moves({ square, verbose: true });
@@ -10,12 +67,24 @@ export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
   }
 
   const myColorCode = myColor === 'white' ? 'w' : 'b';
-  if (piece.color !== myColorCode) {
+  const controlledEntry = (gameState?.activeEffects?.mindControlled || []).find((entry) => entry?.square === square && (entry?.controller || entry?.controlledBy) === myColorCode) || null;
+  if (piece.color !== myColorCode && !controlledEntry) {
     return standardMoves;
   }
 
-  const customMoves = [...standardMoves];
+  let customMoves = [...standardMoves];
   const effects = gameState.activeEffects;
+
+  if (controlledEntry && piece.color !== myColorCode) {
+    const tempChess = cloneChessFromFen(chess);
+    if (!tempChess) return customMoves;
+    const tempPiece = tempChess.get(square);
+    if (tempPiece) {
+      tempChess.remove(square);
+      tempChess.put({ type: tempPiece.type, color: myColorCode }, square);
+      customMoves = tempChess.moves({ square, verbose: true });
+    }
+  }
 
   // SPECTRAL MARCH: Rook can pass through one friendly piece
   if (effects.spectralMarch?.[myColorCode] && piece.type === 'r') {

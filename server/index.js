@@ -463,12 +463,29 @@ io.on('connection', (socket) => {
 // In production: serve built client from server/public
 if (process.env.NODE_ENV === 'production') {
   const publicPath = path.join(__dirname, 'public');
-  app.use(express.static(publicPath));
+  app.use(express.static(publicPath, {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith(`${path.sep}index.html`)) {
+        res.setHeader('Cache-Control', 'no-store');
+        return;
+      }
+
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  }));
 
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) {
       return res.status(404).end();
     }
+
+    if (path.extname(req.path)) {
+      return res.status(404).end();
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
     res.sendFile(path.join(publicPath, 'index.html'));
   });
 } else {

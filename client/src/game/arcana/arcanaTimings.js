@@ -35,7 +35,7 @@ export function getArcanaEffectDuration(arcanaId) {
     sacrifice: 1800,
     necromancy: 1600,
     promotion_ritual: 1500,
-    arcane_cycle: 800,
+    filtered_cycle: 800,
     sanctuary: 1000,
     iron_fortress: 900,
     

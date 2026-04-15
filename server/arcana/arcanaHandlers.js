@@ -38,16 +38,19 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
   const appliedDefs = [];
   const indicesToRemove = []; // Track indices for removal (in reverse order for safe splicing)
 
+  const normalizeArcanaId = (id) => (id === 'arcane_cycle' ? 'filtered_cycle' : id);
+
   for (const use of arcanaUsed) {
+    const requestedArcanaId = normalizeArcanaId(use?.arcanaId);
     // Prefer instanceId matching when provided (more robust against index shifts).
     let defIndex = -1;
     if (use && use.instanceId !== undefined && use.instanceId !== null) {
-      defIndex = available.findIndex(a => a.id === use.arcanaId && a.instanceId === use.instanceId && !gameState.usedArcanaInstanceIdsByPlayer[socketId].includes(a.instanceId));
+      defIndex = available.findIndex(a => normalizeArcanaId(a.id) === requestedArcanaId && a.instanceId === use.instanceId && !gameState.usedArcanaInstanceIdsByPlayer[socketId].includes(a.instanceId));
     }
 
     // Fallback to index-based lookup for older clients/server state
     if (defIndex === -1) {
-      defIndex = available.findIndex((a, idx) => a.id === use.arcanaId && !gameState.usedArcanaIdsByPlayer[socketId].includes(idx));
+      defIndex = available.findIndex((a, idx) => normalizeArcanaId(a.id) === requestedArcanaId && !gameState.usedArcanaIdsByPlayer[socketId].includes(idx));
     }
 
     if (defIndex === -1) continue;
@@ -65,9 +68,10 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     }
 
     const preArcanaFen = chess.fen();
+    const effectiveArcanaId = normalizeArcanaId(def.id);
 
     // Apply the specific arcana effect
-    const result = applyArcanaEffect(def.id, {
+    const result = applyArcanaEffect(effectiveArcanaId, {
       chess,
       gameState,
       socketId,
@@ -79,7 +83,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
 
     // Only mark as used and notify players if the effect was successfully applied
     if (!result) {
-      console.warn(`Arcana ${def.id} failed to apply (returned null)`);
+      console.warn(`Arcana ${effectiveArcanaId} failed to apply (returned null)`);
       continue; // Skip this arcana if it failed to apply
     }
 
@@ -106,7 +110,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       const triggerSoundId = def.soundId || `arcana:${def.id}`;
       const ownerPayload = {
         gameId: gameState.id,
-        arcanaId: def.id,
+        arcanaId: effectiveArcanaId,
         owner: socketId,
         params,
         soundId: triggerSoundId,
@@ -116,7 +120,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       // For cutscene cards, include safe target/trajectory fields so both players can
       // run camera choreography without exposing private tactical data.
       const forceCutsceneCards = new Set(['mind_control', 'breaking_point', 'edgerunner_overdrive']);
-      const isCutsceneCard = Boolean(def?.visual?.cutscene) || forceCutsceneCards.has(def.id);
+      const isCutsceneCard = Boolean(def?.visual?.cutscene) || forceCutsceneCards.has(effectiveArcanaId);
       let redactedParams = null;
       if (isCutsceneCard && params) {
         // Extract just the square info for cutscene camera focus
@@ -141,7 +145,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       
       const redactedPayload = {
         gameId: gameState.id,
-        arcanaId: def.id,
+        arcanaId: effectiveArcanaId,
         owner: socketId,
         params: redactedParams,
         soundId: triggerSoundId,
@@ -149,7 +153,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       };
 
       const privateTriggerCards = new Set(['vision', 'line_of_sight', 'map_fragments', 'quiet_thought', 'peek_card']);
-      const ownerOnlyTrigger = privateTriggerCards.has(def.id);
+      const ownerOnlyTrigger = privateTriggerCards.has(effectiveArcanaId);
 
       for (const pid of gameState.playerIds) {
         if (pid.startsWith('AI-')) continue;
@@ -283,7 +287,7 @@ function applyArcanaEffect(arcanaId, context) {
       return applyVision(context);
     case 'line_of_sight':
       return applyLineOfSight(context);
-    case 'arcane_cycle':
+    case 'filtered_cycle':
       return applyArcaneCycle(context);
     case 'quiet_thought':
       return applyQuietThought(context);
@@ -1262,6 +1266,11 @@ function applyTimeTravel({ gameState }) {
   if (!Array.isArray(undone) || undone.length === 0) {
     return null;
   }
+  if (typeof gameState.plyCount === 'number') {
+    gameState.plyCount = Math.max(0, gameState.plyCount - undone.length);
+  }
+  gameState.lastMove = null;
+  gameState.lastMoveByColor = { w: null, b: null };
   // Use center of board as camera focus point for full board view
   return { params: { square: 'e4', undone, rewoundCount: undone.length } };
 }

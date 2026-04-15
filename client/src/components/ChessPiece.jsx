@@ -1,9 +1,9 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 
-export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDuplicate = false, onClickSquare, cutsceneMotion = null }) {
-  const color = isWhite ? '#eceff4' : '#2e3440';
-  const emissive = isWhite ? '#d8dee9' : '#1a1d28';
+export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDuplicate = false, onClickSquare, cutsceneMotion = null, accentColor = null }) {
+  const color = accentColor || (isWhite ? '#eceff4' : '#2e3440');
+  const emissive = accentColor ? '#7b4ea3' : (isWhite ? '#d8dee9' : '#1a1d28');
   const groupRef = useRef();
   // Ensure we have a valid position array to avoid slice() errors when data is missing
   const safeTarget = Array.isArray(targetPosition) && targetPosition.length === 3 ? targetPosition : [0, 0, 0];

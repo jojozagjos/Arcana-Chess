@@ -10,7 +10,7 @@ export const ARCANA_RARITY_ORDER = Object.freeze({
 });
 
 const ARCANA_ID_ALIASES = Object.freeze({
-  filtered_cycle: 'arcane_cycle',
+  arcane_cycle: 'filtered_cycle',
 });
 
 const ARCANA_ID_REVERSE_ALIASES = Object.freeze(
