@@ -10,6 +10,7 @@ function toNumber(value, fallback = 0) {
 function sanitizeSquare(value) {
   if (typeof value !== 'string') return null;
   const s = value.toLowerCase();
+  if (s === 'center') return 'center';
   return /^[a-h][1-8]$/.test(s) ? s : null;
 }
 

@@ -452,24 +452,39 @@ export function CardBalancingToolV2({ onBack }) {
 
       if (json.ok) {
         addLog(`✓ ${card.name} applied successfully (server)`, 'success');
-        setValidationChecklist(prev => ({ ...prev, server: true, logic: true }));
-        
-        // Apply server-validated state updates
-        if (json.afterState) {
-          if (json.afterState.activeEffects) setActiveEffects(json.afterState.activeEffects);
-          if (json.afterState.pawnShields) setPawnShields(json.afterState.pawnShields);
-          if (json.afterState.lastMove) setLastMove(json.afterState.lastMove);
-          if (json.afterState.capturedByColor) setCapturedByColor(json.afterState.capturedByColor);
-          if (json.afterState.fen) {
-            const newChess = new Chess(json.afterState.fen);
-            setChess(newChess);
-            setFen(json.afterState.fen);
-          }
-        }
 
         // If server provided explicit applied params (e.g. legalMoves for line_of_sight),
         // prefer those for client-side highlights/visuals so the dev tool matches server.
         const appliedParams = (json.applied && json.applied[0] && json.applied[0].params) ? json.applied[0].params : params || {};
+        const studioCard = getCutsceneCard(card.id);
+        const hasStudioTimeline = Boolean(studioCard && (
+          (studioCard.tracks?.camera || []).some((track) => (track?.keys || []).length > 0)
+          || (studioCard.tracks?.objects || []).some((track) => (track?.keys || []).length > 0)
+          || (studioCard.tracks?.events || []).some((track) => (track?.keys || []).length > 0)
+          || (studioCard.tracks?.sounds || []).some((track) => (track?.keys || []).some((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0))
+        ));
+        const shouldDelayServerState = Boolean(card.visual?.cutscene || hasStudioTimeline);
+        const cutsceneDelayMs = shouldDelayServerState
+          ? Math.max(
+              getArcanaEffectDuration(card.id) || 0,
+              createArcanaStudioRuntimeSession(studioCard, { ...appliedParams, fen: chess.fen() }).durationMs || 0,
+            )
+          : 0;
+
+        const applyServerState = () => {
+          if (json.afterState) {
+            if (json.afterState.activeEffects) setActiveEffects(json.afterState.activeEffects);
+            if (json.afterState.pawnShields) setPawnShields(json.afterState.pawnShields);
+            if (json.afterState.lastMove) setLastMove(json.afterState.lastMove);
+            if (json.afterState.capturedByColor) setCapturedByColor(json.afterState.capturedByColor);
+            if (json.afterState.fen) {
+              const newChess = new Chess(json.afterState.fen);
+              setChess(newChess);
+              setFen(json.afterState.fen);
+            }
+          }
+          setValidationChecklist(prev => ({ ...prev, server: true, logic: true }));
+        };
 
         // Reveal-style arcana should update highlighted squares in the balancing tool
         switch (card.id) {
@@ -513,6 +528,12 @@ export function CardBalancingToolV2({ onBack }) {
 
         // Trigger visuals/sounds using the resolved params
         triggerCardVisualsAndSounds(card, appliedParams, colorChar);
+
+        if (json.afterState && shouldDelayServerState && cutsceneDelayMs > 0) {
+          trackTimeout(applyServerState, cutsceneDelayMs);
+        } else {
+          applyServerState();
+        }
       } else {
         addLog(`✗ Server validation failed: ${json.error || 'Unknown'}`, 'error');
         setServerTestResult({ success: false, error: json.error || 'Unknown' });
@@ -542,6 +563,9 @@ export function CardBalancingToolV2({ onBack }) {
       || (studioCard.tracks?.sounds || []).some((track) => (track?.keys || []).some((key) => typeof key?.soundId === 'string' && key.soundId.trim().length > 0))
     ));
     const hasCutscenePlayback = hasStudioTimeline;
+    const cutsceneDuration = hasCutscenePlayback
+      ? Math.max(0, createArcanaStudioRuntimeSession(studioCard, { ...visualParams, fen: chess.fen() }).durationMs || 0)
+      : 0;
 
     // Divine Intervention should NOT show visuals on activation - only when check occurs
     if (card.id === 'divine_intervention') {
@@ -577,9 +601,6 @@ export function CardBalancingToolV2({ onBack }) {
 
         setActiveVisualArcana({ arcanaId: card.id, params: visualParams });
         const duration = getArcanaEffectDuration(card.id);
-        const cutsceneDuration = hasCutscenePlayback
-          ? Math.max(0, createArcanaStudioRuntimeSession(studioCard, { ...visualParams, fen: chess.fen() }).durationMs || 0)
-          : 0;
         const clearMs = Math.max(duration || 3000, cutsceneDuration || 0);
         trackTimeout(() => setActiveVisualArcana(null), clearMs || 3000);
       };
@@ -663,6 +684,9 @@ export function CardBalancingToolV2({ onBack }) {
     ));
     const hasCutscenePlayback = hasStudioTimeline;
     const visualParams = { ...(params || {}) };
+    const cutsceneDuration = hasCutscenePlayback
+      ? Math.max(0, createArcanaStudioRuntimeSession(studioCard, { ...visualParams, fen: chess.fen() }).durationMs || 0)
+      : 0;
     if (result.highlightSquares && result.highlightSquares.length > 0) {
       visualParams.square = result.highlightSquares[0];
     }
@@ -718,13 +742,14 @@ export function CardBalancingToolV2({ onBack }) {
       // Delay board state update until visual effect completes so pieces are visible during animation
       // Cards with destructive visuals (execution, etc) need to keep pieces visible until the effect finishes
       const visualDuration = getArcanaEffectDuration(card.id);
+      const boardUpdateDelay = Math.max(visualDuration || 2000, cutsceneDuration || 0);
       trackTimeout(() => {
         if (result.success) {
           setChess(testChess);
           setFen(testChess.fen());
           setValidationChecklist(prev => ({ ...prev, logic: true }));
         }
-      }, visualDuration || 2000);
+      }, boardUpdateDelay || 2000);
       
       return;
     }

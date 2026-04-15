@@ -168,25 +168,17 @@ export const STUDIO_CARD_OVERRIDE = {
         "name": "Legacy Sound",
         "keys": [
           {
-            "id": "snd_0",
-            "timeMs": 0,
-            "soundId": "arcana:execution_blade",
-            "volume": 1,
-            "loop": false,
-            "pitch": 1
-          },
-          {
             "id": "snd_1",
             "timeMs": 800,
-            "soundId": "arcana:execution_blood",
+            "soundId": "arcana:swoosh",
             "volume": 1,
             "loop": false,
             "pitch": 1
           },
           {
             "id": "snd_2",
-            "timeMs": 1500,
-            "soundId": "arcana:execution_complete",
+            "timeMs": 1200,
+            "soundId": "arcana:smash",
             "volume": 1,
             "loop": false,
             "pitch": 1
@@ -278,7 +270,7 @@ export const STUDIO_CARD_OVERRIDE = {
   "meta": {
     "source": "arcana-studio",
     "createdAt": 1776036583181,
-    "updatedAt": 1776126752165,
+    "updatedAt": 1776208275790,
     "usedPieces": [],
     "legacyId": "execution",
     "legacyImportedAt": 1776036583181,

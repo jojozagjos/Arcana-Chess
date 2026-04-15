@@ -14,9 +14,19 @@ export function squareToPosition(square) {
     console.warn('[squareToPosition] Invalid square:', square);
     return [0, 0, 0];
   }
+
+  const normalized = square.toLowerCase();
+  if (normalized === 'center') {
+    return [0, 0, 0];
+  }
+
+  if (!/^[a-h][1-8]$/.test(normalized)) {
+    console.warn('[squareToPosition] Invalid square:', square);
+    return [0, 0, 0];
+  }
   
-  const file = square.charCodeAt(0) - 97; // 'a' = 0, 'h' = 7
-  const rank = 8 - parseInt(square[1]);    // '8' = 0, '1' = 7
+  const file = normalized.charCodeAt(0) - 97; // 'a' = 0, 'h' = 7
+  const rank = 8 - parseInt(normalized[1], 10);    // '8' = 0, '1' = 7
   
   // Center the board: file/rank go from -3.5 to 3.5
   const x = file - 3.5;

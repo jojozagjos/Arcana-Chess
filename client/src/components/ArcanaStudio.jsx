@@ -487,9 +487,15 @@ function hasLegacyVfxData(config) {
   return Boolean(vfx && typeof vfx === 'object' && Object.keys(vfx).length > 0);
 }
 
+function getCardMainPieceSquare(card = {}) {
+  const objectTracks = Array.isArray(card?.tracks?.objects) ? card.tracks.objects : [];
+  const mainPieceTrack = objectTracks.find((track) => track?.type === 'piece' && (track?.name === 'Main Piece' || track?.isAnimatablePiece));
+  return normalizeMainPieceSquare(mainPieceTrack?.pieceSquare || card?.meta?.cardPiecePreview || card?.board?.focusSquare);
+}
+
 function sampleStudioVfxPreview(card, timeMs, effectsModule = null) {
   const events = card?.tracks?.events || [];
-  const fallbackSquare = card?.meta?.cardPiecePreview || card?.board?.focusSquare || 'e4';
+  const fallbackSquare = getCardMainPieceSquare(card);
   let preview = null;
   let previewStartMs = -1;
 
@@ -591,6 +597,14 @@ function getAllAvailableCards() {
   return cards;
 }
 
+function normalizeMainPieceSquare(pieceSquare) {
+  const normalized = String(pieceSquare || '').trim().toLowerCase();
+  if (normalized === 'source' || normalized === 'target' || normalized === 'center') {
+    return normalized;
+  }
+  return 'center';
+}
+
 function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
   const id = normalizeCardId(rawCard?.id || fallbackId);
   const migrated = migrateArcanaStudioCard(rawCard, id);
@@ -598,7 +612,7 @@ function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
   const definitionSoundId = definition?.soundId || `arcana:${id}`;
   const isCutscene = Boolean(definition?.visual?.cutscene);
   const legacyCutscene = LEGACY_CUTSCENE_CONFIGS?.[id] || LEGACY_CUTSCENE_CONFIGS?.[(id === 'filtered_cycle' ? 'arcane_cycle' : id)] || null;
-  const defaultPieceSquare = migrated.meta?.cardPiecePreview || migrated.board?.focusSquare || 'e4';
+  const defaultPieceSquare = normalizeMainPieceSquare(migrated.meta?.cardPiecePreview || migrated.board?.focusSquare);
 
   const tracks = { ...(migrated.tracks || {}) };
   let objects = [...(tracks.objects || [])];
@@ -628,7 +642,7 @@ function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
     id: mainPiece.id || uid('obj'),
     name: 'Main Piece',
     type: 'piece',
-    pieceSquare: mainPiece.pieceSquare || defaultPieceSquare,
+    pieceSquare: normalizeMainPieceSquare(mainPiece.pieceSquare || defaultPieceSquare),
     pieceType: mainPiece.pieceType || inferPieceTypeFromCard(id),
     pieceColor: mainPiece.pieceColor || 'white',
     isAnimatablePiece: true,
@@ -688,7 +702,7 @@ function buildStudioCardsMap() {
   return normalized;
 }
 
-function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'e4', cardId = '', options = {}) {
+function createDefaultTrack(type, playheadMs = 0, pieceSquare = 'center', cardId = '', options = {}) {
   if (type === 'camera') {
     return {
       id: uid('cam'),
@@ -916,7 +930,7 @@ function CameraKeyGizmos({ tracks, visible }) {
 function TrackFallbackMesh({ track, piece }) {
   if (track.type === 'piece') {
     const renderedPiece = piece || {
-      square: track.pieceSquare || 'e4',
+      square: track.pieceSquare || 'center',
       type: track.pieceType || 'p',
       isWhite: (track.pieceColor || 'white') !== 'black',
       targetPosition: [0, 0.075, 0],
@@ -1076,8 +1090,8 @@ function StudioScene({
           piece = {
             type: track.pieceType || 'p',
             isWhite: (track.pieceColor || 'white') !== 'black',
-            square: 'e4',
-            targetPosition: [0, 0.15, 0],
+            square: 'center',
+            targetPosition: [0, 0, 0],
           };
         }
         if (!piece && /^[a-h][1-8]$/i.test(track.pieceSquare || '') && track.type === 'piece') {
@@ -1623,7 +1637,7 @@ export function ArcanaStudio({ onBack }) {
     const hasObjects = (selectedCard.tracks?.objects || []).length > 0;
     if (hasObjects) return;
 
-    const defaultSquare = boardPieces[0]?.square || selectedCard.board?.focusSquare || selectedCard.meta?.cardPiecePreview || 'e4';
+    const defaultSquare = normalizeMainPieceSquare(selectedCard.meta?.cardPiecePreview || selectedCard.board?.focusSquare);
     const defaultTrack = createDefaultTrack('object', 0, defaultSquare, selectedCard.id, { mainPiece: true });
 
     setCards((prev) => {
@@ -1759,8 +1773,7 @@ export function ArcanaStudio({ onBack }) {
           setPlaybackLoopCycle((value) => value + 1);
         }
         next %= duration;
-      }
-      else if (next >= duration) {
+      } else if (next >= duration) {
         next = duration;
         setIsPlaying(false);
       }
@@ -1774,7 +1787,7 @@ export function ArcanaStudio({ onBack }) {
       if (playbackFrameRef.current) cancelAnimationFrame(playbackFrameRef.current);
       playbackFrameRef.current = null;
     };
-  }, [isPlaying, playheadMs, selectedCard.durationMs, selectedCard.settings?.loopPlayback]);
+  }, [isPlaying, selectedCard.durationMs, selectedCard.settings?.loopPlayback]);
 
   useEffect(() => {
     audioTimersRef.current.forEach((timer) => clearTimeout(timer));
@@ -1871,8 +1884,8 @@ export function ArcanaStudio({ onBack }) {
             ...(key?.payload || {}),
             eventParams: {
               cardId: selectedCard.id,
-              square: selectedCard.board?.focusSquare || boardPieces[0]?.square || selectedCard.meta?.cardPiecePreview || 'e4',
-              targetSquare: selectedCard.board?.focusSquare || boardPieces[0]?.square || selectedCard.meta?.cardPiecePreview || 'e4',
+              square: getCardMainPieceSquare(selectedCard),
+              targetSquare: getCardMainPieceSquare(selectedCard),
             },
           },
         };
@@ -2020,7 +2033,7 @@ export function ArcanaStudio({ onBack }) {
       return;
     }
 
-    const previewSquare = selectedCard.meta?.cardPiecePreview || boardPieces[0]?.square || selectedCard.board?.focusSquare || 'e4';
+    const previewSquare = getCardMainPieceSquare(selectedCard);
     const track = createDefaultTrack(
       type,
       Math.round(playheadMs),

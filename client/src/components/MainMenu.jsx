@@ -152,6 +152,19 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
+                  <span>v1.3.9  ??? Arcana Visual Rework + Timing Sync</span>
+                  <span className="update-log-date">Apr 13, 2026</span>
+                </div>
+                <ul className="update-log-list">
+                  <li>Completely reworked Breaking Point visuals with a heavier rupture impact language, reactive fracture beams, and stronger displacement read.</li>
+                  <li>Completely reworked Edgerunner Overdrive visuals into a high-speed cyber sprint style with lane trails, surge gates, and clearer path legibility.</li>
+                  <li>Cutscene beat pulses are now better synchronized to key impact moments for high-rarity card readability during fast combat turns.</li>
+                  <li>Runtime cutscene flow remains aligned with server resolution timing to reduce visual ambiguity around effect completion.</li>
+                </ul>
+              </div>
+
+              <div className="update-log-section">
+                <div className="update-log-version">
                   <span>v1.3.8  Multiplayer + Intro + Arcana Fixes</span>
                   <span className="update-log-date">Apr 2, 2026</span>
                 </div>
@@ -173,7 +186,7 @@ export function MainMenu({
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
               <span className="update-log-pill-dot" />
-              <span>v1.3.8</span>
+              <span>v1.3.9</span>
               <span className="update-log-pill-label">What's new</span>
             </button>
           )}

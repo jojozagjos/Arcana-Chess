@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "id": "filtered_cycle",
+  "name": "Filtered Cycle",
+  "durationMs": 4000,
+  "settings": {
+    "autoKey": true,
+    "fps": 60,
+    "timelineSnapMs": 50,
+    "randomSeed": 1337,
+    "seedLocked": true
+  },
+  "board": {
+    "fen": "8/8/8/8/8/8/8/8 w - - 0 1",
+    "focusSquare": null
+  },
+  "tracks": {
+    "camera": [],
+    "objects": [
+      {
+        "id": "obj_enwips3a",
+        "name": "Main Piece",
+        "type": "piece",
+        "pieceSquare": "e4",
+        "previewPlayAnimation": false,
+        "attach": {
+          "mode": "follow",
+          "targetId": null,
+          "parentId": null,
+          "offset": [
+            0,
+            0,
+            0
+          ],
+          "parenting": true
+        },
+        "keys": [],
+        "pieceType": "p",
+        "pieceColor": "white",
+        "isAnimatablePiece": true
+      }
+    ],
+    "particles": [],
+    "overlays": [],
+    "sounds": [
+      {
+        "id": "snd_rq4wk4ts",
+        "name": "SFX",
+        "keys": [
+          {
+            "id": "sdk_f4n6jxzs",
+            "timeMs": 0,
+            "soundId": "arcana:filtered_cycle",
+            "volume": 1,
+            "loop": false,
+            "pitch": 1
+          }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "evt_ykdzcpq0",
+        "name": "Events",
+        "keys": []
+      }
+    ]
+  },
+  "meta": {
+    "source": "arcana-studio",
+    "createdAt": 1776207228366,
+    "updatedAt": 1776207479719,
+    "usedPieces": [],
+    "isCutscene": false,
+    "canAnimatePiece": false,
+    "cardPiecePreview": null,
+    "rarity": "common",
+    "category": "utility",
+    "soundId": "arcana:arcane_cycle"
+  },
+  "description": "Choose a category and draw a weighted common/uncommon Arcana card from that category."
+}
