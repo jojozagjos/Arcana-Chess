@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js';
 import { ARCANA_DEFINITIONS } from '../shared/arcanaDefinitions.js';
+import { getArcanaTargetType, getValidTargetSquares } from '../shared/arcana/arcanaContracts.js';
 import { getGameModeConfig } from '../shared/gameModes.js';
 import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
@@ -336,6 +337,466 @@ function getMovesForColor(chess, color) {
   const temp = new Chess();
   safeLoadFen(temp, fenParts.join(' '));
   return temp.moves({ verbose: true });
+}
+
+const AI_PIECE_VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
+const AI_CHECK_BONUS = 35;
+const AI_MATE_SCORE = 100000;
+
+function getOppositeColor(color) {
+  return color === 'w' ? 'b' : 'w';
+}
+
+function getAiDifficultyConfig(aiDifficulty) {
+  const configs = {
+    Scholar: { thinkTime: 450, depth: 1, searchBudgetMs: 250, useChance: 0.12, drawChance: 0.18, randomness: 0.6 },
+    Knight: { thinkTime: 900, depth: 2, searchBudgetMs: 700, useChance: 0.32, drawChance: 0.2, randomness: 0.18 },
+    Monarch: { thinkTime: 1400, depth: 4, searchBudgetMs: 1600, useChance: 0.66, drawChance: 0.22, randomness: 0.03 },
+  };
+  return configs[aiDifficulty] || configs.Scholar;
+}
+
+function getBoardSquareBonus(piece, square, perspectiveColor) {
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1], 10);
+  const fileCenter = 3.5 - Math.abs(file - 3.5);
+  const rankCenter = 3.5 - Math.abs(rank - 4.5);
+  const centrality = fileCenter + rankCenter;
+
+  switch (piece.type) {
+    case 'p': {
+      const advance = perspectiveColor === 'w' ? rank - 2 : 7 - rank;
+      return advance * 12 + centrality * 3;
+    }
+    case 'n':
+      return centrality * 10;
+    case 'b':
+      return centrality * 7;
+    case 'r':
+      return centrality * 2;
+    case 'q':
+      return centrality * 4;
+    case 'k':
+      return (square === (piece.color === 'w' ? 'g1' : 'g8') || square === (piece.color === 'w' ? 'c1' : 'c8')) ? 35 : -Math.abs(file - 3.5) * 6;
+    default:
+      return 0;
+  }
+}
+
+function isCheckForColor(chess, color) {
+  if (!chess) return false;
+  if (chess.turn() === color) {
+    if (typeof chess.isCheck === 'function') return chess.isCheck();
+    if (typeof chess.inCheck === 'function') return chess.inCheck();
+    return false;
+  }
+
+  const temp = new Chess();
+  const fenParts = chess.fen().split(' ');
+  fenParts[1] = color;
+  try {
+    safeLoadFen(temp, fenParts.join(' '));
+    if (typeof temp.isCheck === 'function') return temp.isCheck();
+    if (typeof temp.inCheck === 'function') return temp.inCheck();
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function isCheckmateForColor(chess, color) {
+  if (!chess) return false;
+  if (chess.turn() === color) {
+    if (typeof chess.isCheckmate === 'function') return chess.isCheckmate();
+    if (typeof chess.inCheckmate === 'function') return chess.inCheckmate();
+    return false;
+  }
+
+  const temp = new Chess();
+  const fenParts = chess.fen().split(' ');
+  fenParts[1] = color;
+  try {
+    safeLoadFen(temp, fenParts.join(' '));
+    if (typeof temp.isCheckmate === 'function') return temp.isCheckmate();
+    if (typeof temp.inCheckmate === 'function') return temp.inCheckmate();
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function evaluateAIBoard(chess, perspectiveColor, gameState = {}) {
+  const board = chess.board();
+  let score = 0;
+
+  for (let rank = 0; rank < 8; rank += 1) {
+    for (let file = 0; file < 8; file += 1) {
+      const piece = board[rank][file];
+      if (!piece) continue;
+      const square = `${'abcdefgh'[file]}${8 - rank}`;
+      const pieceScore = (AI_PIECE_VALUES[piece.type] || 0) + getBoardSquareBonus(piece, square, perspectiveColor);
+      score += piece.color === perspectiveColor ? pieceScore : -pieceScore;
+    }
+  }
+
+  const activeTurn = chess.turn();
+  const opponentColor = getOppositeColor(perspectiveColor);
+  if (isCheckmateForColor(chess, activeTurn)) {
+    return activeTurn === perspectiveColor ? -AI_MATE_SCORE : AI_MATE_SCORE;
+  }
+
+  if (isCheckForColor(chess, perspectiveColor)) score -= AI_CHECK_BONUS;
+  if (isCheckForColor(chess, opponentColor)) score += AI_CHECK_BONUS;
+
+  const ownShield = gameState?.pawnShields?.[perspectiveColor];
+  const oppShield = gameState?.pawnShields?.[opponentColor];
+  if (ownShield?.square) score += 18;
+  if (oppShield?.square) score -= 10;
+
+  const ownKing = board.flat().find((piece) => piece?.type === 'k' && piece.color === perspectiveColor);
+  if (ownKing) {
+    const kingSquare = (() => {
+      for (let rank = 0; rank < 8; rank += 1) {
+        for (let file = 0; file < 8; file += 1) {
+          const piece = board[rank][file];
+          if (piece?.type === 'k' && piece.color === perspectiveColor) {
+            return `${'abcdefgh'[file]}${8 - rank}`;
+          }
+        }
+      }
+      return null;
+    })();
+
+    if (kingSquare) {
+      score += (kingSquare === (perspectiveColor === 'w' ? 'g1' : 'g8') || kingSquare === (perspectiveColor === 'w' ? 'c1' : 'c8')) ? 24 : -6;
+    }
+  }
+
+  if (gameState?.activeEffects?.cursedSquares) {
+    for (const cursed of gameState.activeEffects.cursedSquares) {
+      const piece = cursed?.square ? chess.get(cursed.square) : null;
+      if (!piece) continue;
+      score += piece.color === perspectiveColor ? -30 : 18;
+    }
+  }
+
+  return score;
+}
+
+function orderAiMoves(moves, chess) {
+  const pieceValues = AI_PIECE_VALUES;
+  return [...moves].sort((a, b) => {
+    const scoreMove = (move) => {
+      let score = 0;
+      if (move.captured) score += (pieceValues[move.captured] || 0) * 10 - (pieceValues[move.piece] || 0);
+      if (move.promotion) score += (pieceValues[move.promotion] || 0) * 5;
+      if (move.flags && move.flags.includes('c')) score += 20;
+      if (move.flags && move.flags.includes('e')) score += 22;
+      if (move.san && move.san.includes('#')) score += 5000;
+      if (move.san && move.san.includes('+')) score += 180;
+      if (['d4', 'd5', 'e4', 'e5'].includes(move.to)) score += 12;
+      const file = move.to.charCodeAt(0) - 97;
+      const rank = parseInt(move.to[1], 10);
+      score += (3.5 - Math.abs(file - 3.5)) + (3.5 - Math.abs(rank - 4.5));
+      return score;
+    };
+
+    return scoreMove(b) - scoreMove(a);
+  });
+}
+
+function searchAiMove(chess, gameState, perspectiveColor, depth, deadlineMs, plyFromRoot = 0, rootMoves = null) {
+  if (Date.now() > deadlineMs) {
+    throw new Error('AI search timed out');
+  }
+
+  const legalMoves = plyFromRoot === 0 && Array.isArray(rootMoves) ? rootMoves : chess.moves({ verbose: true });
+  if (!legalMoves.length) {
+    return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+  }
+
+  if (depth <= 0) {
+    return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+  }
+
+  const maximizing = chess.turn() === perspectiveColor;
+  let bestScore = maximizing ? -Infinity : Infinity;
+  let bestMove = null;
+  const orderedMoves = orderAiMoves(legalMoves, chess);
+
+  for (const move of orderedMoves) {
+    const applied = chess.move({ from: move.from, to: move.to, promotion: move.promotion });
+    if (!applied) continue;
+
+    const child = searchAiMove(chess, gameState, perspectiveColor, depth - 1, deadlineMs, plyFromRoot + 1, null);
+    chess.undo();
+
+    const score = child.score;
+    if ((maximizing && score > bestScore) || (!maximizing && score < bestScore)) {
+      bestScore = score;
+      bestMove = move;
+    }
+  }
+
+  if (bestMove === null) {
+    return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+  }
+
+  return { score: bestScore, move: bestMove };
+}
+
+function selectBestAiMove(chess, gameState, perspectiveColor, config, rootMoves = null) {
+  const deadlineMs = Date.now() + config.searchBudgetMs;
+  const searchChess = new Chess();
+  safeLoadFen(searchChess, chess.fen());
+  const legalMoves = Array.isArray(rootMoves) && rootMoves.length ? rootMoves : searchChess.moves({ verbose: true });
+  if (!legalMoves.length) return null;
+
+  let bestMove = legalMoves[0];
+  let bestScore = -Infinity;
+
+  for (let depth = 1; depth <= config.depth; depth += 1) {
+    try {
+      const result = searchAiMove(searchChess, gameState, perspectiveColor, depth, deadlineMs, 0, legalMoves);
+      if (result?.move) {
+        bestMove = result.move;
+        bestScore = result.score;
+      }
+    } catch (err) {
+      if (!err || !String(err.message || '').includes('timed out')) {
+        throw err;
+      }
+      break;
+    }
+
+    if (Date.now() > deadlineMs) break;
+  }
+
+  return { move: bestMove, score: bestScore };
+}
+
+function selectAiArcanaTarget(cardId, chess, gameState, moverColor) {
+  const targetType = getArcanaTargetType(cardId);
+  if (!targetType) return null;
+
+  const validSquares = getValidTargetSquares(chess, cardId, moverColor, gameState);
+  if (!validSquares.length) return null;
+
+  const board = chess.board();
+  const enemyColor = getOppositeColor(moverColor);
+  const centerScore = (square) => {
+    const file = square.charCodeAt(0) - 97;
+    const rank = parseInt(square[1], 10);
+    return (3.5 - Math.abs(file - 3.5)) + (3.5 - Math.abs(rank - 4.5));
+  };
+  const pieceAt = (square) => chess.get(square);
+  const movesFrom = (square) => chess.moves({ square, verbose: true }) || [];
+
+  switch (cardId) {
+    case 'shield_pawn': {
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      const opponentMoves = getMovesForColor(chess, enemyColor);
+      const attackedSquares = new Set(opponentMoves.filter((move) => move.captured).map((move) => move.to));
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.type !== 'p' || piece.color !== moverColor) continue;
+        let score = centerScore(square) + (moverColor === 'w' ? parseInt(square[1], 10) : 9 - parseInt(square[1], 10)) * 2;
+        if (attackedSquares.has(square)) score += 40;
+        if (piece.type === 'p') score += 8;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'pawn_guard': {
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.type !== 'p' || piece.color !== moverColor) continue;
+        let score = centerScore(square);
+        const file = square[0];
+        const rank = parseInt(square[1], 10);
+        const behindRank = moverColor === 'w' ? rank - 1 : rank + 1;
+        if (behindRank >= 1 && behindRank <= 8) {
+          const behindSquare = `${file}${behindRank}`;
+          if (pieceAt(behindSquare) && pieceAt(behindSquare).color === moverColor) score += 35;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'squire_support':
+    case 'bishops_blessing':
+    case 'sacrifice':
+    case 'mirror_image':
+    case 'metamorphosis': {
+      const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.color !== moverColor || piece.type === 'k') continue;
+        let score = (pieceValue[piece.type] || 0) * 10 + centerScore(square) * 4;
+        const legalMoves = movesFrom(square).length;
+        score += legalMoves * 3;
+        if (cardId === 'squire_support') {
+          const opponentMoves = getMovesForColor(chess, enemyColor);
+          const underAttack = opponentMoves.some((move) => move.to === square);
+          if (underAttack) score += 30;
+        }
+        if (cardId === 'mirror_image') {
+          const neighbors = getAdjacentSquares(square);
+          const openNeighbors = neighbors.filter((neighbor) => !pieceAt(neighbor)).length;
+          score += openNeighbors * 4;
+        }
+        if (cardId === 'metamorphosis' && piece.type === 'p') score += 4;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'soft_push': {
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.color !== moverColor) continue;
+        let score = centerScore(square) * 8 + (piece.type === 'p' ? 5 : 0);
+        score += movesFrom(square).length;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'line_of_sight':
+    case 'edgerunner_overdrive': {
+      const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.color !== moverColor || piece.type === 'k') continue;
+        const legalMoves = movesFrom(square);
+        if (!legalMoves.length) continue;
+        let score = legalMoves.length * 6 + (pieceValue[piece.type] || 0) * 10 + centerScore(square) * 2;
+        if (cardId === 'edgerunner_overdrive' && piece.type === 'q') score += 20;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'sanctuary':
+    case 'cursed_square': {
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        let score = centerScore(square) * 10;
+        const piece = pieceAt(square);
+        if (!piece) score += 5;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'execution':
+    case 'mind_control':
+    case 'breaking_point': {
+      const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.color !== enemyColor || piece.type === 'k') continue;
+        let score = (pieceValue[piece.type] || 0) * 10 + centerScore(square) * 2;
+        if (piece.type === 'q') score += 8;
+        if (piece.type === 'r') score += 5;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'promotion_ritual': {
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.type !== 'p' || piece.color !== moverColor) continue;
+        const rank = parseInt(square[1], 10);
+        const advance = moverColor === 'w' ? rank - 2 : 7 - rank;
+        let score = advance * 10 + centerScore(square) * 2;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'knight_of_storms': {
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.type !== 'n' || piece.color !== moverColor) continue;
+        const legalMoves = movesFrom(square).length;
+        const score = legalMoves * 6 + centerScore(square) * 3;
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'royal_swap': {
+      let best = validSquares[0];
+      let bestScore = -Infinity;
+      const kingSquare = (() => {
+        for (let rank = 0; rank < 8; rank += 1) {
+          for (let file = 0; file < 8; file += 1) {
+            const piece = board[rank][file];
+            if (piece?.type === 'k' && piece.color === moverColor) return `${'abcdefgh'[file]}${8 - rank}`;
+          }
+        }
+        return null;
+      })();
+      for (const square of validSquares) {
+        const piece = pieceAt(square);
+        if (!piece || piece.type !== 'p' || piece.color !== moverColor) continue;
+        let score = centerScore(square) * 6;
+        if (kingSquare) {
+          const fileDelta = Math.abs((square.charCodeAt(0) - 97) - (kingSquare.charCodeAt(0) - 97));
+          const rankDelta = Math.abs(parseInt(square[1], 10) - parseInt(kingSquare[1], 10));
+          score += Math.max(0, 10 - (fileDelta + rankDelta));
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = square;
+        }
+      }
+      return best;
+    }
+    case 'antidote': {
+      return validSquares[0];
+    }
+    default:
+      return validSquares[0];
+  }
 }
 
 /**
@@ -2338,30 +2799,7 @@ export class GameManager {
       return;
     }
 
-    // AI Difficulty settings - affects move selection and arcana usage
-    // NOTE: Drawing is FAIR and RANDOM across all difficulties (not affect by difficulty)
-    const difficultySettings = {
-      'Scholar': { 
-        thinkTime: 600, 
-        randomness: 0.85,  // Very high randomness = easier, makes random moves
-        arcanaUseChance: 0.1,  // Rarely uses arcana strategically
-        arcanaDrawChance: 0.2,  // Fair draw chance - same for all difficulties
-      },
-      'Knight': { 
-        thinkTime: 1000, 
-        randomness: 0.5,  // Medium randomness = balanced play
-        arcanaUseChance: 0.4,  // Uses arcana moderately
-        arcanaDrawChance: 0.2,  // Fair draw chance - same for all difficulties
-      },
-      'Monarch': { 
-        thinkTime: 1500, 
-        randomness: 0.1,  // Low randomness = harder, strategic moves
-        arcanaUseChance: 0.7,  // Frequently uses powerful arcana
-        arcanaDrawChance: 0.2,  // Fair draw chance - same for all difficulties
-      },
-    };
-
-    const settings = difficultySettings[gameState.aiDifficulty] || difficultySettings['Scholar'];
+    const settings = getAiDifficultyConfig(gameState.aiDifficulty);
     
     // Artificial delay based on difficulty
     await new Promise((resolve) => setTimeout(resolve, settings.thinkTime));
@@ -2404,7 +2842,7 @@ export class GameManager {
       // AI should NOT draw while in check
       const aiInCheck = chess.isCheck();
       
-      if (!aiUsedCardThisTurn && aiCanDraw && !aiInCheck && Math.random() < settings.arcanaDrawChance) {
+      if (!aiUsedCardThisTurn && aiCanDraw && !aiInCheck && Math.random() < settings.drawChance) {
         const newCard = pickWeightedArcana();
         const newInst = makeArcanaInstance(newCard);
         gameState.arcanaByPlayer[aiSocketId].push(newInst);
@@ -2433,7 +2871,7 @@ export class GameManager {
       }
 
       // AI Use Card Logic
-      if (!aiUsedCardThisTurn && availableCards.length > 0 && Math.random() < settings.arcanaUseChance) {
+      if (!aiUsedCardThisTurn && availableCards.length > 0 && Math.random() < settings.useChance) {
         // Prioritize cards by strategic value - adjust based on difficulty
         const baseCardPriority = {
           'execution': 10,           // Very high priority - removes enemy piece
@@ -2447,12 +2885,17 @@ export class GameManager {
           'iron_fortress': 4.5,      // Good defense
           'shield_pawn': 4.5,        // Pawn protection
           'pawn_guard': 4,           // Alternative pawn protection
+          'squire_support': 4,       // Piece protection
           'pawn_rush': 3.5,          // Movement enhancement
+          'soft_push': 3.2,          // Positional push
           'focus_fire': 3,           // Extra card on capture
           'vision': 2.5,             // Info gathering
+          'line_of_sight': 2.8,      // Info gathering on a piece
           'map_fragments': 2,        // Info gathering
           'peek_card': 2,            // Info BUT useful for research
+          'antidote': 2.8,           // Cleanses poison
           'metamorphosis': 3,        // Transform piece
+          'mirror_image': 3.4,       // Create a decoy copy
           'phantom_step': 3.5,       // Movement enhancement
           'spectral_march': 3,       // Enhanced movement
           'fog_of_war': 3.5,         // Defensive fog
@@ -2614,64 +3057,27 @@ export class GameManager {
       candidateMoves = allMoves;
     }
 
-    // Better move selection based on difficulty using one-ply tactical simulation.
-    let selectedMove;
-    if (Math.random() < settings.randomness) {
-      // Random move (easier AI)
-      selectedMove = candidateMoves[Math.floor(Math.random() * candidateMoves.length)];
+    let selectedMove = null;
+    if (Math.random() < settings.randomness && candidateMoves.length > 1) {
+      const shuffled = [...candidateMoves].sort(() => Math.random() - 0.5);
+      selectedMove = shuffled[0];
     } else {
-      const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
-
-      const scoreMove = (m) => {
-        const moveInput = { from: m.from, to: m.to };
-        if (m.promotion) moveInput.promotion = m.promotion;
-
-        const tempChess = new Chess(sanitizeEdgeRankPawnsInFen(chess.fen()));
-        const played = tempChess.move(moveInput);
-        if (!played) return -9999;
-
-        let score = 0;
-        if (m.captured) score += (pieceValues[m.captured] || 1) * 12;
-        if ((played.san || '').includes('+')) score += 6;
-        if ((played.san || '').includes('#')) score += 2000;
-        if (['d4', 'd5', 'e4', 'e5'].includes(m.to)) score += 2;
-
-        const movedPiece = tempChess.get(m.to);
-        if (movedPiece) {
-          const oppMoves = tempChess.moves({ verbose: true });
-          const immediateRecapture = oppMoves.some((om) => om.captured && om.to === m.to);
-          if (immediateRecapture) {
-            score -= (pieceValues[movedPiece.type] || 1) * 10;
-          }
-        }
-
-        const mobility = tempChess.moves({ verbose: true }).length;
-        score += Math.min(6, mobility * 0.1);
-
-        return score;
-      };
-
-      const scoredMoves = candidateMoves.map(m => {
-        return { move: m, score: scoreMove(m) };
-      }).sort((a, b) => b.score - a.score);
-      
-      if (!scoredMoves.length) {
-        console.error('[AI] No scored moves available - using first legal move');
-        selectedMove = allMoves[0];
-      } else {
-        // AI makes intentionally BAD moves!
-        // Pick from the lowest-scoring moves instead of best
-        const randomBadIndex = Math.floor(Math.random() * Math.min(5, Math.max(1, Math.floor(scoredMoves.length / 2))));
-        selectedMove = scoredMoves[scoredMoves.length - 1 - randomBadIndex].move;
-      }
+      const searchResult = selectBestAiMove(chess, gameState, moverColor, settings, candidateMoves);
+      selectedMove = searchResult?.move || candidateMoves[0] || allMoves[0] || null;
     }
+
+    const aiMoveInput = selectedMove
+      ? { from: selectedMove.from, to: selectedMove.to, promotion: selectedMove.promotion }
+      : null;
     
     // Save FEN to history before AI move
     if (!gameState.moveHistory) gameState.moveHistory = [];
     gameState.moveHistory.push(chess.fen());
     if (gameState.moveHistory.length > MOVE_HISTORY_LIMIT) gameState.moveHistory.shift();
     
-    const result = chess.move(selectedMove);
+    const result = selectedMove?.san
+      ? chess.move(selectedMove.san)
+      : (aiMoveInput ? chess.move(aiMoveInput) : null);
     
     // Validate that the move was successfully applied
     if (!result) {
@@ -2779,297 +3185,39 @@ export class GameManager {
   // Helper: AI attempts to use an arcana card
   async tryAIUseArcana(gameState, aiSocketId, card, moverColor) {
     const chess = gameState.chess;
-    const board = chess.board();
     
-    // Cards that need no targeting - just activate
-    const noTargetCards = [
+    // Cards that need no targeting - just activate.
+    // Targeted cards are resolved through the shared arcana contract helper.
+    const noTargetCards = new Set([
       'pawn_rush', 'spectral_march', 'phantom_step', 'sharpshooter', 'vision',
       'map_fragments', 'poison_touch', 'fog_of_war', 'time_freeze', 'divine_intervention',
       'focus_fire', 'double_strike', 'berserker_rage', 'chain_lightning', 'necromancy',
       'astral_rebirth', 'filtered_cycle', 'quiet_thought', 'en_passant_master',
       'chaos_theory', 'time_travel', 'temporal_echo', 'queens_gambit', 'iron_fortress'
-    ];
+    ]);
     
     const turnEndingCards = [
       'execution', 'astral_rebirth', 'necromancy',
       'time_travel', 'chaos_theory', 'mind_control', 'breaking_point', 'edgerunner_overdrive',
-      'royal_swap', 'promotion_ritual', 'cursed_square'
+      'royal_swap', 'promotion_ritual', 'cursed_square', 'sanctuary'
     ];
     
     let params = {};
     
-    // Cards that need targeting
-    if (!noTargetCards.includes(card.id)) {
-      // Find valid target for this card
-      const opponentColor = moverColor === 'w' ? 'b' : 'w';
-      
-      switch (card.id) {
-        case 'shield_pawn':
-        case 'pawn_guard':
-          // Find an AI pawn to protect - prefer pawns in danger or advanced positions
-          let targetPawn = null;
-          let bestScore = -1;
-          const opponentAttackers = [];
-          
-          // Get all opponent moves to identify attacked squares
-          const tempChess = new Chess(sanitizeEdgeRankPawnsInFen(chess.fen()));
-          const opponentTurn = moverColor === 'w' ? 'b' : 'w';
-          const originalTurn = tempChess.fen().split(' ')[1];
-          const tempFen = chess.fen();
-          const tempFenParts = tempFen.split(' ');
-          tempFenParts[1] = opponentTurn;
-          try {
-            safeLoadFen(tempChess, tempFenParts.join(' '));
-            const opponentMoves = tempChess.moves({ verbose: true });
-            opponentMoves.forEach(m => {
-              if (m.captured) opponentAttackers.push(m.to);
-            });
-          } catch (e) {
-            // If FEN is invalid, just continue
-          }
-          
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.type === 'p' && piece.color === moverColor) {
-                const square = 'abcdefgh'[f] + (8 - r);
-                let score = 0;
-                
-                // Prioritize pawns already attacked
-                if (opponentAttackers.includes(square)) score += 10;
-                
-                // Prioritize advanced pawns (rank 6 or 7 for white, rank 2 or 3 for black)
-                const rank = parseInt((8 - r).toString());
-                if (moverColor === 'w' && rank >= 6) score += 5;
-                if (moverColor === 'b' && rank <= 3) score += 5;
-                
-                if (score > bestScore) {
-                  bestScore = score;
-                  targetPawn = square;
-                }
-              }
-            }
-          }
-          
-          if (targetPawn) params.targetSquare = targetPawn;
-          break;
-          
-        case 'iron_fortress':
-          // Can be used defensively - protect AI king or find a pawn
-          // Pick a pawn in a central defensive position
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.type === 'p' && piece.color === moverColor) {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-          
-        case 'execution':
-          // Find most valuable enemy piece (not king)
-          let bestTarget = null;
-          let bestValue = 0;
-          const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9 };
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.color === opponentColor && piece.type !== 'k') {
-                if ((pieceValues[piece.type] || 0) > bestValue) {
-                  bestValue = pieceValues[piece.type];
-                  bestTarget = 'abcdefgh'[f] + (8 - r);
-                }
-              }
-            }
-          }
-          if (bestTarget) params.targetSquare = bestTarget;
-          break;
-          
-        case 'mind_control':
-          // Find enemy piece to control (not king)
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.color === opponentColor && piece.type !== 'k') {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-
-        case 'breaking_point': {
-          // Prefer the highest value enemy non-king piece as the epicenter.
-          const pieceValues = { q: 9, r: 5, b: 3, n: 3, p: 1 };
-          let bestTarget = null;
-          let bestValue = -1;
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (!piece || piece.color !== opponentColor || piece.type === 'k') continue;
-              const value = pieceValues[piece.type] || 0;
-              if (value > bestValue) {
-                bestValue = value;
-                bestTarget = 'abcdefgh'[f] + (8 - r);
-              }
-            }
-          }
-          if (bestTarget) params.targetSquare = bestTarget;
-          break;
+    if (!noTargetCards.has(card.id)) {
+      if (card.id === 'peek_card') {
+        const opponentId = gameState.playerIds.find((id) => id !== aiSocketId);
+        if (!opponentId) return { success: false };
+        const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
+        if (opponentCards.length === 0) return { success: false, error: 'No cards to peek' };
+        params.cardIndex = Math.floor(Math.random() * opponentCards.length);
+      } else {
+        const targetSquare = selectAiArcanaTarget(card.id, chess, gameState, moverColor);
+        if (!targetSquare) return { success: false };
+        params.targetSquare = targetSquare;
+        if (card.id === 'metamorphosis') {
+          params.newType = Math.random() < 0.5 ? 'n' : 'b';
         }
-
-        case 'edgerunner_overdrive': {
-          // Pick our own highest-value non-king piece that can legally move.
-          const pieceValues = { q: 9, r: 5, b: 3, n: 3, p: 1 };
-          let bestTarget = null;
-          let bestValue = -1;
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (!piece || piece.color !== moverColor || piece.type === 'k') continue;
-              const square = 'abcdefgh'[f] + (8 - r);
-              const legalMoves = chess.moves({ square, verbose: true }) || [];
-              if (legalMoves.length === 0) continue;
-              const value = pieceValues[piece.type] || 0;
-              if (value > bestValue) {
-                bestValue = value;
-                bestTarget = square;
-              }
-            }
-          }
-          if (bestTarget) params.targetSquare = bestTarget;
-          break;
-        }
-          
-        case 'promotion_ritual':
-          // Find a pawn to promote
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.type === 'p' && piece.color === moverColor) {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-          
-        case 'sanctuary':
-        case 'cursed_square':
-          // Pick a central square
-          params.targetSquare = ['d4', 'd5', 'e4', 'e5'][Math.floor(Math.random() * 4)];
-          break;
-
-        case 'knight_of_storms':
-          // Must target one of AI's knights
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.type === 'n' && piece.color === moverColor) {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-
-        case 'royal_swap':
-          // Must target one of AI's pawns (to swap with king)
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.type === 'p' && piece.color === moverColor) {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-
-        case 'peek_card':
-          // AI automatically peeks at a random opponent card
-          const opponentId = gameState.playerIds.find(id => id !== aiSocketId);
-          if (opponentId) {
-            const opponentCards = gameState.arcanaByPlayer[opponentId] || [];
-            if (opponentCards.length > 0) {
-              // Pick a random card index
-              params.cardIndex = Math.floor(Math.random() * opponentCards.length);
-            } else {
-              return { ok: false, error: 'No cards to peek' };
-            }
-          } else {
-            return { ok: false, error: 'No opponent found' };
-          }
-          break;
-
-        case 'bishops_blessing':
-          // Must target one of AI's bishops
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.type === 'b' && piece.color === moverColor) {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-
-        case 'metamorphosis':
-          // Find a minor piece to transform (not king/queen)
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.color === moverColor && piece.type !== 'k' && piece.type !== 'q') {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                // Transform into a knight or bishop randomly
-                params.newType = Math.random() < 0.5 ? 'n' : 'b';
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-
-        case 'sacrifice':
-          // Sacrifice a low-value piece (pawn preferred)
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.type === 'p' && piece.color === moverColor) {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-          break;
-          
-        default:
-          // For other targeting cards, find any valid own piece
-          for (let r = 0; r < 8; r++) {
-            for (let f = 0; f < 8; f++) {
-              const piece = board[r][f];
-              if (piece && piece.color === moverColor && piece.type !== 'k') {
-                params.targetSquare = 'abcdefgh'[f] + (8 - r);
-                break;
-              }
-            }
-            if (params.targetSquare) break;
-          }
-      }
-      
-      // If no valid target found, don't use the card
-      if (!params.targetSquare && !noTargetCards.includes(card.id)) {
-        return { success: false };
       }
     }
     
