@@ -4782,9 +4782,10 @@ const styles = {
   arcanaCardRow: {
     display: 'flex',
     flexWrap: 'nowrap',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     gap: 8,
-    paddingBottom: 4,
+    padding: '0 4px 4px',
+    scrollPaddingInline: 4,
     alignItems: 'center',
     overflowX: 'auto',
     overflowY: 'hidden',
