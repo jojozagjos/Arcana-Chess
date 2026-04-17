@@ -165,6 +165,15 @@ export const ARCANA_DEFINITIONS = [
     visual: { particles: true, animation: false, cutscene: false },
     // soundId: 'arcana:arcane_cycle',
   },
+  {
+    id: 'pot_of_greed',
+    name: 'Pot of Greed',
+    rarity: 'epic',
+    category: 'utility',
+    description: 'Draw 3 additional cards from your deck. ("That\'s what it does")',
+    visual: { particles: true, animation: true, cutscene: false },
+    endsTurn: true,
+  },
 
   // OFFENSIVE ARCANA - UNCOMMON+
   {

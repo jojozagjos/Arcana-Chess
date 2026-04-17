@@ -127,6 +127,7 @@ export function CardBalancingToolV2({ onBack }) {
   
   // Active visual arcana (for rendering cutscenes/effects)
   const [activeVisualArcana, setActiveVisualArcana] = useState(null);
+  const visiblePawnShields = activeVisualArcana?.arcanaId === 'shield_pawn' ? { w: null, b: null } : pawnShields;
   const [studioRuntimeSession, setStudioRuntimeSession] = useState(null);
   const [studioPieceMotions, setStudioPieceMotions] = useState({});
   const studioRuntimeQueueRef = useRef([]);
@@ -1554,7 +1555,15 @@ export function CardBalancingToolV2({ onBack }) {
               <pointLight position={[0, 5, 0]} intensity={0.6} color="#d8dee9" />
               <Environment preset="night" />
               {!studioCameraRuntimeActive && (
-                <OrbitControls ref={controlsRef} enabled={!studioRuntimeSession} enablePan={false} minDistance={8} maxDistance={20} />
+                <OrbitControls
+                  ref={controlsRef}
+                  enabled={!studioRuntimeSession}
+                  enablePan={false}
+                  minDistance={8}
+                  maxDistance={20}
+                  mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }}
+                  touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
+                />
               )}
 
               {/* Board squares - matches GameScene styling */}
@@ -1574,7 +1583,7 @@ export function CardBalancingToolV2({ onBack }) {
                   const isLastMove = moveHistory.length > 0 && 
                     (moveHistory[moveHistory.length - 1].from === square || 
                      moveHistory[moveHistory.length - 1].to === square);
-                  const isShielded = pawnShields.w?.square === square || pawnShields.b?.square === square;
+                  const isShielded = visiblePawnShields.w?.square === square || visiblePawnShields.b?.square === square;
 
                   // Match GameScene board colors exactly: dark=#3b4252, light=#d8dee9
                   const baseColor = isDark ? '#3b4252' : '#d8dee9';
@@ -1642,7 +1651,7 @@ export function CardBalancingToolV2({ onBack }) {
                 effectsModule={effectsModule}
                 activeVisualArcana={activeVisualArcana}
                 gameState={{ activeEffects, pawnShields }}
-                pawnShields={pawnShields}
+                pawnShields={visiblePawnShields}
               />
 
               <ArcanaStudioRuntimeHost
@@ -1764,16 +1773,16 @@ export function CardBalancingToolV2({ onBack }) {
             )}
             
             {/* Active Shield Status */}
-            {(pawnShields.w?.square || pawnShields.b?.square) && (
+            {(visiblePawnShields.w?.square || visiblePawnShields.b?.square) && (
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontSize: 12 }}>
-                {pawnShields.w?.square && (
+                {visiblePawnShields.w?.square && (
                   <span style={{ color: '#60a5fa', fontWeight: 'bold' }}>
-                    ⚔ White Shield: {pawnShields.w.square} ({shieldTurnCounter.w} turn{shieldTurnCounter.w !== 1 ? 's' : ''})
+                    ⚔ White Shield: {visiblePawnShields.w.square} ({shieldTurnCounter.w} turn{shieldTurnCounter.w !== 1 ? 's' : ''})
                   </span>
                 )}
-                {pawnShields.b?.square && (
+                {visiblePawnShields.b?.square && (
                   <span style={{ color: '#c084fc', fontWeight: 'bold' }}>
-                    ⚔ Black Shield: {pawnShields.b.square} ({shieldTurnCounter.b} turn{shieldTurnCounter.b !== 1 ? 's' : ''})
+                    ⚔ Black Shield: {visiblePawnShields.b.square} ({shieldTurnCounter.b} turn{shieldTurnCounter.b !== 1 ? 's' : ''})
                   </span>
                 )}
               </div>

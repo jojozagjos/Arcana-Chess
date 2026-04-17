@@ -983,6 +983,17 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         result.soundEffect = 'arcana:filtered_cycle';
         break;
 
+      case 'pot_of_greed':
+        result.success = true;
+        result.message = 'Pot of Greed: Drew 3 Arcana cards';
+        result.visualEffect = 'pot_of_greed';
+        result.soundEffect = 'arcana:pot_of_greed';
+        result.stateChanges = {
+          ...result.stateChanges,
+          drawCount: 3,
+        };
+        break;
+
       case 'peek_card':
         result.success = true;
         result.message = 'Peek Card: Revealed one card from opponent\'s hand';

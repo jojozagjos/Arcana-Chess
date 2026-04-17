@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
+import { MOUSE, TOUCH } from 'three';
 import { Chess } from 'chess.js';
 import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
@@ -235,6 +236,19 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }
   }, [isContextLost]);
 
+  useEffect(() => {
+    if (!gameState?.id) return;
+    pendingLastArcanaRef.current = [];
+    lastProcessedArcanaAtRef.current = null;
+    lastActiveVisualKeyRef.current = null;
+    lastSocketArcanaRef.current = { key: null, at: 0 };
+    cardAnimationLockRef.current = false;
+    isCardAnimationPlayingRef.current = false;
+    setCardReveal(null);
+    setActiveVisualArcana(null);
+    setIsCardAnimationPlaying(false);
+  }, [gameState?.id]);
+
   // Safety watchdog: ensure Studio runtime sessions cannot lock controls indefinitely.
   useEffect(() => {
     if (!studioRuntimeSession) return;
@@ -273,6 +287,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   // Helper to convert color name to chess.js color code
   const toColorCode = (color) => color === 'white' ? 'w' : 'b';
   const myColorCode = toColorCode(myColor);
+  const visiblePawnShields = activeVisualArcana?.arcanaId === 'shield_pawn' ? null : gameState?.pawnShields;
 
   const mindControlledEntry = useMemo(() => {
     const entries = gameState?.activeEffects?.mindControlled || [];
@@ -2461,7 +2476,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           selectedSquare={selectedSquare}
           legalTargets={settings.gameplay.showLegalMoves ? legalTargets : []}
           lastMove={settings.gameplay.highlightLastMove ? displayLastMove : null}
-          pawnShields={gameState?.pawnShields}
+          pawnShields={visiblePawnShields}
           blockedEffectSquares={blockedEffectSquares}
           onTileClick={handleTileClick}
           onTileHover={(file, rank, entering) => {
@@ -2563,7 +2578,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             effectsModule={effectsModule}
             activeVisualArcana={activeVisualArcana}
             gameState={gameState}
-            pawnShields={gameState?.pawnShields}
+            pawnShields={visiblePawnShields}
             viewerColorCode={myColorCode}
           />
         )}
@@ -2583,7 +2598,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         )}
 
         {!studioCameraRuntimeActive && (
-          <OrbitControls ref={controlsRef} enabled={!studioRuntimeSession} enablePan={false} maxPolarAngle={Math.PI / 2.2} minDistance={6} maxDistance={20} />
+          <OrbitControls
+            ref={controlsRef}
+            enabled={!studioRuntimeSession}
+            enablePan={false}
+            maxPolarAngle={Math.PI / 2.2}
+            minDistance={6}
+            maxDistance={20}
+            mouseButtons={{ LEFT: MOUSE.PAN, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.ROTATE }}
+            touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
+          />
         )}
       </Canvas>
 
@@ -3532,6 +3556,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   const isMyTurn = currentTurn === toColorCode(myColor);
   const cardRowRef = React.useRef(null);
   const [hoveredStackCardId, setHoveredStackCardId] = React.useState(null);
+  const [hasOverflow, setHasOverflow] = React.useState(false);
 
   // Group cards by ID to handle duplicates
   const groupedCards = React.useMemo(() => {
@@ -3570,6 +3595,10 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
     const row = cardRowRef.current;
     if (!row) return;
 
+    const measureOverflow = () => {
+      setHasOverflow(row.scrollWidth > row.clientWidth + 1);
+    };
+
     const onWheel = (event) => {
       const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
       if (delta === 0) return;
@@ -3577,11 +3606,20 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       row.scrollLeft += delta;
     };
 
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => measureOverflow())
+      : null;
+    if (observer) observer.observe(row);
+    window.addEventListener('resize', measureOverflow);
+    measureOverflow();
+
     row.addEventListener('wheel', onWheel, { passive: false });
     return () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize', measureOverflow);
       row.removeEventListener('wheel', onWheel, { passive: false });
     };
-  }, [cardRowRef]);
+  }, [cardRowRef, groupedCards.length]);
 
   return (
     <div style={styles.arcanaBottomPanel}>
@@ -3615,7 +3653,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
         className="arcana-card-row-scroll"
         style={{
           ...styles.arcanaCardRow,
-          justifyContent: groupedCards.length <= 5 ? 'center' : 'flex-start',
+          justifyContent: hasOverflow ? 'flex-start' : 'center',
         }}
       >
         {groupedCards.length === 0 && (

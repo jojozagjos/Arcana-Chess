@@ -80,6 +80,7 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
       position={currentPos.current}
       castShadow
       onPointerDown={(e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
         e.stopPropagation();
         if (typeof onClickSquare === 'function') onClickSquare(square);
       }}
@@ -236,25 +237,25 @@ function BishopGeometry({ color, emissive }) {
   return (
     <>
       <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.27, 0.3, 0.15, 16]} />
+        <cylinderGeometry args={[0.3, 0.34, 0.14, 20]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.18, 0.27, 0.3, 16]} />
+      <mesh position={[0, 0.25, 0]} castShadow>
+        <cylinderGeometry args={[0.15, 0.2, 0.4, 18]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.4, 0]} castShadow>
-        <cylinderGeometry args={[0.12, 0.18, 0.3, 16]} />
+      <mesh position={[0, 0.5, 0]} castShadow>
+        <cylinderGeometry args={[0.11, 0.15, 0.28, 18]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.65, 0]} castShadow>
-        <sphereGeometry args={[0.12, 16, 12]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
+      <mesh position={[0, 0.72, 0]} castShadow>
+        <sphereGeometry args={[0.15, 20, 16]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.12} metalness={0.38} roughness={0.5} />
       </mesh>
-      {/* Bishop's slit */}
-      <mesh position={[0, 0.72, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <torusGeometry args={[0.04, 0.02, 8, 16]} />
-        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.5} roughness={0.4} />
+      {/* Finial */}
+      <mesh position={[0, 0.89, 0]} castShadow>
+        <sphereGeometry args={[0.055, 14, 12]} />
+        <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.4} roughness={0.45} />
       </mesh>
     </>
   );

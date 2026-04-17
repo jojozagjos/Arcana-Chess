@@ -357,6 +357,42 @@ function validateNonAdjacentCapture(activeEffect, secondTargetSquare, cardName) 
   }
 }
 
+function applyManualCandidateMove(chess, candidate) {
+  const movingPiece = chess.get(candidate.from);
+  if (!movingPiece) {
+    throw new Error(`Invalid move: No piece at ${candidate.from}`);
+  }
+
+  const capturedSquare = candidate.flags && candidate.flags.includes('e')
+    ? `${candidate.to[0]}${candidate.from[1]}`
+    : candidate.to;
+  const capturedPiece = chess.get(capturedSquare);
+
+  chess.remove(candidate.from);
+  if (capturedPiece) chess.remove(capturedSquare);
+
+  const placedPiece = candidate.promotion
+    ? { type: candidate.promotion, color: movingPiece.color }
+    : movingPiece;
+  chess.put(placedPiece, candidate.to);
+
+  const fen = chess.fen();
+  const fenParts = fen.split(' ');
+  fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w';
+  fenParts[3] = '-';
+  if (capturedPiece || movingPiece.type === 'p') {
+    fenParts[4] = '0';
+  } else {
+    fenParts[4] = String(parseInt(fenParts[4] || 0, 10) + 1);
+  }
+  if (movingPiece.color === 'b') {
+    fenParts[5] = String(parseInt(fenParts[5] || 1, 10) + 1);
+  }
+  chess.load(fenParts.join(' '));
+
+  return { movingPiece, capturedPiece, capturedSquare };
+}
+
 /**
  * Helper: Get all friendly pieces on all 4 diagonals from a bishop position
  * Used by Bishop's Blessing to protect diagonal pieces
@@ -1384,9 +1420,39 @@ export class GameManager {
       const toRank = parseInt(candidate.to[1], 10);
       const isForwardTwoSquareAdvance = candidate.from[0] === candidate.to[0]
         && Math.abs(toRank - fromRank) === 2;
+      const pawnRushActive = !!gameState.activeEffects?.pawnRush?.[moverColor];
 
-      if (isForwardTwoSquareAdvance && hasPawnLeftStartingSquareBefore(gameState, candidate.from, moverColor)) {
+      if (isForwardTwoSquareAdvance && !pawnRushActive && hasPawnLeftStartingSquareBefore(gameState, candidate.from, moverColor)) {
         throw new Error('Pawn can move two squares only on its first move');
+      }
+    }
+
+    if (candidate.captured === 'k') {
+      throw new Error('Kings cannot be captured directly; use checkmate to win.');
+    }
+
+    const isArcanaEnhancedMove = !legalMoves.some((m) => {
+      if (m.from !== candidate.from || m.to !== candidate.to) return false;
+      if (candidate.promotion && m.promotion !== candidate.promotion) return false;
+      return true;
+    });
+
+    if (isArcanaEnhancedMove) {
+      const tempChess = new Chess();
+      safeLoadFen(tempChess, chess.fen());
+      applyManualCandidateMove(tempChess, candidate);
+
+      const checkFen = tempChess.fen().split(' ');
+      checkFen[1] = moverColor;
+      if (checkFen.length > 3) checkFen[3] = '-';
+      safeLoadFen(tempChess, checkFen.join(' '));
+
+      const moverStillInCheck = typeof tempChess.isCheck === 'function'
+        ? tempChess.isCheck()
+        : (typeof tempChess.inCheck === 'function' ? tempChess.inCheck() : false);
+
+      if (moverStillInCheck) {
+        throw new Error('Illegal move: cannot leave your king in check.');
       }
     }
 
@@ -1521,22 +1587,7 @@ export class GameManager {
     
     if (isArcanaMove) {
       // Manually execute arcana move (e.g., spectral march through pieces)
-      const movingPiece = chess.get(candidate.from);
-      const capturedSquare = candidate.flags && candidate.flags.includes('e')
-        ? `${candidate.to[0]}${candidate.from[1]}`
-        : candidate.to;
-      const capturedPiece = chess.get(capturedSquare);
-      
-      if (!movingPiece) {
-        throw new Error(`Invalid move: No piece at ${candidate.from}`);
-      }
-      
-      // Remove pieces
-      chess.remove(candidate.from);
-      if (capturedPiece) chess.remove(capturedSquare);
-      
-      // Place piece at destination
-      chess.put(movingPiece, candidate.to);
+      const { movingPiece, capturedPiece } = applyManualCandidateMove(chess, candidate);
       
       // Manually construct result object similar to chess.js move result
       result = {
@@ -1548,23 +1599,6 @@ export class GameManager {
         san: `${movingPiece.type.toUpperCase()}${candidate.to}`, // Simplified SAN
         flags: candidate.flags || ''
       };
-      
-      // Manually toggle turn
-      const fen = chess.fen();
-      const fenParts = fen.split(' ');
-      fenParts[1] = fenParts[1] === 'w' ? 'b' : 'w'; // Swap turn
-      fenParts[3] = '-'; // Clear en passant
-      // Increment halfmove clock or reset on capture
-      if (capturedPiece || movingPiece.type === 'p') {
-        fenParts[4] = '0';
-      } else {
-        fenParts[4] = String(parseInt(fenParts[4] || 0) + 1);
-      }
-      // Increment fullmove number if black just moved
-      if (movingPiece.color === 'b') {
-        fenParts[5] = String(parseInt(fenParts[5] || 1) + 1);
-      }
-      chess.load(fenParts.join(' '));
     } else {
       // Use chess.js for standard moves
       const moveInput = { from: candidate.from, to: candidate.to };
@@ -1749,18 +1783,23 @@ export class GameManager {
     // Squire Support: protected piece bounces back when captured (along with attacker)
     if (result.captured && gameState.activeEffects.squireSupport && gameState.activeEffects.squireSupport.length > 0) {
       const protectedSquare = gameState.activeEffects.squireSupport.find(s => s.square === result.to);
-      if (protectedSquare) {
-        // Both pieces bounce back to their original squares
-        const capturedPiece = { type: result.captured, color: opponentColor };
-        const attackingPiece = { type: result.piece, color: moverColor };
+      const isProtectedOwner = protectedSquare
+        && (!protectedSquare.ownerColor || protectedSquare.ownerColor === opponentColor);
+      if (isProtectedOwner) {
+        const capturedSquare = this.getCapturedSquare(result);
+        const attackingOriginal = getFenPieceAtSquare(preMovefen, result.from);
+        const capturedOriginal = getFenPieceAtSquare(preMovefen, capturedSquare);
+        if (!attackingOriginal || !capturedOriginal) {
+          throw new Error('Squire Support bounce failed: could not resolve original pieces');
+        }
         
         // After chess.move(), the attacker is at result.to and the defender is gone
         // We need to move the attacker back to result.from and restore the defender to result.to
         chess.remove(result.to);    // Remove attacker from target square
         
         // Place them back on original squares
-        chess.put(attackingPiece, result.from);  // Attacker back to source
-        chess.put(capturedPiece, result.to);     // Captured piece back to target
+        chess.put(attackingOriginal, result.from);  // Attacker back to source
+        chess.put(capturedOriginal, capturedSquare); // Defender back to captured square
         
         result.squireBounce = { from: result.from, to: result.to };
         result.captured = null;  // No actual capture occurred
@@ -2672,6 +2711,10 @@ export class GameManager {
       // Map both players to this lobby
       for (const pid of finishedGameState.playerIds) {
         lobbyManager.socketToLobby.set(pid, rematchLobby.id);
+        const playerSocket = this.io?.sockets?.sockets?.get?.(pid) || this.io?.sockets?.sockets?.[pid];
+        if (playerSocket && typeof playerSocket.join === 'function') {
+          playerSocket.join(rematchLobby.id);
+        }
       }
       
       // Notify both players of the rematch lobby

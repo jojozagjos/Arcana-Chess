@@ -15,6 +15,23 @@ function validateArcanaTargeting(arcanaId, chess, params, moverColor, gameState)
   return validateArcanaUse(chess, arcanaId, params, moverColor, gameState);
 }
 
+function hasBothKings(chess) {
+  const board = chess.board();
+  let whiteKing = 0;
+  let blackKing = 0;
+
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const piece = board[rank][file];
+      if (!piece || piece.type !== 'k') continue;
+      if (piece.color === 'w') whiteKing += 1;
+      else if (piece.color === 'b') blackKing += 1;
+    }
+  }
+
+  return whiteKing === 1 && blackKing === 1;
+}
+
 /**
  * Applies arcana card effects to the game state
  * @param {string} socketId - Socket ID of the player using the arcana
@@ -85,6 +102,17 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     if (!result) {
       console.warn(`Arcana ${effectiveArcanaId} failed to apply (returned null)`);
       continue; // Skip this arcana if it failed to apply
+    }
+
+    // Global hard-stop safety: no Arcana effect may remove either king.
+    if (!hasBothKings(chess)) {
+      try {
+        chess.load(preArcanaFen);
+      } catch {
+        // If rollback fails, fail closed by skipping this arcana application.
+      }
+      console.warn(`Arcana ${effectiveArcanaId} reverted: card effect attempted to remove or duplicate a king.`);
+      continue;
     }
 
     params = result.params || params;
@@ -287,6 +315,8 @@ function applyArcanaEffect(arcanaId, context) {
       return applyVision(context);
     case 'line_of_sight':
       return applyLineOfSight(context);
+    case 'pot_of_greed':
+      return applyPotOfGreed(context);
     case 'filtered_cycle':
       return applyArcaneCycle(context);
     case 'quiet_thought':
@@ -1000,6 +1030,39 @@ function applyArcaneCycle({ gameState, socketId, params }) {
   const newCard = makeArcanaInstance(picked);
   gameState.arcanaByPlayer[socketId].push(newCard);
   return { params: { drewCard: newCard.id, discardIndex, category: targetCategory || 'any' } };
+}
+
+function applyPotOfGreed({ gameState, socketId, io }) {
+  gameState.arcanaByPlayer ||= {};
+  gameState.arcanaByPlayer[socketId] ||= [];
+
+  const drawn = [];
+  for (let i = 0; i < 3; i++) {
+    const picked = makeArcanaInstance(pickWeightedArcana());
+    if (!picked) continue;
+    gameState.arcanaByPlayer[socketId].push(picked);
+    drawn.push(picked);
+  }
+
+  if (io && drawn.length > 0) {
+    for (const pid of gameState.playerIds || []) {
+      if (pid.startsWith('AI-')) continue;
+      for (const card of drawn) {
+        io.to(pid).emit('arcanaDrawn', {
+          playerId: socketId,
+          arcana: pid === socketId ? card : null,
+          reason: 'Pot of Greed',
+        });
+      }
+    }
+  }
+
+  return {
+    params: {
+      drawCount: drawn.length,
+      drawnCards: drawn.map((card) => card.id),
+    },
+  };
 }
 
 function applyQuietThought({ chess, gameState, moverColor }) {
