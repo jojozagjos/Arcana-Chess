@@ -9,6 +9,7 @@ import { STUDIO_CARD_OVERRIDE as card_mind_control } from './cards/mind_control.
 import { STUDIO_CARD_OVERRIDE as card_pawn_guard } from './cards/pawn_guard.js';
 import { STUDIO_CARD_OVERRIDE as card_peek_card } from './cards/peek_card.js';
 import { STUDIO_CARD_OVERRIDE as card_poison_touch } from './cards/poison_touch.js';
+import { STUDIO_CARD_OVERRIDE as card_pot_of_greed } from './cards/pot_of_greed.js';
 import { STUDIO_CARD_OVERRIDE as card_promotion_ritual } from './cards/promotion_ritual.js';
 import { STUDIO_CARD_OVERRIDE as card_shield_pawn } from './cards/shield_pawn.js';
 import { STUDIO_CARD_OVERRIDE as card_time_freeze } from './cards/time_freeze.js';
@@ -25,6 +26,7 @@ export const STUDIO_CARD_OVERRIDES = {
   "pawn_guard": card_pawn_guard,
   "peek_card": card_peek_card,
   "poison_touch": card_poison_touch,
+  "pot_of_greed": card_pot_of_greed,
   "promotion_ritual": card_promotion_ritual,
   "shield_pawn": card_shield_pawn,
   "time_freeze": card_time_freeze,

@@ -237,11 +237,11 @@ function BishopGeometry({ color, emissive }) {
   return (
     <>
       <mesh position={[0, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.3, 0.34, 0.14, 20]} />
+        <cylinderGeometry args={[0.28, 0.34, 0.14, 20]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
       <mesh position={[0, 0.25, 0]} castShadow>
-        <cylinderGeometry args={[0.15, 0.2, 0.4, 18]} />
+        <cylinderGeometry args={[0.15, 0.23, 0.4, 18]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
       <mesh position={[0, 0.5, 0]} castShadow>
@@ -321,12 +321,12 @@ function KingGeometry({ color, emissive }) {
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.5} roughness={0.4} />
       </mesh>
       {/* Cross on top */}
-      <mesh position={[0, 0.7, 0]} castShadow>
+      <mesh position={[0, 0.67, 0]} castShadow>
         <boxGeometry args={[0.08, 0.3, 0.08]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.6} roughness={0.3} />
       </mesh>
-      <mesh position={[0, 0.78, 0]} castShadow>
-        <boxGeometry args={[0.2, 0.08, 0.08]} />
+      <mesh position={[0, 0.75, 0]} castShadow>
+        <boxGeometry args={[0.2, 0.05, 0.08]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.2} metalness={0.6} roughness={0.3} />
       </mesh>
     </>
