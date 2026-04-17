@@ -528,8 +528,8 @@ function OnlineHostForm({ initialLobby = null, onLobbyChange } = {}) {
               value={whoStarts}
               onChange={(e) => setWhoStarts(e.target.value)}
             >
-              <option value="white">White (move first)</option>
-              <option value="black">Black (move second)</option>
+              <option value="white">You</option>
+              <option value="black">Opponent</option>
               <option value="random">Random</option>
             </select>
           </label>
@@ -675,8 +675,8 @@ function AIGameForm({ rematchSettings = null }) {
               value={playerColor}
               onChange={(e) => setPlayerColor(e.target.value)}
             >
-              <option value="white">White (move first)</option>
-              <option value="black">Black (move second)</option>
+              <option value="white">You</option>
+              <option value="black">Opponent</option>
               <option value="random">Random</option>
             </select>
           </label>
