@@ -342,6 +342,8 @@ function getMovesForColor(chess, color) {
 const AI_PIECE_VALUES = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 };
 const AI_CHECK_BONUS = 35;
 const AI_MATE_SCORE = 100000;
+const AI_QUIESCENCE_MAX_DEPTH = 4;
+const AI_DRAW_THREAT_LIMIT = 500;
 
 function getOppositeColor(color) {
   return color === 'w' ? 'b' : 'w';
@@ -349,11 +351,82 @@ function getOppositeColor(color) {
 
 function getAiDifficultyConfig(aiDifficulty) {
   const configs = {
-    Scholar: { thinkTime: 450, depth: 1, searchBudgetMs: 250, useChance: 0.12, drawChance: 0.18, randomness: 0.6 },
-    Knight: { thinkTime: 900, depth: 2, searchBudgetMs: 700, useChance: 0.32, drawChance: 0.2, randomness: 0.18 },
-    Monarch: { thinkTime: 1400, depth: 4, searchBudgetMs: 1600, useChance: 0.66, drawChance: 0.22, randomness: 0.03 },
+    Scholar: { thinkTime: 500, depth: 2, searchBudgetMs: 500, useChance: 0.18, drawChance: 0.06, randomness: 0.22 },
+    Knight: { thinkTime: 900, depth: 3, searchBudgetMs: 1100, useChance: 0.36, drawChance: 0.1, randomness: 0.08 },
+    Monarch: { thinkTime: 1500, depth: 5, searchBudgetMs: 2200, useChance: 0.58, drawChance: 0.14, randomness: 0.01 },
   };
   return configs[aiDifficulty] || configs.Scholar;
+}
+
+function getKingSquare(chess, color) {
+  const board = chess.board();
+  for (let rank = 0; rank < 8; rank += 1) {
+    for (let file = 0; file < 8; file += 1) {
+      const piece = board[rank][file];
+      if (piece?.type === 'k' && piece.color === color) {
+        return `${'abcdefgh'[file]}${8 - rank}`;
+      }
+    }
+  }
+  return null;
+}
+
+function isTacticalMove(move) {
+  return !!(
+    move?.captured ||
+    move?.promotion ||
+    (move?.flags && (move.flags.includes('c') || move.flags.includes('e'))) ||
+    (move?.san && (move.san.includes('+') || move.san.includes('#')))
+  );
+}
+
+function scoreAiMoveOrdering(move) {
+  let score = 0;
+  if (move.captured) score += (AI_PIECE_VALUES[move.captured] || 0) * 10 - (AI_PIECE_VALUES[move.piece] || 0);
+  if (move.promotion) score += (AI_PIECE_VALUES[move.promotion] || 0) * 5;
+  if (move.flags && move.flags.includes('c')) score += 24;
+  if (move.flags && move.flags.includes('e')) score += 26;
+  if (move.san && move.san.includes('#')) score += 5000;
+  if (move.san && move.san.includes('+')) score += 220;
+  if (['d4', 'd5', 'e4', 'e5', 'c4', 'c5'].includes(move.to)) score += 14;
+  if (['f3', 'c3', 'f6', 'c6'].includes(move.to)) score += 18;
+  const file = move.to.charCodeAt(0) - 97;
+  const rank = parseInt(move.to[1], 10);
+  score += (3.5 - Math.abs(file - 3.5)) + (3.5 - Math.abs(rank - 4.5));
+  return score;
+}
+
+function shouldAiDrawArcana(chess, gameState, moverColor, settings, availableCards) {
+  if (!Array.isArray(availableCards) || availableCards.length === 0) return false;
+  if (typeof chess.isCheck === 'function' && chess.isCheck()) return false;
+
+  const enemyColor = getOppositeColor(moverColor);
+  const enemyMoves = getMovesForColor(chess, enemyColor);
+  const threatenedPieces = [];
+  let highestImmediateThreat = 0;
+
+  for (const move of enemyMoves) {
+    if (move.san && (move.san.includes('+') || move.san.includes('#'))) {
+      return false;
+    }
+    if (!move.captured) continue;
+    const piece = chess.get(move.to);
+    if (!piece || piece.color !== moverColor) continue;
+    const value = AI_PIECE_VALUES[piece.type] || 0;
+    highestImmediateThreat = Math.max(highestImmediateThreat, value);
+    threatenedPieces.push({ square: move.to, value, type: piece.type });
+  }
+
+  if (highestImmediateThreat >= AI_DRAW_THREAT_LIMIT) return false;
+
+  const score = evaluateAIBoard(chess, moverColor, gameState);
+  const threatenedMaterial = threatenedPieces.reduce((sum, item) => sum + item.value, 0);
+  const safetyMargin = score - threatenedMaterial * 0.35;
+  if (safetyMargin < -35) return false;
+
+  const lowHandBonus = Math.max(0, 8 - availableCards.length) * 0.02;
+  const strategicAppetite = Math.min(0.28, settings.drawChance + lowHandBonus + (safetyMargin > 90 ? 0.08 : 0));
+  return safetyMargin > 8 && Math.random() < strategicAppetite;
 }
 
 function getBoardSquareBonus(piece, square, perspectiveColor) {
@@ -480,32 +553,96 @@ function evaluateAIBoard(chess, perspectiveColor, gameState = {}) {
     }
   }
 
+  const ownMoves = getMovesForColor(chess, perspectiveColor);
+  const enemyColor = getOppositeColor(perspectiveColor);
+  const enemyMoves = getMovesForColor(chess, enemyColor);
+  score += Math.min(ownMoves.length, 80) * 2;
+  score -= Math.min(enemyMoves.length, 80) * 1;
+
+  const threatenedSquares = new Set(enemyMoves.filter((move) => move.captured).map((move) => move.to));
+  for (const square of threatenedSquares) {
+    const piece = chess.get(square);
+    if (!piece || piece.color !== perspectiveColor) continue;
+    const pieceValue = AI_PIECE_VALUES[piece.type] || 0;
+    if (piece.type === 'k') {
+      score -= 180;
+    } else if (piece.type === 'q') {
+      score -= 32;
+    } else if (piece.type === 'r') {
+      score -= 22;
+    } else if (piece.type === 'b' || piece.type === 'n') {
+      score -= 14;
+    } else {
+      score -= 8;
+    }
+    if (pieceValue >= AI_PIECE_VALUES.r) score -= 12;
+  }
+
+  const kingSquare = getKingSquare(chess, perspectiveColor);
+  if (kingSquare) {
+    const kingFile = kingSquare.charCodeAt(0) - 97;
+    const kingRank = parseInt(kingSquare[1], 10);
+    const castledHome = kingSquare === (perspectiveColor === 'w' ? 'g1' : 'g8') || kingSquare === (perspectiveColor === 'w' ? 'c1' : 'c8');
+    score += castledHome ? 30 : -8;
+    score += -Math.abs(kingFile - 3.5) * 2 - Math.abs(kingRank - (perspectiveColor === 'w' ? 1.5 : 6.5)) * 0.5;
+  }
+
   return score;
 }
 
 function orderAiMoves(moves, chess) {
-  const pieceValues = AI_PIECE_VALUES;
-  return [...moves].sort((a, b) => {
-    const scoreMove = (move) => {
-      let score = 0;
-      if (move.captured) score += (pieceValues[move.captured] || 0) * 10 - (pieceValues[move.piece] || 0);
-      if (move.promotion) score += (pieceValues[move.promotion] || 0) * 5;
-      if (move.flags && move.flags.includes('c')) score += 20;
-      if (move.flags && move.flags.includes('e')) score += 22;
-      if (move.san && move.san.includes('#')) score += 5000;
-      if (move.san && move.san.includes('+')) score += 180;
-      if (['d4', 'd5', 'e4', 'e5'].includes(move.to)) score += 12;
-      const file = move.to.charCodeAt(0) - 97;
-      const rank = parseInt(move.to[1], 10);
-      score += (3.5 - Math.abs(file - 3.5)) + (3.5 - Math.abs(rank - 4.5));
-      return score;
-    };
-
-    return scoreMove(b) - scoreMove(a);
-  });
+  return [...moves].sort((a, b) => scoreAiMoveOrdering(b) - scoreAiMoveOrdering(a));
 }
 
-function searchAiMove(chess, gameState, perspectiveColor, depth, deadlineMs, plyFromRoot = 0, rootMoves = null) {
+function quiescenceSearch(chess, gameState, perspectiveColor, alpha, beta, deadlineMs, plyFromRoot = 0) {
+  if (Date.now() > deadlineMs) {
+    throw new Error('AI search timed out');
+  }
+
+  const standPat = evaluateAIBoard(chess, perspectiveColor, gameState);
+  const maximizing = chess.turn() === perspectiveColor;
+
+  if (maximizing) {
+    if (standPat >= beta) return { score: beta, move: null };
+    alpha = Math.max(alpha, standPat);
+  } else {
+    if (standPat <= alpha) return { score: alpha, move: null };
+    beta = Math.min(beta, standPat);
+  }
+
+  if (plyFromRoot >= AI_QUIESCENCE_MAX_DEPTH) {
+    return { score: standPat, move: null };
+  }
+
+  const tacticalMoves = orderAiMoves((chess.moves({ verbose: true }) || []).filter(isTacticalMove), chess);
+  let bestScore = standPat;
+
+  for (const move of tacticalMoves) {
+    if (Date.now() > deadlineMs) {
+      throw new Error('AI search timed out');
+    }
+
+    const applied = chess.move({ from: move.from, to: move.to, promotion: move.promotion });
+    if (!applied) continue;
+
+    const child = quiescenceSearch(chess, gameState, perspectiveColor, alpha, beta, deadlineMs, plyFromRoot + 1);
+    chess.undo();
+
+    if (maximizing) {
+      if (child.score > bestScore) bestScore = child.score;
+      alpha = Math.max(alpha, bestScore);
+      if (alpha >= beta) break;
+    } else {
+      if (child.score < bestScore) bestScore = child.score;
+      beta = Math.min(beta, bestScore);
+      if (beta <= alpha) break;
+    }
+  }
+
+  return { score: bestScore, move: null };
+}
+
+function searchAiMove(chess, gameState, perspectiveColor, depth, deadlineMs, plyFromRoot = 0, rootMoves = null, alpha = -Infinity, beta = Infinity) {
   if (Date.now() > deadlineMs) {
     throw new Error('AI search timed out');
   }
@@ -516,7 +653,7 @@ function searchAiMove(chess, gameState, perspectiveColor, depth, deadlineMs, ply
   }
 
   if (depth <= 0) {
-    return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+    return quiescenceSearch(chess, gameState, perspectiveColor, alpha, beta, deadlineMs, plyFromRoot);
   }
 
   const maximizing = chess.turn() === perspectiveColor;
@@ -525,16 +662,30 @@ function searchAiMove(chess, gameState, perspectiveColor, depth, deadlineMs, ply
   const orderedMoves = orderAiMoves(legalMoves, chess);
 
   for (const move of orderedMoves) {
+    if (Date.now() > deadlineMs) {
+      throw new Error('AI search timed out');
+    }
+
     const applied = chess.move({ from: move.from, to: move.to, promotion: move.promotion });
     if (!applied) continue;
 
-    const child = searchAiMove(chess, gameState, perspectiveColor, depth - 1, deadlineMs, plyFromRoot + 1, null);
+    const child = searchAiMove(chess, gameState, perspectiveColor, depth - 1, deadlineMs, plyFromRoot + 1, null, alpha, beta);
     chess.undo();
 
     const score = child.score;
     if ((maximizing && score > bestScore) || (!maximizing && score < bestScore)) {
       bestScore = score;
       bestMove = move;
+    }
+
+    if (maximizing) {
+      alpha = Math.max(alpha, bestScore);
+    } else {
+      beta = Math.min(beta, bestScore);
+    }
+
+    if (alpha >= beta) {
+      break;
     }
   }
 
@@ -557,7 +708,7 @@ function selectBestAiMove(chess, gameState, perspectiveColor, config, rootMoves 
 
   for (let depth = 1; depth <= config.depth; depth += 1) {
     try {
-      const result = searchAiMove(searchChess, gameState, perspectiveColor, depth, deadlineMs, 0, legalMoves);
+      const result = searchAiMove(searchChess, gameState, perspectiveColor, depth, deadlineMs, 0, legalMoves, -Infinity, Infinity);
       if (result?.move) {
         bestMove = result.move;
         bestScore = result.score;
@@ -2840,9 +2991,7 @@ export class GameManager {
       const aiCanDraw = aiLastDrawPly < 0 || currentPly - aiLastDrawPly >= DRAW_COOLDOWN_PLIES;
       
       // AI should NOT draw while in check
-      const aiInCheck = chess.isCheck();
-      
-      if (!aiUsedCardThisTurn && aiCanDraw && !aiInCheck && Math.random() < settings.drawChance) {
+      if (!aiUsedCardThisTurn && aiCanDraw && shouldAiDrawArcana(chess, gameState, moverColor, settings, availableCards)) {
         const newCard = pickWeightedArcana();
         const newInst = makeArcanaInstance(newCard);
         gameState.arcanaByPlayer[aiSocketId].push(newInst);

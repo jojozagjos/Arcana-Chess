@@ -156,6 +156,7 @@ export function MainMenu({
                   <span className="update-log-date">Apr 13, 2026</span>
                 </div>
                 <ul className="update-log-list">
+                  <li>Reworked AI behavior for more strategic decision-making.</li>
                   <li>Completely reworked Breaking Point visuals with a heavier rupture impact language, reactive fracture beams, and stronger displacement read.</li>
                   <li>Completely reworked Edgerunner Overdrive visuals into a high-speed cyber sprint style with lane trails, surge gates, and clearer path legibility.</li>
                   <li>Cutscene beat pulses are now better synchronized to key impact moments for high-rarity card readability during fast combat turns.</li>
