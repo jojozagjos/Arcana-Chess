@@ -152,15 +152,16 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
-                  <span>v1.3.9  ??? Arcana Visual Rework + Timing Sync</span>
-                  <span className="update-log-date">Apr 13, 2026</span>
+                  <span>v1.4.0  Arcana Sequencing + Rematch + AI Stability</span>
+                  <span className="update-log-date">Apr 17, 2026</span>
                 </div>
                 <ul className="update-log-list">
-                  <li>Reworked AI behavior for more strategic decision-making.</li>
-                  <li>Completely reworked Breaking Point visuals with a heavier rupture impact language, reactive fracture beams, and stronger displacement read.</li>
-                  <li>Completely reworked Edgerunner Overdrive visuals into a high-speed cyber sprint style with lane trails, surge gates, and clearer path legibility.</li>
-                  <li>Cutscene beat pulses are now better synchronized to key impact moments for high-rarity card readability during fast combat turns.</li>
-                  <li>Runtime cutscene flow remains aligned with server resolution timing to reduce visual ambiguity around effect completion.</li>
+                  <li>Arcana cutscenes and particle timelines now queue after card-use reveal animations instead of overlapping at the same time.</li>
+                  <li>Arcana hand stacking polish: low-card hands center cleanly while preserving full left-scroll access for larger hands.</li>
+                  <li>Stack badge hover now tracks card hover motion so multipliers like 2x move together with the card.</li>
+                  <li>Multiplayer rematch lobby hydration was hardened to prevent returning players from landing on an empty host form softlock.</li>
+                  <li>Monarch AI tuning improved card draw cadence, reduced repetition loops, and added stronger blunder resistance against major-piece losses.</li>
+                  <li>Pawn Rush now correctly supports frontline two-square advances, including valid promotion-rank outcomes.</li>
                 </ul>
               </div>
 
@@ -187,7 +188,7 @@ export function MainMenu({
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
               <span className="update-log-pill-dot" />
-              <span>v1.3.9</span>
+              <span>v1.4.0</span>
               <span className="update-log-pill-label">What's new</span>
             </button>
           )}
@@ -295,7 +296,13 @@ function HostLobbyScreen({ onBack, initialLobby = null, onOpenReplay, rematchAIS
           </button>
         </div>
 
-        {tab === 'online' && <OnlineHostForm initialLobby={initialLobby} onLobbyChange={setCurrentLobby} />}
+        {tab === 'online' && (
+          <OnlineHostForm
+            key={currentLobby?.id || initialLobby?.id || 'online-lobby-form'}
+            initialLobby={currentLobby || initialLobby}
+            onLobbyChange={setCurrentLobby}
+          />
+        )}
         {tab === 'ai' && <AIGameForm rematchSettings={rematchAISettings} />}
         {tab === 'replay' && <ReplayImportForm onOpenReplay={onOpenReplay} />}
       </div>

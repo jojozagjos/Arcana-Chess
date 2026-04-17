@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import ReactDOM from 'react-dom';
 
 // ArcanaCard component: displays card background, icon, and name
-export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo, deferLoad = false, style = {}, disableHover = false, disableTooltip = false }) {
+export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUsed, hoverInfo, deferLoad = false, style = {}, disableHover = false, disableTooltip = false, disableHoverScale = false, stackCount = 1 }) {
   const isHiddenCard = !!arcana?.hidden;
   const [hovered, setHovered] = useState(false);
   const [tooltipPos, setTooltipPos] = useState(null);
@@ -104,7 +104,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
 
   const handleMouseEnter = (e) => {
     if (disableHover) return;
-    if (onClick) e.currentTarget.style.transform = 'scale(1.05)';
+    if (onClick && !disableHoverScale) e.currentTarget.style.transform = 'scale(1.05)';
     const rect = cardRef.current.getBoundingClientRect();
     setTooltipAnchor(rect);
     setHovered(true);
@@ -114,7 +114,7 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
 
   const handleMouseLeave = (e) => {
     if (disableHover) return;
-    if (onClick) e.currentTarget.style.transform = 'scale(1)';
+    if (onClick && !disableHoverScale) e.currentTarget.style.transform = 'scale(1)';
     setHovered(false);
     setTooltipPos(null);
     setTooltipAnchor(null);
@@ -334,6 +334,26 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
             }}
           >
             USED
+          </div>
+        )}
+
+        {stackCount > 1 && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 6,
+              right: 6,
+              background: 'rgba(136,192,208,0.95)',
+              color: '#2b2b2b',
+              padding: '2px 6px',
+              borderRadius: 4,
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              zIndex: 3,
+              pointerEvents: 'none',
+            }}
+          >
+            ×{stackCount}
           </div>
         )}
 

@@ -8,7 +8,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Select a pawn to grant temporary protection: it cannot be captured for one enemy turn.',
     visual: { particles: false, animation: true, cutscene: false },
     visualLifecycle: { mode: 'untilTurnEnd', autoClearOnServerTurnEnd: true },
-    soundId: 'arcana:shield',
+    // soundId: 'arcana:shield',
   },
   {
     id: 'squire_support',
@@ -18,7 +18,7 @@ export const ARCANA_DEFINITIONS = [
     description: 'Choose a piece. If it would be captured on the opponent\'s next move, it instead survives with the attacker bouncing back one square.',
     visual: { particles: true, animation: true, cutscene: false },
     visualLifecycle: { mode: 'clientOnly', duration: 'untilOpponentTurn' },
-    soundId: 'arcana:squire_support',
+    // soundId: 'arcana:squire_support',
   },
   {
     id: 'pawn_guard',
@@ -27,7 +27,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Select a pawn. The first friendly piece immediately behind it in the same column is shielded for 1 turn (only that piece is protected).',
     visual: { particles: false, animation: true, cutscene: false },
-    soundId: 'arcana:pawn_guard',
+    // soundId: 'arcana:pawn_guard',
   },
   {
     id: 'iron_fortress',
@@ -36,7 +36,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'All your pawns cannot be captured for one enemy turn.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:iron_fortress',
+    // soundId: 'arcana:iron_fortress',
   },
 
   // DEFENSIVE ARCANA - RARE+
@@ -47,7 +47,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Prevent any friendly piece on a diagonal from your bishop from being captured this turn.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:bishops_blessing',
+    // soundId: 'arcana:bishops_blessing',
   },
   {
     id: 'sanctuary',
@@ -56,7 +56,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Select a square to designate it as safe - no captures can occur there for 4 turns.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:sanctuary',
+    // soundId: 'arcana:sanctuary',
     endsTurn: true,
   },
   {
@@ -66,7 +66,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Skip opponent\'s next turn entirely. On their following turn, they must make a board move before using or drawing Arcana.',
     visual: { particles: true, animation: true, cutscene: true },
-    soundId: 'arcana:time_freeze',
+    // soundId: 'arcana:time_freeze',
   },
   {
     id: 'divine_intervention',
@@ -75,7 +75,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'defense',
     description: 'Activate to protect yourself. When you enter check, a pawn spawns to block the attack.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:divine_intervention',
+    // soundId: 'arcana:divine_intervention',
   },
   
   // MOVEMENT ARCANA - COMMON
@@ -86,7 +86,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'All your pawns can move two squares this turn, even if already moved.',
     visual: { particles: false, animation: false, cutscene: false },
-    soundId: 'arcana:pawn_rush',
+    // soundId: 'arcana:pawn_rush',
   },
   {
     id: 'soft_push',
@@ -95,7 +95,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'Move any piece one square toward the center of the board. Must still be a legal move and cannot capture.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:soft_push',
+    // soundId: 'arcana:soft_push',
   },
 
   // MOVEMENT ARCANA - UNCOMMON+
@@ -106,7 +106,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'Allow a rook to pass through one friendly piece this turn.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:spectral_march',
+    // soundId: 'arcana:spectral_march',
   },
   {
     id: 'phantom_step',
@@ -115,7 +115,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'Any piece can move like a knight for one turn.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:phantom_step',
+    // soundId: 'arcana:phantom_step',
   },
   {
     id: 'knight_of_storms',
@@ -124,7 +124,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'Move your knight to any square within a 2-square radius.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:knight_of_storms',
+    // soundId: 'arcana:knight_of_storms',
   },
   {
     id: 'temporal_echo',
@@ -133,7 +133,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'For this turn, all your pieces gain extra moves in the same direction as your last move, up to the same distance. Normal piece moves still work.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:temporal_echo',
+    // soundId: 'arcana:temporal_echo',
   },
   {
     id: 'royal_swap',
@@ -142,7 +142,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'Select one of your pawns to swap positions with your king.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:royal_swap',
+    // soundId: 'arcana:royal_swap',
     endsTurn: true,
   },
   {
@@ -152,7 +152,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'movement',
     description: 'Your queen can move twice this turn.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:queens_gambit',
+    // soundId: 'arcana:queens_gambit',
   },
   
   // OFFENSIVE ARCANA - COMMON
@@ -163,7 +163,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'If your next move is a capture, draw 1 additional common Arcana card after the capture resolves.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:arcane_cycle',
+    // soundId: 'arcana:arcane_cycle',
   },
 
   // OFFENSIVE ARCANA - UNCOMMON+
@@ -174,7 +174,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'When you capture a piece, poison a random adjacent enemy piece. Poisoned pieces die after 6 turns if not healed with Antidote.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:poison_touch',
+    // soundId: 'arcana:poison_touch',
   },
   {
     id: 'double_strike',
@@ -183,7 +183,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'After capturing with one piece, a second piece must capture. If the second capture lands, that second piece returns to where it started (capture then retreat). If you cannot capture, your turn ends.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:double_strike',
+    // soundId: 'arcana:double_strike',
   },
   {
     id: 'berserker_rage',
@@ -192,7 +192,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'After capturing, the same piece gets one more capture, and that second capture must land on a nonadjacent square to the first kill. If you cannot do this, your turn ends.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:berserker_rage',
+    // soundId: 'arcana:berserker_rage',
   },
   {
     id: 'castle_breaker',
@@ -201,7 +201,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'Disable the opponent\'s ability to castle for 3 turns.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:castle_breaker',
+    // soundId: 'arcana:castle_breaker',
   },
   {
     id: 'sacrifice',
@@ -210,7 +210,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Select one of your pieces to destroy it and gain 2 arcana cards (stronger piece = stronger cards).',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:sacrifice',
+    // soundId: 'arcana:sacrifice',
   },
   {
     id: 'sharpshooter',
@@ -219,7 +219,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'Your bishop can capture any piece on its diagonals, ignoring pieces in between.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:sharpshooter',
+    // soundId: 'arcana:sharpshooter',
   },
   {
     id: 'chain_lightning',
@@ -228,7 +228,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'Capture bounces to 1 adjacent enemy piece (cannot capture queens or kings).',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:chain_lightning',
+    // soundId: 'arcana:chain_lightning',
   },
   {
     id: 'execution',
@@ -237,7 +237,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'offense',
     description: 'Select an enemy piece and destroy it.',
     visual: { particles: true, animation: true, cutscene: true },
-    soundId: 'arcana:execution',
+    // soundId: 'arcana:execution',
     endsTurn: true,
   },
   
@@ -249,7 +249,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'resurrection',
     description: 'Revive up to two captured pawns.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:necromancy',
+    // soundId: 'arcana:necromancy',
     endsTurn: true,
   },
   {
@@ -259,7 +259,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'transformation',
     description: 'Select one of your pieces to transform it into a different piece type (not king or queen).',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:metamorphosis',
+    // soundId: 'arcana:metamorphosis',
   },
   {
     id: 'mirror_image',
@@ -268,7 +268,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'transformation',
     description: 'Select one of your pieces to create a duplicate if there is a free square next to it (lasts 3 turns).',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:mirror_image',
+    // soundId: 'arcana:mirror_image',
   },
   {
     id: 'astral_rebirth',
@@ -277,7 +277,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'resurrection',
     description: 'Resurrect up to 2 captured pieces onto your back rank. Higher-value pieces are revived first.',
     visual: { particles: true, animation: true, cutscene: true },
-    soundId: 'arcana:astral_rebirth',
+    // soundId: 'arcana:astral_rebirth',
     endsTurn: true,
   },
   {
@@ -287,7 +287,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'transformation',
     description: 'Select a pawn and promote it to a queen. You gain 2 consecutive moves.',
     visual: { particles: true, animation: true, cutscene: true },
-    soundId: 'arcana:promotion_ritual',
+    // soundId: 'arcana:promotion_ritual',
     endsTurn: false,
   },
   
@@ -299,7 +299,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Only you can see all opponent move destinations for the rest of your current turn.',
     visual: { particles: false, animation: false, cutscene: false },
-    soundId: 'arcana:vision',
+    // soundId: 'arcana:vision',
   },
   {
     id: 'line_of_sight',
@@ -308,7 +308,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Only you can see one chosen piece\'s legal moves and hover risk preview for the rest of your current turn.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:line_of_sight',
+    // soundId: 'arcana:line_of_sight',
   },
   {
     id: 'filtered_cycle',
@@ -317,7 +317,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Choose a category and draw a weighted common/uncommon Arcana card from that category.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:filtered_cycle',
+    // soundId: 'arcana:filtered_cycle',
   },
   {
     id: 'quiet_thought',
@@ -326,7 +326,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Only you can see the pieces threatening your king for your next 3 turns.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:quiet_thought',
+    // soundId: 'arcana:quiet_thought',
   },
   {
     id: 'map_fragments',
@@ -335,7 +335,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Only you can see three strongest predicted enemy move targets for the rest of your current turn.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:map_fragments',
+    // soundId: 'arcana:map_fragments',
   },
   {
     id: 'peek_card',
@@ -344,7 +344,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Only you can see one chosen card from your opponent\'s hand.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:peek_card',
+    // soundId: 'arcana:peek_card',
   },
   // TACTICAL / UTILITY - UNCOMMON+
   {
@@ -354,7 +354,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Hide your piece positions from opponent for one turn.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:fog_of_war',
+    // soundId: 'arcana:fog_of_war',
   },
   {
     id: 'en_passant_master',
@@ -363,7 +363,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'All your pawns can perform en passant on any adjacent enemy pawn.',
     visual: { particles: false, animation: false, cutscene: false },
-    soundId: 'arcana:en_passant_master',
+    // soundId: 'arcana:en_passant_master',
   },
   {
     id: 'antidote',
@@ -372,7 +372,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Select a poisoned piece to cleanse it and prevent its death. Can only target pieces with active poison.',
     visual: { particles: true, animation: true, cutscene: false },
-    soundId: 'arcana:antidote',
+    // soundId: 'arcana:antidote',
   },
   {
     id: 'cursed_square',
@@ -381,7 +381,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Select a square to mark it as cursed - any piece that lands there is destroyed (lasts 4 turns).',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:cursed_square',
+    // soundId: 'arcana:cursed_square',
     endsTurn: true,
   },
   {
@@ -391,7 +391,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Randomly shuffle 3 pieces on each side to different positions.',
     visual: { particles: true, animation: false, cutscene: false },
-    soundId: 'arcana:chaos_theory',
+    // soundId: 'arcana:chaos_theory',
     endsTurn: true,
   },
   {
@@ -401,7 +401,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Reverse the last two moves.',
     visual: { particles: true, animation: false, cutscene: true },
-    soundId: 'arcana:time_travel',
+    // soundId: 'arcana:time_travel',
     endsTurn: true,
   },
   {
@@ -411,7 +411,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'utility',
     description: 'Select an enemy piece to seize control of it. On your next move, you must move that piece first before moving any of your own pieces. It cannot capture the king.',
     visual: { particles: true, animation: true, cutscene: true },
-    soundId: 'arcana:mind_control',
+    // soundId: 'arcana:mind_control',
     endsTurn: false,
   },
   {
@@ -421,7 +421,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'special',
     description: 'Target an enemy non-king piece: destroy it. Adjacent enemy non-king pieces are pushed 1 square directly away if the destination is empty.',
     visual: { particles: true, animation: true, cutscene: true },
-    soundId: 'arcana:breaking_point',
+    // soundId: 'arcana:breaking_point',
     iconPath: '/cards/icons/breaking-point.png',
     endsTurn: true,
   },
@@ -432,7 +432,7 @@ export const ARCANA_DEFINITIONS = [
     category: 'special',
     description: 'Target one of your non-king pieces. It instantly makes 2 best legal moves; if either move captures, it gains a 3rd move.',
     visual: { particles: true, animation: true, cutscene: true },
-    soundId: 'arcana:edgerunner_overdrive',
+    // soundId: 'arcana:edgerunner_overdrive',
     backgroundPath: '/cards/backgrounds/Cyberpunk.png',
     iconPath: '/cards/icons/edgerunner-overdrive.png',
     endsTurn: true,

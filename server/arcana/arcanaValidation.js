@@ -149,16 +149,21 @@ function validatePawnRush(chess, from, to, color) {
   const direction = color === 'w' ? 1 : -1;
   if (toRank !== fromRank + (2 * direction)) return null;
 
-  // Prevent pawns from reaching their promotion rank via Pawn Rush (no promotion handling)
   const promotionRank = color === 'w' ? 8 : 1;
-  if (toRank === promotionRank) return null;
+  const isPromotion = toRank === promotionRank;
 
   const middleRank = fromRank + direction;
   const middleSquare = String.fromCharCode(fromFile) + middleRank;
   if (chess.get(middleSquare)) return null;
   if (chess.get(to)) return null;
 
-  return { from, to, piece: 'p', color };
+  return {
+    from,
+    to,
+    piece: 'p',
+    color,
+    ...(isPromotion ? { promotion: 'q' } : {}),
+  };
 }
 
 function validateSharpshooter(chess, from, to, color) {

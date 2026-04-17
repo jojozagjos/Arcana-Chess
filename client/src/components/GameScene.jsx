@@ -302,6 +302,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const lastSocketArcanaRef = useRef({ key: null, at: 0 });
   const firedRuntimeVfxRef = useRef(new Map());
   const cardAnimationLockRef = useRef(false);
+  const isCardAnimationPlayingRef = useRef(false);
   const OPPONENT_DRAW_REVEAL_MS = 1800;
   const FILTERED_CYCLE_CATEGORY_META = {
     offense: { label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
@@ -1293,6 +1294,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   // Listen for arcana drawn events
   useEffect(() => {
+    isCardAnimationPlayingRef.current = isCardAnimationPlaying;
+  }, [isCardAnimationPlaying]);
+
+  useEffect(() => {
     const handleArcanaDrawn = (data) => {
       soundManager.play('cardDraw');
       appendCombatLog({ type: 'arcana_drawn', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} drew ${data.arcana?.name || 'a card'}`, playerId: data.playerId, arcana: data.arcana ? { id: data.arcana.id, name: data.arcana.name, rarity: data.arcana.rarity } : null });
@@ -1368,6 +1373,20 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       const shouldPlayAnimation = arcanaId !== 'divine_intervention' && (isCutsceneCard || hasStudioAnimation);
       const visualKey = `${arcanaId}:${owner || 'unknown'}`;
       const cutsceneStartDelayMs = Math.max(0, Number(params?.cutsceneStartDelayMs || 0));
+      const shouldQueueForCardAnimation = shouldPlayAnimation && (isCardAnimationPlayingRef.current || cardAnimationLockRef.current);
+
+      if (shouldQueueForCardAnimation) {
+        pendingLastArcanaRef.current.push({
+          ...payload,
+          arcanaId,
+          params: {
+            ...(params || {}),
+            fen: latestFenRef.current || gameState?.fen,
+            cutsceneStartDelayMs,
+          },
+        });
+        return;
+      }
 
       if (shouldPlayAnimation && CUTSCENE_BOARD_LOCK_CARDS.has(arcanaId)) {
         const preArcanaFen = typeof params?.preArcanaFen === 'string' ? params.preArcanaFen : '';
@@ -1381,7 +1400,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         lastProcessedArcanaAtRef.current = payload.at || Date.now();
         lastActiveVisualKeyRef.current = visualKey;
         const runPlayback = () => {
-          playStudioArcanaRuntime({ ...payload, params: { ...(params || {}), fen: gameState?.fen } });
+          playStudioArcanaRuntime({ ...payload, params: { ...(params || {}), fen: latestFenRef.current || gameState?.fen } });
         };
         if (cutsceneStartDelayMs > 0) {
           const delayed = setTimeout(runPlayback, cutsceneStartDelayMs);
@@ -3512,6 +3531,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
   const toColorCode = (color) => color === 'white' ? 'w' : 'b';
   const isMyTurn = currentTurn === toColorCode(myColor);
   const cardRowRef = React.useRef(null);
+  const [hoveredStackCardId, setHoveredStackCardId] = React.useState(null);
 
   // Group cards by ID to handle duplicates
   const groupedCards = React.useMemo(() => {
@@ -3593,7 +3613,10 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       <div
         ref={cardRowRef}
         className="arcana-card-row-scroll"
-        style={styles.arcanaCardRow}
+        style={{
+          ...styles.arcanaCardRow,
+          justifyContent: groupedCards.length <= 5 ? 'center' : 'flex-start',
+        }}
       >
         {groupedCards.length === 0 && (
           <div style={styles.arcanaEmpty}>No Arcana available. Draw a card!</div>
@@ -3605,18 +3628,24 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
           return (
             <div
               key={card.id}
-              style={{ position: 'relative' }}
+              style={{
+                position: 'relative',
+                transition: 'transform 0.18s ease',
+                transform: hoveredStackCardId === card.id ? 'scale(1.05)' : 'scale(1)',
+                transformOrigin: 'center center',
+              }}
+              onMouseEnter={() => setHoveredStackCardId(card.id)}
+              onMouseLeave={() => setHoveredStackCardId(null)}
             >
               <ArcanaCard
                 arcana={card}
                 size="small"
+                stackCount={count}
+                disableHoverScale
                 isSelected={isSelected}
                 hoverInfo={card.endsTurn ? `${card.description}\n\n⚠️ ENDS YOUR TURN` : card.description}
                 onClick={() => isCardAnimationPlaying ? null : onSelectArcana(isSelected ? null : card.id)}
               />
-              {count > 1 && (
-                <div style={styles.cardCountBadge}>×{count}</div>
-              )}
             </div>
           );
         })}
@@ -4010,7 +4039,6 @@ function GameEndOverlay({ outcome, mySocketId, rematchVote, rematchVoteCount, re
             <div>Captures: {stats.captures}</div>
             <div>Arcana Used: {stats.arcanaUsed}</div>
             <div>Cards Drawn: {stats.cardsDrawn}</div>
-            <div>Effects Triggered: {stats.statusEvents}</div>
           </div>
         )}
         <div style={styles.gameEndButtons}>

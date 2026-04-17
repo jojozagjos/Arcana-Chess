@@ -71,7 +71,7 @@ export function createAiCore({ safeLoadFen }) {
         depth: 6,
         searchBudgetMs: 2600,
         useChance: 0.6,
-        drawChance: 0.12,
+        drawChance: 0.22,
         randomness: 0.01,
         explorationChance: 0.03,
         topMoveWindow: 24,
@@ -158,7 +158,7 @@ export function createAiCore({ safeLoadFen }) {
   }
 
   function shouldAiDrawArcana(chess, gameState, moverColor, settings, availableCards) {
-    if (!Array.isArray(availableCards) || availableCards.length === 0) return false;
+    const handCount = Array.isArray(availableCards) ? availableCards.length : 0;
     if (typeof chess.isCheck === 'function' && chess.isCheck()) return false;
 
     const enemyColor = getOppositeColor(moverColor);
@@ -185,8 +185,8 @@ export function createAiCore({ safeLoadFen }) {
     const safetyMargin = score - threatenedMaterial * 0.35;
     if (safetyMargin < -35) return false;
 
-    const lowHandBonus = Math.max(0, 8 - availableCards.length) * 0.02;
-    const strategicAppetite = Math.min(0.28, settings.drawChance + lowHandBonus + (safetyMargin > 90 ? 0.08 : 0));
+    const lowHandBonus = Math.max(0, 8 - handCount) * 0.02;
+    const strategicAppetite = Math.min(0.45, settings.drawChance + lowHandBonus + (safetyMargin > 90 ? 0.08 : 0));
     const enemyCaptureCount = enemyMoves.filter((move) => move.captured).length;
     if (enemyCaptureCount >= 3) return false;
 
@@ -462,15 +462,34 @@ export function createAiCore({ safeLoadFen }) {
       if (piece.type === 'k') {
         score -= 180;
       } else if (piece.type === 'q') {
-        score -= 32;
+        score -= 120;
       } else if (piece.type === 'r') {
-        score -= 22;
+        score -= 44;
       } else if (piece.type === 'b' || piece.type === 'n') {
-        score -= 14;
+        score -= 28;
       } else {
-        score -= 8;
+        score -= 14;
       }
       if (pieceValue >= AI_PIECE_VALUES.r) score -= 12;
+    }
+
+    const recentFenHistory = Array.isArray(gameState?.moveHistory) ? gameState.moveHistory.slice(-14) : [];
+    if (recentFenHistory.length > 0) {
+      const positionKey = getAiPositionKey(chess);
+      let repeats = 0;
+      for (const fen of recentFenHistory) {
+        if (typeof fen !== 'string') continue;
+        const fenKey = fen.split(' ').slice(0, 4).join(' ');
+        if (fenKey === positionKey) repeats += 1;
+      }
+      if (repeats > 0) {
+        const rawPenalty = 22 * repeats;
+        if (score > 80) {
+          score -= rawPenalty * 1.8;
+        } else {
+          score -= rawPenalty;
+        }
+      }
     }
 
     const kingSquare = getKingSquare(chess, perspectiveColor);

@@ -256,9 +256,8 @@ function generatePawnRushMoves(chess, square, color) {
   const twoSquaresRank = rank + (direction * 2);
   const oneSquareRank = rank + direction;
   
-  // Block moves that would reach the promotion rank (no handling for promotion via Pawn Rush)
   const promotionRank = color === 'w' ? 8 : 1;
-  if (twoSquaresRank === promotionRank) return moves;
+  const isPromotion = twoSquaresRank === promotionRank;
   
   if (twoSquaresRank >= 1 && twoSquaresRank <= 8) {
     const oneSquareAhead = String.fromCharCode(97 + file) + oneSquareRank;
@@ -273,6 +272,7 @@ function generatePawnRushMoves(chess, square, color) {
         color,
         flags: 'b', // big pawn move
         san: twoSquaresAhead,
+        ...(isPromotion ? { promotion: 'q' } : {}),
       });
     }
   }
