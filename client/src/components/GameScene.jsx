@@ -162,6 +162,7 @@ function getControlledPieceEntry(gameState, square, controllerColor) {
 export function GameScene({ gameState, initialReplayPayload, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const MAX_STUDIO_RUNTIME_MS = 14000;
   const CUTSCENE_BOARD_LOCK_CARDS = new Set(['execution', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive']);
+  const PUBLIC_SHARED_VISUAL_ARCANA = new Set(['necromancy', 'astral_rebirth']);
   const [showMenu, setShowMenu] = useState(false);
   // Panels are always visible in the in-game menu (no collapse)
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -223,6 +224,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const contextRestoreTimerRef = useRef(null);
   const replayFenHistoryRef = useRef([]);
   const prevReplayIndexRef = useRef(0);
+  const isReplayModeRef = useRef(false);
   const studioRuntimeQueueRef = useRef([]);
   const studioCameraRuntimeActive = Boolean(
     studioRuntimeSession
@@ -256,7 +258,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     pendingLastArcanaRef.current = [];
     lastProcessedArcanaAtRef.current = null;
     lastActiveVisualKeyRef.current = null;
-    lastSocketArcanaRef.current = { key: null, at: 0 };
+    lastSocketArcanaRef.current = { eventId: null, key: null, at: 0 };
     cardAnimationLockRef.current = false;
     isCardAnimationPlayingRef.current = false;
     setCardReveal(null);
@@ -302,13 +304,18 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   // Helper to convert color name to chess.js color code
   const toColorCode = (color) => color === 'white' ? 'w' : 'b';
   const myColorCode = toColorCode(myColor);
-  const visiblePawnShields = activeVisualArcana?.arcanaId === 'shield_pawn' ? null : gameState?.pawnShields;
-
   const mindControlledEntry = useMemo(() => {
     const entries = gameState?.activeEffects?.mindControlled || [];
     const currentColorCode = myColor === 'white' ? 'w' : 'b';
     return entries.find((entry) => (entry?.controller || entry?.controlledBy) === currentColorCode) || null;
   }, [gameState?.activeEffects?.mindControlled, myColor]);
+
+  const visiblePawnShields = isCardAnimationPlaying
+    ? null
+    : (activeVisualArcana?.arcanaId === 'shield_pawn' ? null : gameState?.pawnShields);
+  const hasAnyFogVisual = Boolean(activeFogEffects?.w || activeFogEffects?.b);
+  const hasAnyTimeFrozen = Boolean(gameState?.activeEffects?.timeFrozen?.w || gameState?.activeEffects?.timeFrozen?.b);
+  const hasLocalTimeFreezeLock = Boolean(myColorCode && gameState?.activeEffects?.timeFreezeArcanaLock?.[myColorCode]);
 
   // Track move keys for which we've already played a sound (de-dup across async paths)
   const playedMoveKeysRef = useRef(new Set());
@@ -329,11 +336,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const pendingLastArcanaRef = useRef([]);
   const lastProcessedArcanaAtRef = useRef(null);
   const lastActiveVisualKeyRef = useRef(null);
-  const lastSocketArcanaRef = useRef({ key: null, at: 0 });
+  const lastSocketArcanaRef = useRef({ eventId: null, key: null, at: 0 });
   const firedRuntimeVfxRef = useRef(new Map());
   const cardAnimationLockRef = useRef(false);
   const isCardAnimationPlayingRef = useRef(false);
   const OPPONENT_DRAW_REVEAL_MS = 1800;
+  const SOCKET_ARCANA_DEDUPE_MS = 1200;
   const FILTERED_CYCLE_CATEGORY_META = {
     offense: { label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
     defense: { label: 'Defense', hint: 'Protection and survival', glyph: 'O' },
@@ -394,7 +402,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   const playMoveSoundOnce = useCallback((dedupeKey, isCapture) => {
     const now = Date.now();
-    const ttlMs = 2500;
+    const ttlMs = 900;
     for (const [key, ts] of recentMoveSoundKeysRef.current.entries()) {
       if (now - ts > ttlMs) recentMoveSoundKeysRef.current.delete(key);
     }
@@ -515,6 +523,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const exitReplayMode = () => {
     setIsReplayPlaying(false);
     setIsReplayMode(false);
+    setActiveVisualArcana(null);
+    setStudioRuntimeSession(null);
+    setStudioPieceMotions({});
+    setCardReveal(null);
     setReplayFrames([]);
     setReplayEvents([]);
     setReplayMeta(null);
@@ -556,6 +568,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     setIsReplayPlaying(false);
     setReplayPanelTab('events');
     setIsReplayMode(true);
+    setActiveVisualArcana(null);
+    setStudioRuntimeSession(null);
+    setStudioPieceMotions({});
+    setCardReveal(null);
     setSelectedSquare(null);
     setLegalTargets([]);
     setTargetingMode(null);
@@ -985,6 +1001,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     }
   }, [ascendedInfo, triggerAscensionScreenFx]);
 
+  useEffect(() => {
+    isReplayModeRef.current = isReplayMode;
+  }, [isReplayMode]);
+
   // Clear hover threat indicators when selection/turn/actions change
   useEffect(() => {
     setHoverThreatSources(new Set());
@@ -1099,7 +1119,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     let runtimeSessionId = null;
 
     if (eventCard && hasPlayableStudioTimeline) {
-      const session = createArcanaStudioRuntimeSession(eventCard, playbackArcanaEvent.params || {});
+      const runtimeEventParams = {
+        ...(playbackArcanaEvent.params || {}),
+        eventId: playbackArcanaEvent?.eventId || null,
+      };
+      const session = createArcanaStudioRuntimeSession(eventCard, runtimeEventParams);
       const durationMs = Math.min(MAX_STUDIO_RUNTIME_MS, Math.max(0, session.durationMs || 0));
       syncDurationMs = durationMs;
       visualClearTimeout = Math.max(visualClearTimeout, durationMs + 220);
@@ -1118,6 +1142,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       scheduleArcanaStudioEvents(eventCard, {
         eventParams: {
           ...(playbackArcanaEvent.params || {}),
+          eventId: playbackArcanaEvent?.eventId || null,
           cardId: playbackArcanaEvent.arcanaId,
         },
         registerTimeout: (timeoutId) => timeoutsRef.current.push(timeoutId),
@@ -1212,12 +1237,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   useEffect(() => {
     if (!lastArcanaEvent) return;
 
+    const incomingEventId = lastArcanaEvent?.eventId || null;
     const targetSquare = lastArcanaEvent?.params?.targetSquare || lastArcanaEvent?.params?.square || '';
-    const incomingKey = `${lastArcanaEvent.arcanaId || ''}:${targetSquare}`;
-    if (
-      lastSocketArcanaRef.current.key === incomingKey
-      && (Date.now() - lastSocketArcanaRef.current.at) < 6500
-    ) {
+    const incomingKey = `${lastArcanaEvent.arcanaId || ''}:${lastArcanaEvent.owner || ''}:${targetSquare}`;
+    if (incomingEventId && lastSocketArcanaRef.current.eventId && lastSocketArcanaRef.current.eventId === incomingEventId) {
+      return;
+    }
+    if (!incomingEventId && lastSocketArcanaRef.current.key === incomingKey && (Date.now() - lastSocketArcanaRef.current.at) < SOCKET_ARCANA_DEDUPE_MS) {
       return;
     }
 
@@ -1230,20 +1256,15 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       return;
     }
 
-    // Otherwise process immediately, but avoid duplicating an active visual
-    const key = `${lastArcanaEvent.arcanaId}:${lastArcanaEvent.owner}`;
-    if (lastActiveVisualKeyRef.current === key) {
-      lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
-      return;
-    }
+    // Otherwise process immediately.
     lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
-    lastActiveVisualKeyRef.current = key;
+    lastActiveVisualKeyRef.current = `${lastArcanaEvent.arcanaId}:${lastArcanaEvent.owner}:${lastArcanaEvent.at || Date.now()}`;
 
     const playback = playStudioArcanaRuntime(lastArcanaEvent);
     return () => {
       if (playback?.cleanup) playback.cleanup();
     };
-  }, [lastArcanaEvent, playStudioArcanaRuntime]);
+  }, [lastArcanaEvent, playStudioArcanaRuntime, SOCKET_ARCANA_DEDUPE_MS]);
 
   // When card animation finishes, flush any queued arcana events so visuals play after animation
   useEffect(() => {
@@ -1253,14 +1274,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     // Process queued events in order, but only one at a time to avoid overlap
     const next = pendingLastArcanaRef.current.shift();
     if (!next) return;
-    // avoid duplicates if we've just started the same visual
-    const nextKey = `${next.arcanaId}:${next.owner}`;
-    if (lastActiveVisualKeyRef.current === nextKey) {
-      lastProcessedArcanaAtRef.current = next.at || Date.now();
-      return;
-    }
     lastProcessedArcanaAtRef.current = next.at || Date.now();
-    lastActiveVisualKeyRef.current = nextKey;
+    lastActiveVisualKeyRef.current = `${next.arcanaId}:${next.owner}:${next.at || Date.now()}`;
 
     playStudioArcanaRuntime(next);
   }, [isCardAnimationPlaying, playStudioArcanaRuntime]);
@@ -1329,6 +1344,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
+      if (isReplayModeRef.current) return;
       soundManager.play('cardDraw');
       appendCombatLog({ type: 'arcana_drawn', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} drew ${data.arcana?.name || 'a card'}`, playerId: data.playerId, arcana: data.arcana ? { id: data.arcana.id, name: data.arcana.name, rarity: data.arcana.rarity } : null });
       // If this draw was triggered by Focus Fire (bonus on capture), play its arcana sound
@@ -1361,6 +1377,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     };
 
     const handleArcanaUsed = (data) => {
+      if (isReplayModeRef.current) return;
       console.log('[CLIENT] Received arcanaUsed event:', data);
       soundManager.play('cardUse');
       appendCombatLog({ type: 'arcana_used', text: `${data.playerId === socket?.id ? 'You' : 'Opponent'} used ${data.arcana?.name || data.arcana?.id || 'Arcana'}`, playerId: data.playerId, arcana: data.arcana ? { id: data.arcana.id, name: data.arcana.name, rarity: data.arcana.rarity } : null });
@@ -1370,11 +1387,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     };
 
     const handleAscended = () => {
+      if (isReplayModeRef.current) return;
       soundManager.play('ascension');
       triggerAscensionScreenFx();
     };
 
     const handleArcanaTriggered = (payload) => {
+      if (isReplayModeRef.current) return;
       // Play sound effect for arcana activation, except skip focus_fire here
       try {
         if (!(payload && payload.arcanaId === 'focus_fire')) {
@@ -1389,8 +1408,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       const arcanaId = rawArcanaId === 'arcane_cycle' ? 'filtered_cycle' : rawArcanaId;
       const params = payload?.params;
       const owner = payload?.owner;
-      const triggerKey = `${arcanaId || ''}:${params?.targetSquare || params?.square || ''}`;
-      lastSocketArcanaRef.current = { key: triggerKey, at: Date.now() };
+      const triggerTarget = params?.targetSquare || params?.square || '';
+      const triggerEventId = payload?.eventId || null;
+      const triggerKey = `${arcanaId || ''}:${owner || ''}:${triggerTarget}`;
+      lastSocketArcanaRef.current = { eventId: triggerEventId, key: triggerKey, at: Date.now() };
 
       const isCutsceneCard = Boolean(payload?.visual?.cutscene);
       // Also check if there's a Studio card override with actual animation data (objects or camera tracks)
@@ -1442,7 +1463,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       // Client-side highlights for utility cards - ONLY show if YOU used the card
       const isMyCard = owner === socket?.id;
-      if (!isMyCard && !shouldPlayAnimation) return; // Don't show opponent's private card highlights
+      const shouldShareBoardVisual = PUBLIC_SHARED_VISUAL_ARCANA.has(arcanaId);
+      if (!isMyCard && !shouldPlayAnimation && !shouldShareBoardVisual) return; // Don't show opponent's private card highlights
       
       switch (arcanaId) {
         case 'necromancy': {
@@ -1572,7 +1594,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       timeoutsRef.current.push(revealFlipTimeout);
 
       // Clean up the revealKey after a delay to allow re-use in future turns
-      setTimeout(() => recentlyRevealedPeekKeysRef.current.delete(revealKey), 5000);
+      const revealKeyCleanupTimeout = setTimeout(() => recentlyRevealedPeekKeysRef.current.delete(revealKey), 5000);
+      timeoutsRef.current.push(revealKeyCleanupTimeout);
     };
 
     const handlePeekCardEmpty = (data) => {
@@ -2165,8 +2188,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     const nextIndex = replayIndex;
     prevReplayIndexRef.current = nextIndex;
 
-    // Ignore first frame render and reverse scrub for transient playback.
-    if (nextIndex <= 0 || nextIndex <= prevIndex) return;
+    // Reverse scrub should clear transient replay-only visuals immediately.
+    if (nextIndex <= prevIndex) {
+      setActiveVisualArcana(null);
+      setStudioRuntimeSession(null);
+      setStudioPieceMotions({});
+      return;
+    }
+
+    // Ignore first frame render for transient playback.
+    if (nextIndex <= 0) return;
 
     const frame = replayFrames[nextIndex] || null;
     const eventsInRange = (replayEvents || []).filter((event, idx) => {
@@ -2594,6 +2625,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             activeVisualArcana={activeVisualArcana}
             gameState={gameState}
             pawnShields={visiblePawnShields}
+            showFog={hasAnyFogVisual && !isCardAnimationPlaying}
+            suppressShieldEffects={isCardAnimationPlaying}
             viewerColorCode={myColorCode}
           />
         )}
@@ -2617,6 +2650,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             ref={controlsRef}
             enabled={!studioRuntimeSession}
             enablePan={false}
+            enableDamping
+            dampingFactor={0.085}
             maxPolarAngle={Math.PI / 2.2}
             minDistance={6}
             maxDistance={20}
@@ -3191,11 +3226,25 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             <div
               style={{
                 ...styles.peekRevealedCardWrap,
-                transform: peekRevealFlipped ? 'rotateY(0deg) scale(1)' : 'rotateY(86deg) scale(0.92)',
+                transform: peekRevealFlipped ? 'rotateY(0deg) scale(1)' : 'rotateY(180deg) scale(0.92)',
                 opacity: peekRevealFlipped ? 1 : 0.35,
+                transformStyle: 'preserve-3d',
               }}
             >
-              <ArcanaCard arcana={peekCardRevealed.card} disableHover disableTooltip />
+              {peekRevealFlipped ? (
+                <ArcanaCard arcana={peekCardRevealed.card} disableHover disableTooltip />
+              ) : (
+                <div style={{
+                  ...styles.cardBack,
+                  width: 200,
+                  height: 300,
+                  backfaceVisibility: 'hidden',
+                  transform: 'rotateY(180deg)',
+                }}>
+                  <div style={styles.cardBackInner}>?</div>
+                  <div style={styles.cardBackLabel}>Revealing...</div>
+                </div>
+              )}
             </div>
             <div style={styles.peekMetaRow}>
               <span style={{ ...styles.peekRarityBadge, color: getRarityColor(peekCardRevealed.card?.rarity || 'common') }}>
@@ -3291,12 +3340,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       {Boolean(
         activeVisualArcana?.arcanaId === 'time_freeze'
-        || gameState?.activeEffects?.timeFrozen?.w
-        || gameState?.activeEffects?.timeFrozen?.b
-        || gameState?.activeEffects?.timeFreezeArcanaLock?.w
-        || gameState?.activeEffects?.timeFreezeArcanaLock?.b
-      ) && (
+        || hasAnyTimeFrozen
+        || hasLocalTimeFreezeLock
+      ) && !isCardAnimationPlaying && (
         <div style={styles.timeFreezeMonochromeOverlay} />
+      )}
+
+      {activeVisualArcana?.arcanaId === 'edgerunner_overdrive' && !isCardAnimationPlaying && (
+        <div style={styles.edgerunnerMonochromeOverlay} />
       )}
 
       {cardReveal && !showMenu && !isReplayMode && (
@@ -3323,18 +3374,18 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       )}
 
       {/* Fog of War effect particles - persist while fog is active */}
-      {activeFogEffects?.[myColorCode] && (
+      {hasAnyFogVisual && !isCardAnimationPlaying && (
         <ParticleErrorBoundary>
           <Suspense fallback={null}>
             <ParticleOverlay
-              key={`fog-${myColorCode}`}
+              key={`fog-${activeFogEffects?.w ? 'w' : ''}-${activeFogEffects?.b ? 'b' : ''}`}
               type="fog"
-            rarity="rare"
-            active={true}
-            style={{ opacity: 0.58 }}
-            density={0.8}
-          />
-        </Suspense>
+              rarity="rare"
+              active={true}
+              style={{ opacity: 0.58 }}
+              density={0.8}
+            />
+          </Suspense>
         </ParticleErrorBoundary>
       )}
 
@@ -3507,9 +3558,21 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, blockedEff
         <group key={`${file}-${rank}`} position={[file - 3.5, 0, rank - 3.5]}>
           <mesh
             receiveShadow
-            onPointerDown={() => onTileClick(file, rank)}
+            onPointerDown={(e) => {
+              const button = typeof e.button === 'number' ? e.button : (typeof e.nativeEvent?.button === 'number' ? e.nativeEvent.button : 0);
+              if (button !== 0) {
+                e.stopPropagation();
+                e.preventDefault();
+                return;
+              }
+              onTileClick(file, rank);
+            }}
             onPointerOver={(e) => { e.stopPropagation(); setHoveredSquare(sq); onTileHover && onTileHover(file, rank, true); }}
             onPointerOut={(e) => { e.stopPropagation(); setHoveredSquare(null); onTileHover && onTileHover(file, rank, false); }}
+            onContextMenu={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+            }}
           >
             <boxGeometry args={[1, 0.1, 1]} />
             <meshStandardMaterial
@@ -4051,9 +4114,9 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
               <ParticleOverlay
                 type="draw"
                 rarity={arcana ? arcana.rarity : 'common'}
-              active={true}
-            />
-          </Suspense>
+                active={true}
+              />
+            </Suspense>
           </ParticleErrorBoundary>
         )}
       </div>
@@ -4785,6 +4848,15 @@ const styles = {
     zIndex: 11,
     backdropFilter: 'grayscale(1) contrast(1.05) saturate(0.35)',
     background: 'rgba(210, 222, 238, 0.08)',
+    mixBlendMode: 'screen',
+  },
+  edgerunnerMonochromeOverlay: {
+    position: 'absolute',
+    inset: 0,
+    pointerEvents: 'none',
+    zIndex: 11,
+    backdropFilter: 'grayscale(0.78) contrast(1.12) saturate(0.42)',
+    background: 'rgba(102, 255, 209, 0.07)',
     mixBlendMode: 'screen',
   },
   arcanaBottomPanel: {

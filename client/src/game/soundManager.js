@@ -38,25 +38,31 @@ class SoundManager {
   }
 
   // Register arcana sounds using ARCANA_DEFINITIONS
+  // By default this registers path strings and avoids eagerly preloading every arcana
+  // (which causes many network requests and noisy 404s when files are missing).
+  // Pass `eager = true` to retain the old preload behavior.
   // This generates namespaced keys like:
   // - 'arcana:shield_pawn' -> '/sounds/arcana/shield_pawn.mp3' (card id fallback)
   // - 'arcana:shield' -> '/sounds/arcana/shield.mp3' (explicit soundId alias)
-  registerArcanaSounds(basePath = '/sounds/arcana') {
+  registerArcanaSounds(basePath = '/sounds/arcana', eager = false) {
     const map = {};
     for (const arc of ARCANA_DEFINITIONS) {
       const idKey = `arcana:${arc.id}`;
-      map[idKey] = `${basePath}/${arc.id}.mp3`;
+      const path = `${basePath}/${arc.id}.mp3`;
+      if (eager) map[idKey] = path; else this.sounds[idKey] = path;
 
-      // If definition declares an explicit arcana sound id (e.g. arcana:shield), preload that too.
+      // If definition declares an explicit arcana sound id (e.g. arcana:shield), register that too.
       const explicit = typeof arc?.soundId === 'string' ? arc.soundId.trim() : '';
       if (explicit.startsWith('arcana:')) {
         const token = explicit.slice('arcana:'.length);
         if (token) {
-          map[explicit] = `${basePath}/${token}.mp3`;
+          const expKey = explicit;
+          const expPath = `${basePath}/${token}.mp3`;
+          if (eager) map[expKey] = expPath; else this.sounds[expKey] = expPath;
         }
       }
     }
-    this.preload(map);
+    if (eager) this.preload(map);
   }
 
   // ===== Music support =====
@@ -243,53 +249,61 @@ class SoundManager {
     if (!this.enabled) return;
     // Skip silently if soundName is null/undefined (intentionally silent)
     if (!soundName) return;
-    let sound = this.sounds[soundName];
-    if (!sound) {
+    // Sounds registered via registerArcanaSounds may be plain path strings (lazy registration)
+    // or already-created HTMLAudioElement instances (preloaded). Handle both.
+    let entry = this.sounds[soundName];
+    let audio = null;
+    let requestedVolume = typeof options.volume === 'number' ? Math.max(0, Math.min(2, options.volume)) : 1;
+
+    // If entry is a string, treat as a path and create an Audio element lazily.
+    if (typeof entry === 'string' && entry) {
+      const path = entry;
+      audio = new Audio(path);
+      audio.preload = 'auto';
+      audio._ready = false;
+      audio.addEventListener('canplaythrough', () => { audio._ready = true; }, { once: true });
+      try { audio.load(); } catch (e) {}
+      // Store the created audio element for subsequent reuse
+      this.sounds[soundName] = audio;
+    } else if (entry instanceof HTMLAudioElement || (entry && typeof entry.play === 'function' && typeof entry.addEventListener === 'function')) {
+      audio = entry;
+    } else {
+      // Fallback: resolve a standard path (ui: or arcana:) and lazily create audio
       const fallbackPath = this.resolveSfxPath(soundName);
       if (fallbackPath) {
-        const audio = new Audio(fallbackPath);
+        audio = new Audio(fallbackPath);
         audio.preload = 'auto';
         audio._ready = false;
         audio.addEventListener('canplaythrough', () => { audio._ready = true; }, { once: true });
         try { audio.load(); } catch (e) {}
         this.sounds[soundName] = audio;
-        sound = audio;
       }
     }
-    if (!sound) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn(`Sound "${soundName}" not found`);
-      }
+
+    if (!audio) {
+      if (process.env.NODE_ENV !== 'production') console.warn(`Sound "${soundName}" not found`);
       return;
     }
 
-    const requestedVolume = typeof options.volume === 'number' ? Math.max(0, Math.min(2, options.volume)) : 1;
-
-    const configure = (audio) => {
-      audio.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * requestedVolume));
-      audio.loop = Boolean(options.loop);
+    const configure = (a) => {
+      a.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * requestedVolume));
+      a.loop = Boolean(options.loop);
       if (typeof options.pitch === 'number' && Number.isFinite(options.pitch)) {
-        try { audio.playbackRate = Math.max(0.25, Math.min(4, options.pitch)); } catch (e) {}
+        try { a.playbackRate = Math.max(0.25, Math.min(4, options.pitch)); } catch (e) {}
       }
     };
 
-    // If the preloaded element is not ready yet, use it directly to avoid a cold clone miss.
-    const isReady = Boolean(sound._ready) || (Number(sound.readyState) >= 2);
-    const target = isReady ? sound.cloneNode(true) : sound;
-    try {
-      target.currentTime = 0;
-    } catch (e) {
-      // Ignore non-seekable audio errors.
-    }
+    const isReady = Boolean(audio._ready) || (Number(audio.readyState) >= 2);
+    const target = isReady ? audio.cloneNode(true) : audio;
+    try { target.currentTime = 0; } catch (e) {}
     if (!isReady) {
-      try { sound.load(); } catch (e) {}
+      try { audio.load(); } catch (e) {}
     }
 
     configure(target);
-    const p = target.play();
+    const p = target.play && target.play();
     if (p && p.catch) {
       p.catch(err => {
-        // Commonly occurs when play is attempted before user gesture or browser policies
         if (process.env.NODE_ENV !== 'production') {
           console.warn('Sound play failed for', soundName, err?.message || err);
         }

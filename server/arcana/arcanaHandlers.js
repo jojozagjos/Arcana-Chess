@@ -135,12 +135,15 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     // Notify players; send full params only to the owner to avoid leaking private info
     // Exception: For cutscene cards, include square info so all players can see camera focus correctly
     if (io) {
+      const eventId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
       const triggerSoundId = def.soundId || `arcana:${def.id}`;
+      const { pendingResolution, ...publicParams } = params || {};
       const ownerPayload = {
         gameId: gameState.id,
+        eventId,
         arcanaId: effectiveArcanaId,
         owner: socketId,
-        params,
+        params: publicParams,
         soundId: triggerSoundId,
         visual: def.visual,
       };
@@ -150,29 +153,30 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       const forceCutsceneCards = new Set(['mind_control', 'breaking_point', 'edgerunner_overdrive']);
       const isCutsceneCard = Boolean(def?.visual?.cutscene) || forceCutsceneCards.has(effectiveArcanaId);
       let redactedParams = null;
-      if (isCutsceneCard && params) {
+      if (isCutsceneCard && publicParams) {
         // Extract just the square info for cutscene camera focus
         redactedParams = {
-          square: params.targetSquare || params.square || null,
-          targetSquare: params.targetSquare || null,
-          kingTo: params.kingTo || null,
-          rebornSquare: params.rebornSquare || null,
-          revivedSquares: Array.isArray(params.revivedSquares) ? params.revivedSquares : null,
-          pieceType: params.pieceType || null,
-          pieceColor: params.pieceColor || null,
-          dashPath: Array.isArray(params.dashPath) ? params.dashPath : null,
-          displaced: Array.isArray(params.displaced) ? params.displaced : null,
-          firstTo: params.firstTo || null,
-          secondTo: params.secondTo || null,
-          thirdTo: params.thirdTo || null,
-          captureCount: Number.isFinite(params.captureCount) ? params.captureCount : null,
-          originalColor: params.originalColor || null,
-          color: params.color || null,
+          square: publicParams.targetSquare || publicParams.square || null,
+          targetSquare: publicParams.targetSquare || null,
+          kingTo: publicParams.kingTo || null,
+          rebornSquare: publicParams.rebornSquare || null,
+          revivedSquares: Array.isArray(publicParams.revivedSquares) ? publicParams.revivedSquares : null,
+          pieceType: publicParams.pieceType || null,
+          pieceColor: publicParams.pieceColor || null,
+          dashPath: Array.isArray(publicParams.dashPath) ? publicParams.dashPath : null,
+          displaced: Array.isArray(publicParams.displaced) ? publicParams.displaced : null,
+          firstTo: publicParams.firstTo || null,
+          secondTo: publicParams.secondTo || null,
+          thirdTo: publicParams.thirdTo || null,
+          captureCount: Number.isFinite(publicParams.captureCount) ? publicParams.captureCount : null,
+          originalColor: publicParams.originalColor || null,
+          color: publicParams.color || null,
         };
       }
       
       const redactedPayload = {
         gameId: gameState.id,
+        eventId,
         arcanaId: effectiveArcanaId,
         owner: socketId,
         params: redactedParams,
@@ -678,7 +682,6 @@ function applyExecution({ chess, moverColor, params }) {
   if (params?.targetSquare) {
     const target = chess.get(params.targetSquare);
     if (target && target.color !== moverColor && target.type !== 'k') {
-      chess.remove(params.targetSquare);
       return {
         params: {
           square: params.targetSquare,
@@ -686,6 +689,14 @@ function applyExecution({ chess, moverColor, params }) {
           piece: target.type,
           pieceType: target.type,
           pieceColor: target.color,
+          deferBoardMutation: true,
+          pendingResolution: {
+            type: 'execution',
+            targetSquare: params.targetSquare,
+            pieceType: target.type,
+            pieceColor: target.color,
+            owner: moverColor,
+          },
         },
       };
     }
@@ -1325,7 +1336,8 @@ function applyCursedSquare({ gameState, moverColor, params }) {
 }
 
 function applyTimeTravel({ gameState }) {
-  const undone = undoMoves(gameState, 2);
+  // Reverse two full turns (last 2 plies by each player = 4 total plies).
+  const undone = undoMoves(gameState, 4);
   if (!Array.isArray(undone) || undone.length === 0) {
     return null;
   }
@@ -1530,11 +1542,30 @@ function applyBreakingPoint({ chess, moverColor, params }) {
   }
   const shatteredPieceType = targetPiece.type;
   const shatteredPieceColor = targetPiece.color;
+  const displaced = computeBreakingPointDisplacements(chess, epicenter, moverColor);
 
-  // 1) Shatter the primary target.
-  chess.remove(epicenter);
+  return {
+    params: {
+      square: epicenter,
+      targetSquare: epicenter,
+      shatteredSquare: epicenter,
+      pieceType: shatteredPieceType,
+      pieceColor: shatteredPieceColor,
+      displaced,
+      deferBoardMutation: true,
+      pendingResolution: {
+        type: 'breaking_point',
+        epicenter,
+        pieceType: shatteredPieceType,
+        pieceColor: shatteredPieceColor,
+        displaced,
+        owner: moverColor,
+      },
+    },
+  };
+}
 
-  // 2) Shockwave: try to displace adjacent enemy non-king pieces one square away.
+function computeBreakingPointDisplacements(chess, epicenter, moverColor) {
   const displaced = [];
   const file = epicenter.charCodeAt(0) - 97;
   const rank = parseInt(epicenter[1], 10);
@@ -1558,22 +1589,11 @@ function applyBreakingPoint({ chess, moverColor, params }) {
       const dstSquare = `${String.fromCharCode(97 + dstFile)}${dstRank}`;
       if (chess.get(dstSquare)) continue;
 
-      chess.remove(srcSquare);
-      chess.put(piece, dstSquare);
-      displaced.push({ from: srcSquare, to: dstSquare, piece: piece.type });
+      displaced.push({ from: srcSquare, to: dstSquare, piece: piece.type, color: piece.color });
     }
   }
 
-  return {
-    params: {
-      square: epicenter,
-      targetSquare: epicenter,
-      shatteredSquare: epicenter,
-      pieceType: shatteredPieceType,
-      pieceColor: shatteredPieceColor,
-      displaced,
-    },
-  };
+  return displaced;
 }
 
 function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
@@ -1586,12 +1606,17 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
   }
 
   const dashPath = [];
+  const dashDetails = [];
   let captureCount = 0;
   let currentSquare = startSquare;
+  let previousSquare = null;
 
-  // Always attempt two bursts.
+  // Always execute up to two overdrive bursts.
   for (let step = 0; step < 2; step++) {
-    const burstMove = pickBestOverdriveMove(chess, currentSquare, moverColor);
+    const burstMove = selectOverdriveBurst(chess, currentSquare, moverColor, {
+      preferCapture: false,
+      avoidSquare: previousSquare,
+    });
     if (!burstMove) {
       if (step === 0) return null;
       break;
@@ -1604,22 +1629,43 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
     }
 
     dashPath.push(burstResult.to);
+    dashDetails.push({
+      from: burstResult.from,
+      to: burstResult.to,
+      captured: burstResult.captured || null,
+      promotion: burstResult.promotion || null,
+      san: burstResult.san || null,
+    });
     if (burstResult.captured) captureCount += 1;
+    previousSquare = currentSquare;
     currentSquare = burstResult.to;
   }
 
   if (!dashPath.length) return null;
 
-  // Gain a third burst only if one of the first two bursts captured.
+  // Third burst unlocks only if one of the first two bursts captured.
   if (captureCount > 0) {
-    const thirdMove = pickBestOverdriveMove(chess, currentSquare, moverColor, true)
-      || pickBestOverdriveMove(chess, currentSquare, moverColor, false);
+    const thirdMove = selectOverdriveBurst(chess, currentSquare, moverColor, {
+      preferCapture: true,
+      avoidSquare: previousSquare,
+    }) || selectOverdriveBurst(chess, currentSquare, moverColor, {
+      preferCapture: false,
+      avoidSquare: previousSquare,
+    });
 
     if (thirdMove) {
       const thirdResult = chess.move({ from: currentSquare, to: thirdMove.to, promotion: 'q' });
       if (thirdResult) {
         dashPath.push(thirdResult.to);
+        dashDetails.push({
+          from: thirdResult.from,
+          to: thirdResult.to,
+          captured: thirdResult.captured || null,
+          promotion: thirdResult.promotion || null,
+          san: thirdResult.san || null,
+        });
         if (thirdResult.captured) captureCount += 1;
+        previousSquare = currentSquare;
         currentSquare = thirdResult.to;
       }
     }
@@ -1637,18 +1683,26 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
       secondTo,
       thirdTo: thirdTo || null,
       dashPath,
+      dashDetails,
       captureCount,
     },
   };
 }
 
-function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = false) {
+function selectOverdriveBurst(chess, fromSquare, moverColor, options = {}) {
+  const { preferCapture = false, avoidSquare = null } = options;
   const moves = chess.moves({ square: fromSquare, verbose: true }) || [];
   if (!moves.length) return null;
 
-  const candidateMoves = preferCapture
-    ? (moves.filter((m) => !!m.captured).length ? moves.filter((m) => !!m.captured) : moves)
-    : moves;
+  let candidateMoves = moves;
+  if (avoidSquare) {
+    const withoutBacktrack = moves.filter((m) => m.to !== avoidSquare);
+    if (withoutBacktrack.length > 0) candidateMoves = withoutBacktrack;
+  }
+  if (preferCapture) {
+    const captureMoves = candidateMoves.filter((m) => !!m.captured);
+    if (captureMoves.length > 0) candidateMoves = captureMoves;
+  }
 
   const enemyKingSquare = findKing(chess, moverColor === 'w' ? 'b' : 'w');
   const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
@@ -1659,23 +1713,23 @@ function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = fa
   for (const move of candidateMoves) {
     let score = 0;
 
-    if (move.captured) score += 12 + (pieceValues[move.captured] || 0) * 11;
-    if (move.promotion) score += 7;
-    if (typeof move.san === 'string' && move.san.includes('+')) score += 4;
+    if (move.captured) score += 25 + (pieceValues[move.captured] || 0) * 14;
+    if (move.promotion) score += 9;
+    if (typeof move.san === 'string' && move.san.includes('+')) score += 6;
 
     const file = move.to.charCodeAt(0) - 97;
     const rank = parseInt(move.to[1], 10);
     const centerDist = Math.abs(file - 3.5) + Math.abs(rank - 4.5);
-    score += (7 - centerDist) * 0.55;
+    score += (7 - centerDist) * 0.8;
 
-    if (moverColor === 'w') score += (rank - 1) * 0.25;
-    else score += (8 - rank) * 0.25;
+    if (moverColor === 'w') score += (rank - 1) * 0.35;
+    else score += (8 - rank) * 0.35;
 
     if (enemyKingSquare) {
       const kingFile = enemyKingSquare.charCodeAt(0) - 97;
       const kingRank = parseInt(enemyKingSquare[1], 10);
       const kingDist = Math.abs(file - kingFile) + Math.abs(rank - kingRank);
-      score += Math.max(0, 10 - kingDist) * 0.18;
+      score += Math.max(0, 10 - kingDist) * 0.28;
     }
 
     if (score > bestScore) {

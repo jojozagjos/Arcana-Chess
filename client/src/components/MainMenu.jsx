@@ -152,34 +152,16 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
-                  <span>v1.4.0  Arcana Sequencing + Rematch + AI Stability</span>
-                  <span className="update-log-date">Apr 17, 2026</span>
+                  <span>v1.4.1  Runtime Sync + Visual Reliability</span>
+                  <span className="update-log-date">Apr 18, 2026</span>
                 </div>
                 <ul className="update-log-list">
-                  <li>Arcana cutscenes and particle timelines now queue after card-use reveal animations instead of overlapping at the same time.</li>
-                  <li>Arcana hand stacking polish: low-card hands center cleanly while preserving full left-scroll access for larger hands.</li>
-                  <li>Stack badge hover now tracks card hover motion so multipliers like 2x move together with the card.</li>
-                  <li>Multiplayer rematch lobby hydration was hardened to prevent returning players from landing on an empty host form softlock.</li>
-                  <li>Monarch AI tuning improved card draw cadence, reduced repetition loops, and added stronger blunder resistance against major-piece losses.</li>
-                  <li>Pawn Rush now correctly supports frontline two-square advances, including valid promotion-rank outcomes.</li>
-                </ul>
-              </div>
-
-              <div className="update-log-section">
-                <div className="update-log-version">
-                  <span>v1.3.8  Multiplayer + Intro + Arcana Fixes</span>
-                  <span className="update-log-date">Apr 2, 2026</span>
-                </div>
-                <ul className="update-log-list">
-                  <li>Fixed a multiplayer turn-lock scenario where clients could get stuck on "Opponent move" after Royal Swap and similar state updates.</li>
-                  <li>Hardened client board sync with a safe FEN load path so valid arcana board states no longer stall render updates.</li>
-                  <li>Royal Swap now preserves pawn identity on back-rank swaps without desyncing board state between server and client.</li>
-                  <li>Necromancy and Astral Rebirth revive flow was corrected so revive targets resolve consistently and trigger the right visual response.</li>
-                  <li>Server revive payloads now include clearer square data for client-side post-cast highlighting and effect playback.</li>
-                  <li>Timed effect turn accounting was tightened so effect durations keep advancing with normal turn progression.</li>
-                  <li>Intro sequence title timing was stabilized so the game title does not appear too early or shift when continue text appears.</li>
-                  <li>Intro creator credit alignment and continue prompt presentation were polished for cleaner first-load readability.</li>
-                  <li>Main menu update log panel now has improved overflow scrolling behavior for long patch-note lists.</li>
+                  <li>Time Freeze visuals now apply monochrome only when freeze is active or when your local residue lock is active.</li>
+                  <li>Necromancy and Astral Rebirth playback is now more consistent across players for shared board visuals.</li>
+                  <li>Arcana Studio runtime session IDs now include event-aware entropy to prevent repeated-play collisions.</li>
+                  <li>Studio camera scrubbing logic is no longer FPS-sensitive during forward playback.</li>
+                  <li>Divine Intervention now rolls back safely if the spawned pawn cannot resolve check.</li>
+                  <li>Right-click interaction blocking and bishop shield rendering reliability were tightened for cleaner gameplay feedback.</li>
                 </ul>
               </div>
 
@@ -188,7 +170,7 @@ export function MainMenu({
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
               <span className="update-log-pill-dot" />
-              <span>v1.4.0</span>
+              <span>v1.4.1</span>
               <span className="update-log-pill-label">What's new</span>
             </button>
           )}
