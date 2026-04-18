@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
+import { MOUSE, TOUCH } from 'three';
 import { Chess } from 'chess.js';
 import { ChessPiece } from './ChessPiece.jsx';
 import { ArcanaCard } from './ArcanaCard.jsx';
@@ -30,9 +31,9 @@ const TUTORIAL_STEPS = [
     id: 0,
     title: 'Welcome to Arcana Chess',
     description:
-      'Arcana Chess combines classic chess with powerful magical cards. This interactive tutorial teaches the basics through guided practice. You can see the full card list anytime from Menu View Arcana.',
-    instruction: 'Click Next to begin your journey.',
-    setupFen: null,
+      'Arcana Chess combines classic chess with powerful magical cards. This interactive tutorial teaches the core flow with guided practice. Camera controls: desktop uses right-drag to rotate, left-drag to pan, and scroll to zoom. Mobile uses one-finger drag to rotate and two-finger pinch or drag to zoom/pan.',
+    instruction: 'Use the camera for a second, then tap Next to begin.',
+    setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
     requireMove: null,
     showCards: false,
@@ -42,7 +43,7 @@ const TUTORIAL_STEPS = [
     title: 'The Chess Board',
     description:
       'The board has 8 rows and 8 columns. Columns use letters a to h, and rows use numbers 1 to 8. White pieces start at the bottom and black pieces start at the top.',
-    instruction: 'Click the white pawn on e2 (the pawn in front of your king).',
+    instruction: 'Tap or click the white pawn on e2 (the pawn in front of your king).',
     setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: ['e2'],
     requireMove: { select: 'e2' },
@@ -215,6 +216,10 @@ export function Tutorial({ onBack }) {
   const [studioRuntimeSession, setStudioRuntimeSession] = useState(null);
   const [studioPieceMotions, setStudioPieceMotions] = useState({});
   const [pendingStudioShieldTarget, setPendingStudioShieldTarget] = useState(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth <= 980;
+  });
   const forceResetOnStepRef = useRef(false);
   const controlsRef = useRef(null);
   const timeoutsRef = useRef([]);
@@ -340,6 +345,13 @@ export function Tutorial({ onBack }) {
     return () => {
       clearManagedTimeouts();
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onResize = () => setIsMobileLayout(window.innerWidth <= 980);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
   const chess = useMemo(() => {
@@ -737,9 +749,9 @@ export function Tutorial({ onBack }) {
   const tutorialCardCount = showDemoCard ? 1 : 0;
 
   return (
-    <div style={styles.container}>
+    <div style={{ ...styles.container, flexDirection: isMobileLayout ? 'column' : 'row' }}>
       {/* 3D Board View */}
-      <div style={styles.canvasContainer}>
+      <div style={{ ...styles.canvasContainer, minHeight: isMobileLayout ? '52vh' : undefined }}>
         <AscensionScreenFx token={ascensionFxToken} />
         <Canvas
           camera={{ position: [8, 10, 8], fov: 40 }}
@@ -825,6 +837,8 @@ export function Tutorial({ onBack }) {
             maxPolarAngle={Math.PI / 2.2}
             minDistance={6}
             maxDistance={20}
+            mouseButtons={{ LEFT: MOUSE.PAN, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.ROTATE }}
+            touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
           />
         </Canvas>
         
@@ -988,7 +1002,14 @@ export function Tutorial({ onBack }) {
       )}
 
       {/* Tutorial Panel */}
-      <div style={styles.panel}>
+      <div
+        style={{
+          ...styles.panel,
+          width: isMobileLayout ? '100%' : 400,
+          maxHeight: isMobileLayout ? '48vh' : '100%',
+          padding: isMobileLayout ? 16 : 24,
+        }}
+      >
         <div style={styles.header}>
           <h3 style={styles.stepTitle}>
             Step {currentStep + 1} of {TUTORIAL_STEPS.length}: {step.title}

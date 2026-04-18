@@ -13,7 +13,7 @@ import { soundManager } from './game/soundManager.js';
 
 export function App() {
   const SETTINGS_KEY = 'arcanaChess.settings';
-  const DEV_MODE_PASSWORD = 'arcana dev';
+  const API_BASE_URL = import.meta.env.DEV ? 'http://localhost:4000' : window.location.origin;
 
   const menuScreens = ['main-menu', 'host-game', 'join-game', 'settings', 'arcana', 'card-balancing', 'arcana-studio'];
   const devToolScreens = ['card-balancing', 'arcana-studio'];
@@ -55,7 +55,7 @@ export function App() {
     };
   });
 
-  const handleToggleDevMode = () => {
+  const handleToggleDevMode = async () => {
     if (devMode) {
       setDevMode(false);
       return;
@@ -64,12 +64,24 @@ export function App() {
     const entered = window.prompt('Enter dev mode password');
     if (entered === null) return;
 
-    if (entered === DEV_MODE_PASSWORD) {
-      setDevMode(true);
-      return;
-    }
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/dev-mode/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: entered }),
+      });
 
-    setGlobalNotice({ tone: 'warning', message: 'Incorrect dev mode password.' });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok && payload?.ok) {
+        setDevMode(true);
+        return;
+      }
+
+      setGlobalNotice({ tone: 'warning', message: 'Incorrect dev mode password.' });
+    } catch (error) {
+      console.error('Dev mode auth failed', error);
+      setGlobalNotice({ tone: 'error', message: 'Unable to verify dev mode password. Check server connection.' });
+    }
   };
 
   useEffect(() => {

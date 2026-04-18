@@ -194,7 +194,7 @@ export function MainMenu({
           )}
 
           <div className="menu-secondary-row">
-            <button className="menu-secondary" onClick={onTutorial}>Tutorial (WIP)</button>
+            <button className="menu-secondary" onClick={onTutorial}>Tutorial</button>
             <button className="menu-secondary" onClick={onViewArcana}>View Arcana</button>
             <button className="menu-secondary" onClick={onSettings}>Settings</button>
             {devMode && (

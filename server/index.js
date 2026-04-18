@@ -15,6 +15,7 @@ import { Chess } from 'chess.js';
 // Constants
 const BOARD_SIZE = 8;
 const DEFAULT_PORT = 4000;
+const DEV_MODE_PASSWORD = String(process.env.DEV_MODE_PASSWORD || 'arcana dev');
 
 // Logging utility
 const logger = {
@@ -41,6 +42,19 @@ app.use(express.json());
 // Simple API route so the client can fetch Arcana metadata if needed
 app.get('/api/arcana', (req, res) => {
   res.json(ARCANA_DEFINITIONS);
+});
+
+app.post('/api/dev-mode/auth', (req, res) => {
+  const provided = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!provided) {
+    return res.status(400).json({ ok: false, error: 'Missing password' });
+  }
+
+  if (provided !== DEV_MODE_PASSWORD) {
+    return res.status(401).json({ ok: false, error: 'Invalid password' });
+  }
+
+  return res.json({ ok: true });
 });
 
 // Card testing endpoint for balancing tool
