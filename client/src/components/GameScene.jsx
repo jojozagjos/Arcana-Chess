@@ -15,7 +15,7 @@ import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
 import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares, canUseCard } from '../game/arcana/arcanaSimulation.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { getRarityColor } from '../game/arcanaHelpers.js';
-const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.jsx').then(m => ({ default: m.default ?? m.ParticleOverlay })));
+const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.jsx').then(m => ({ default: m.default ?? m.ParticleOverlay })).catch(err => { console.error('[ParticleOverlay] lazy load failed:', err); return { default: () => null }; }));
 import { PieceSelectionDialog } from './PieceSelectionDialog.jsx';
 import CutsceneOverlay from './CutsceneOverlay.jsx';
 import { getCutsceneCard } from '../game/arcana/cutsceneDefinitions.js';
@@ -23,6 +23,21 @@ import { ArcanaStudioRuntimeHost } from '../game/arcana/studio/ArcanaStudioRunti
 import { createArcanaStudioRuntimeSession, expandStudioRuntimePlaybackQueue, normalizeArcanaStudioEventActions, scheduleArcanaStudioAudio, scheduleArcanaStudioEvents } from '../game/arcana/studio/arcanaStudioRuntime.js';
 // Arcana visual effects are loaded on-demand from shared module to reduce initial bundle size.
 // ArcanaVisualHost renders all effects using the shared arcanaVisuals module
+
+// Error Boundary for lazy component failures
+class ParticleErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) {
+    console.error('[ParticleErrorBoundary] caught error:', error);
+    return { hasError: true };
+  }
+  render() {
+    return this.state.hasError ? null : this.props.children;
+  }
+}
 
 function createSafeChessClone(sourceChess) {
   if (!sourceChess) return null;
@@ -3309,16 +3324,18 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       {/* Fog of War effect particles - persist while fog is active */}
       {activeFogEffects?.[myColorCode] && (
-        <Suspense fallback={null}>
-          <ParticleOverlay
-            key={`fog-${myColorCode}`}
-            type="fog"
+        <ParticleErrorBoundary>
+          <Suspense fallback={null}>
+            <ParticleOverlay
+              key={`fog-${myColorCode}`}
+              type="fog"
             rarity="rare"
             active={true}
             style={{ opacity: 0.58 }}
             density={0.8}
           />
         </Suspense>
+        </ParticleErrorBoundary>
       )}
 
       {gameEndOutcome && (
@@ -4029,13 +4046,15 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
         
         {/* Draw animation particles (only for visible/self draws) */}
         {type === 'draw' && !isHidden && (
-          <Suspense fallback={null}>
-            <ParticleOverlay
-              type="draw"
-              rarity={arcana ? arcana.rarity : 'common'}
+          <ParticleErrorBoundary>
+            <Suspense fallback={null}>
+              <ParticleOverlay
+                type="draw"
+                rarity={arcana ? arcana.rarity : 'common'}
               active={true}
             />
           </Suspense>
+          </ParticleErrorBoundary>
         )}
       </div>
     </>

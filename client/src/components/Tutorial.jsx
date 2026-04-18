@@ -14,8 +14,23 @@ import { createArcanaStudioRuntimeSession, scheduleArcanaStudioAudio, scheduleAr
 
 // Load particle overlay for 2D effects
 const ParticleOverlay = React.lazy(() =>
-  import('../game/arcana/ParticleOverlay.jsx').then((m) => ({ default: m.default ?? m.ParticleOverlay }))
+  import('../game/arcana/ParticleOverlay.jsx').then((m) => ({ default: m.default ?? m.ParticleOverlay })).catch(err => { console.error('[ParticleOverlay] lazy load failed:', err); return { default: () => null }; })
 );
+
+// Error Boundary for lazy component failures
+class ParticleErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) {
+    console.error('[ParticleErrorBoundary] caught error:', error);
+    return { hasError: true };
+  }
+  render() {
+    return this.state.hasError ? null : this.props.children;
+  }
+}
 
 // Load ShieldGlowEffect lazily to match other dynamic imports and enable code-splitting
 const ShieldGlowEffect = React.lazy(() =>
@@ -1348,24 +1363,28 @@ function CardRevealAnimation({ arcana, type, onDismiss }) {
         
         {/* Use animation effects */}
         {type === 'use' && (
-          <Suspense fallback={null}>
-            <ParticleOverlay
-              type="ring"
-              rarity={arcana.rarity || 'common'}
-              active={true}
-            />
-          </Suspense>
+          <ParticleErrorBoundary>
+            <Suspense fallback={null}>
+              <ParticleOverlay
+                type="ring"
+                rarity={arcana.rarity || 'common'}
+                active={true}
+              />
+            </Suspense>
+          </ParticleErrorBoundary>
         )}
         
         {/* Draw animation particles */}
         {type === 'draw' && (
-          <Suspense fallback={null}>
-            <ParticleOverlay
-              type="draw"
-              rarity={arcana.rarity || 'common'}
-              active={true}
-            />
-          </Suspense>
+          <ParticleErrorBoundary>
+            <Suspense fallback={null}>
+              <ParticleOverlay
+                type="draw"
+                rarity={arcana.rarity || 'common'}
+                active={true}
+              />
+            </Suspense>
+          </ParticleErrorBoundary>
         )}
         
         {/* Use sparks */}
