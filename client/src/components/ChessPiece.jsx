@@ -10,9 +10,10 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
   const currentPos = useRef(safeTarget.slice());
 
   // Smooth lerp animation
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (groupRef.current) {
-      const lerpFactor = 0.15; // Adjust for speed (0.1 = slower, 0.3 = faster)
+      // Frame-rate independent smoothing keeps drag/move feel consistent across FPS.
+      const lerpFactor = 1 - Math.exp(-12 * Math.max(0, delta || 0));
       const tgt = Array.isArray(targetPosition) && targetPosition.length === 3 ? targetPosition : safeTarget;
       currentPos.current[0] += (tgt[0] - currentPos.current[0]) * lerpFactor;
       currentPos.current[1] += (tgt[1] - currentPos.current[1]) * lerpFactor;
@@ -80,9 +81,18 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
       position={currentPos.current}
       castShadow
       onPointerDown={(e) => {
-        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        const button = typeof e.button === 'number' ? e.button : (typeof e.nativeEvent?.button === 'number' ? e.nativeEvent.button : 0);
+        if (button !== 0) {
+          e.stopPropagation();
+          e.preventDefault();
+          return;
+        }
         e.stopPropagation();
         if (typeof onClickSquare === 'function') onClickSquare(square);
+      }}
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
       }}
     >
       {type === 'p' && <PawnGeometry color={color} emissive={emissive} />}
@@ -240,20 +250,20 @@ function BishopGeometry({ color, emissive }) {
         <cylinderGeometry args={[0.28, 0.34, 0.14, 20]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.22, 0]} castShadow>
-        <cylinderGeometry args={[0.15, 0.2, 0.34, 18]} />
+      <mesh position={[0, 0.2, 0]} castShadow>
+        <cylinderGeometry args={[0.15, 0.23, 0.3, 18]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.42, 0]} castShadow>
+      <mesh position={[0, 0.4, 0]} castShadow>
         <cylinderGeometry args={[0.11, 0.15, 0.22, 18]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.58, 0]} castShadow>
+      <mesh position={[0, 0.62, 0]} castShadow>
         <sphereGeometry args={[0.135, 20, 16]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.12} metalness={0.38} roughness={0.5} />
       </mesh>
       {/* Finial */}
-      <mesh position={[0, 0.74, 0]} castShadow>
+      <mesh position={[0, 0.76, 0]} castShadow>
         <sphereGeometry args={[0.05, 14, 12]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.4} roughness={0.45} />
       </mesh>

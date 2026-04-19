@@ -576,6 +576,8 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       focusFire: { w: false, b: false },  // next capture draws extra card
       queensGambit: { w: 0, b: 0 }, // extra moves remaining
       queensGambitUsed: { w: false, b: false }, // track if extra move was used this turn
+      mindControlExtraTurn: { w: false, b: false }, // grant one immediate extra move after controlled move
+      promotionRitual: { w: null, b: null }, // { active, movesRemaining, monochrome }
       divineIntervention: { w: false, b: false },
       mirrorImages: [],   // [{ square, type, color, turnsLeft }]
       spectralMarch: { w: false, b: false },  // rook passes through friendly
@@ -596,6 +598,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       castleBroken: { w: 0, b: 0 },           // prevents castling (turn counter, 0 = inactive)
     },
     moveHistory: [],  // for time_travel
+    pendingArcanaResolutions: [], // queued board mutations to resolve after reveal/cutscene
     rematchVotes: {},  // socketId -> boolean (true = voted, false = left/declined)
   };
 }
@@ -773,6 +776,11 @@ export class GameManager {
     gameState.pendingReveal = null;
 
     const chess = gameState.chess;
+    const appliedDeferredMutations = this._applyPendingArcanaResolutions(gameState);
+
+    if (appliedDeferredMutations) {
+      this.broadcastGameUpdate(gameState);
+    }
 
     // Resolve deferred Execution board mutation after reveal/cutscene completion.
     const pendingExecution = gameState.activeEffects?.pendingExecution;
@@ -852,6 +860,52 @@ export class GameManager {
         }
       }
     }
+  }
+
+  _applyPendingArcanaResolutions(gameState) {
+    const pendingResolutions = Array.isArray(gameState.pendingArcanaResolutions)
+      ? gameState.pendingArcanaResolutions
+      : [];
+
+    if (!pendingResolutions.length) return false;
+
+    const chess = gameState.chess;
+    let boardChanged = false;
+
+    for (const resolution of pendingResolutions) {
+      if (!resolution || typeof resolution !== 'object') continue;
+
+      if (resolution.type === 'execution') {
+        const targetPiece = resolution.targetSquare ? chess.get(resolution.targetSquare) : null;
+        if (targetPiece && targetPiece.type !== 'k') {
+          chess.remove(resolution.targetSquare);
+          boardChanged = true;
+        }
+        continue;
+      }
+
+      if (resolution.type === 'breaking_point') {
+        const epicenterPiece = resolution.epicenter ? chess.get(resolution.epicenter) : null;
+        if (epicenterPiece && epicenterPiece.type !== 'k') {
+          chess.remove(resolution.epicenter);
+          boardChanged = true;
+        }
+
+        const displaced = Array.isArray(resolution.displaced) ? resolution.displaced : [];
+        for (const shift of displaced) {
+          if (!shift?.from || !shift?.to) continue;
+          if (chess.get(shift.to)) continue;
+          const moving = chess.get(shift.from);
+          if (!moving || moving.type === 'k') continue;
+          chess.remove(shift.from);
+          chess.put(moving, shift.to);
+          boardChanged = true;
+        }
+      }
+    }
+
+    gameState.pendingArcanaResolutions = [];
+    return boardChanged;
   }
 
   startMultiplayerGame(socket, payload) {
@@ -1310,6 +1364,16 @@ export class GameManager {
         throw new Error('Arcana not available or already used');
       }
 
+      const deferredResolutions = appliedArcana
+        .map((entry) => entry?.params?.pendingResolution)
+        .filter(Boolean);
+      if (deferredResolutions.length > 0) {
+        if (!Array.isArray(gameState.pendingArcanaResolutions)) {
+          gameState.pendingArcanaResolutions = [];
+        }
+        gameState.pendingArcanaResolutions.push(...deferredResolutions);
+      }
+
       // Check if arcana effects removed a king
       const arcanaKingCheck = checkForKingRemoval(chess);
       if (arcanaKingCheck.kingRemoved) {
@@ -1339,10 +1403,11 @@ export class GameManager {
         const cardDef = ARCANA_DEFINITIONS.find(card => card.id === use.arcanaId);
         return cardDef && cardDef.endsTurn === true;
       });
+      const needsRevealFinalize = appliedArcana.some((entry) => entry?.params?.deferBoardMutation);
       
-      if (shouldEndTurn) {
+      if (shouldEndTurn || needsRevealFinalize) {
         // Clear arcana used flag when turn-ending card is used
-        if (gameState.arcanaUsedThisTurn) {
+        if (shouldEndTurn && gameState.arcanaUsedThisTurn) {
           delete gameState.arcanaUsedThisTurn[socket.id];
         }
 
@@ -1352,7 +1417,7 @@ export class GameManager {
         if (!gameState.pendingReveal) gameState.pendingReveal = {};
         if (gameState.pendingReveal.timeoutId) clearTimeout(gameState.pendingReveal.timeoutId);
         gameState.pendingReveal.playerId = socket.id;
-        gameState.pendingReveal.turnShouldEnd = true;
+        gameState.pendingReveal.turnShouldEnd = shouldEndTurn;
         gameState.pendingReveal.timeoutId = setTimeout(async () => {
           try {
             await this._finalizeReveal(gameState);
@@ -1362,7 +1427,7 @@ export class GameManager {
         }, REVEAL_ACK_TIMEOUT_MS);
 
         // We already emitted `arcanaUsed` and `gameUpdated` above; return to caller.
-        return { ok: true, appliedArcana, turnEnded: true };
+        return { ok: true, appliedArcana, turnEnded: shouldEndTurn };
       }
 
       return { ok: true, appliedArcana };
@@ -1864,6 +1929,8 @@ export class GameManager {
           };
         }
         gameState.activeEffects.mindControlled = gameState.activeEffects.mindControlled.filter((c) => c !== controlledEntry);
+        gameState.activeEffects.mindControlExtraTurn = gameState.activeEffects.mindControlExtraTurn || { w: false, b: false };
+        gameState.activeEffects.mindControlExtraTurn[moverColor] = true;
       }
     }
 
@@ -2144,6 +2211,23 @@ export class GameManager {
     const hasQueensGambit = gameState.activeEffects.queensGambit[moverColor] > 0 && 
                  !gameState.activeEffects.queensGambitUsed[moverColor] &&
                  result.piece === 'q'; // Queen must be the piece that moved
+    const hasMindControlExtraMove = Boolean(gameState.activeEffects?.mindControlExtraTurn?.[moverColor]);
+
+    // Promotion Ritual grants 2 immediate board moves after the promotion resolves.
+    // Consume one charge per board move and keep the turn while charges remain.
+    const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor] || null;
+    if (promotionRitualState?.active && Number.isFinite(promotionRitualState.movesRemaining) && promotionRitualState.movesRemaining > 0) {
+      promotionRitualState.movesRemaining = Math.max(0, promotionRitualState.movesRemaining - 1);
+      if (promotionRitualState.movesRemaining === 0) {
+        promotionRitualState.active = false;
+        promotionRitualState.monochrome = false;
+      }
+    }
+    const hasPromotionRitualExtraMove = Boolean(
+      promotionRitualState?.active
+      && Number.isFinite(promotionRitualState.movesRemaining)
+      && promotionRitualState.movesRemaining > 0
+    );
 
     let hasPromotionRitual = false;
     const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor];
@@ -2215,7 +2299,7 @@ export class GameManager {
     const gameIsOver = chess.isCheckmate() || chess.isStalemate() || chess.isDraw();
 
     // If player has extra move available, don't decrement effects or switch turns
-    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage || hasPromotionRitual || hasMindControlExtraMove || hasEdgerunnerOverdrive) && !gameIsOver) {
+  if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage || hasPromotionRitual || hasPromotionRitualExtraMove || hasMindControlExtraMove || hasEdgerunnerOverdrive) && !gameIsOver) {
       // Mark that they used their extra move opportunity
       if (hasQueensGambit) {
         gameState.activeEffects.queensGambitUsed[moverColor] = true;
@@ -2261,9 +2345,12 @@ export class GameManager {
           }
         }
       }
-
       if (hasEdgerunnerOverdrive && overdriveState) {
         overdriveState.extraTurns = (overdriveState.extraTurns || 0) + 1;
+      }
+      if (hasMindControlExtraMove && gameState.activeEffects?.mindControlExtraTurn) {
+        // Consume the one-time mind-control bonus turn immediately.
+        gameState.activeEffects.mindControlExtraTurn[moverColor] = false;
       }
       
       // chess.move() already swapped the active color in the FEN. We need to
@@ -2290,7 +2377,7 @@ export class GameManager {
                 ? 'doubleStrike'
                 : (hasBerserkerRage
                   ? 'berserkerRage'
-                  : (hasPromotionRitual
+                  : ((hasPromotionRitual || hasPromotionRitualExtraMove)
                     ? 'promotionRitual'
                     : (hasMindControlExtraMove ? 'mindControl' : 'edgerunnerOverdrive')))),
             square: result.to,
@@ -2402,13 +2489,32 @@ export class GameManager {
       const spawnSquare = candidateSquares.find((square) => !chess.get(square));
       if (!spawnSquare) return false;
 
+      const beforeFen = chess.fen();
       const spawnRank = parseInt(spawnSquare[1], 10);
       const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
         || (checkedColor === 'b' && spawnRank === 1);
       const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
 
+      try {
+        chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
+      } catch (err) {
+        try {
+          safeLoadFen(chess, beforeFen);
+        } catch (_) {}
+        return false;
+      }
+
+      const stillInCheckAfterSpawn = typeof chess.isCheck === 'function'
+        ? chess.isCheck()
+        : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
+      if (stillInCheckAfterSpawn) {
+        try {
+          safeLoadFen(chess, beforeFen);
+        } catch (_) {}
+        return false;
+      }
+
       gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
-      chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
 
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
@@ -2610,6 +2716,8 @@ export class GameManager {
         poisonTouch: { w: false, b: false },
         queensGambit: { w: 0, b: 0 },
         queensGambitUsed: { w: false, b: false },
+        mindControlExtraTurn: { w: false, b: false },
+        promotionRitual: { w: null, b: null },
         focusFire: { w: false, b: false },
         divineIntervention: { w: false, b: false },
         mirrorImages: [],
@@ -2767,6 +2875,22 @@ export class GameManager {
     // Clear Queen's Gambit used flags when counter reaches 0
     if (effects.queensGambit.w === 0) effects.queensGambitUsed.w = false;
     if (effects.queensGambit.b === 0) effects.queensGambitUsed.b = false;
+
+    effects.mindControlExtraTurn = effects.mindControlExtraTurn || { w: false, b: false };
+    effects.mindControlExtraTurn.w = false;
+    effects.mindControlExtraTurn.b = false;
+
+    // Promotion Ritual should not persist beyond the owner's turn sequence.
+    effects.promotionRitual = effects.promotionRitual || { w: null, b: null };
+    for (const c of ['w', 'b']) {
+      const ritual = effects.promotionRitual[c];
+      if (!ritual) continue;
+      const exhausted = !ritual.active || !Number.isFinite(ritual.movesRemaining) || ritual.movesRemaining <= 0;
+      const ownerTurnPassed = currentTurn !== c;
+      if (exhausted || ownerTurnPassed) {
+        effects.promotionRitual[c] = null;
+      }
+    }
     
     // Expire shields: a shield set by color C should persist through the opponent's
     // turn (so C's piece is protected) and clear once it's C's turn again.

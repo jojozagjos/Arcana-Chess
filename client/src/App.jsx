@@ -170,6 +170,7 @@ export function App() {
       // New game starting: clear any previous end-outcome and show game
       setGameEndOutcome(null);
       setPendingReplayPayload(null);
+      setLastArcanaEvent(null);
       setGameState(state);
       setAscendedInfo(state.ascended ? { gameId: state.id, reason: state.ascensionTrigger } : null);
       setScreen('game');

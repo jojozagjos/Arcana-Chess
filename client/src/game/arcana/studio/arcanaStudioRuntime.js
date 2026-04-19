@@ -489,8 +489,12 @@ export function normalizeArcanaStudioEventActions(eventKey) {
 
 export function createArcanaStudioRuntimeSession(card, eventParams = {}) {
   const now = performance.now();
+  const eventToken = typeof eventParams?.eventId === 'string' && eventParams.eventId.trim()
+    ? eventParams.eventId.trim()
+    : '';
+  const entropy = Math.random().toString(36).slice(2, 8);
   return {
-    id: `studio_runtime_${card?.id || 'unknown'}_${Math.round(now)}`,
+    id: `studio_runtime_${card?.id || 'unknown'}_${Math.round(now)}_${eventToken || entropy}`,
     card,
     eventParams,
     startedAt: now,

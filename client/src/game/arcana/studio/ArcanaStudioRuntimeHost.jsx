@@ -65,7 +65,7 @@ function resolveTrackRuntimeSquare(track, eventParams) {
   return resolveRuntimeSquare(explicitSquare, eventParams, explicitSquare);
 }
 
-function resolveTrackStates(card, eventParams, boardPieces, timeMs) {
+function resolveTrackStates(card, eventParams, boardPieces, timeMs, orientPosition) {
   const tracks = card?.tracks?.objects || [];
   const pieceBySquare = new Map(boardPieces.map((piece) => [piece.square, piece]));
   const trackById = new Map(tracks.map((track) => [track.id, track]));
@@ -75,10 +75,10 @@ function resolveTrackStates(card, eventParams, boardPieces, timeMs) {
   const resolveSquareAnchor = (track) => {
     const alias = resolveTrackRuntimeSquare(track, eventParams);
     const piece = pieceBySquare.get(alias || '');
-    if (piece) return piece.targetPosition;
+    if (piece) return orientPosition(piece.targetPosition);
     if (alias && /^[a-h][1-8]$/i.test(alias)) {
       const [x, , z] = squareToPosition(alias);
-      return [x, 0.15, z];
+      return orientPosition([x, 0.15, z]);
     }
     return DEFAULT_WORLD_ANCHOR;
   };
@@ -116,8 +116,8 @@ function resolveTrackStates(card, eventParams, boardPieces, timeMs) {
 
     resolved[trackId] = {
       ...sampled,
-      anchorPosition: basePosition,
-      worldPosition,
+      anchorPosition: orientPosition(basePosition),
+      worldPosition: orientPosition(worldPosition),
     };
     visiting.delete(trackId);
     return resolved[trackId];
@@ -160,6 +160,17 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
     () => (session?.card?.tracks?.camera || []).some((track) => (track?.keys || []).length > 0),
     [session?.card?.tracks?.camera],
   );
+  const viewerFlip = myColor === 'black' ? -1 : 1;
+
+  const orientPosition = (position) => {
+    const source = Array.isArray(position) ? position : [0, 0, 0];
+    return viewerFlip === -1 ? [-source[0], source[1], -source[2]] : source;
+  };
+
+  const orientRotation = (rotation) => {
+    const source = Array.isArray(rotation) ? rotation : [0, 0, 0];
+    return viewerFlip === -1 ? [source[0], source[1] + Math.PI, -source[2]] : source;
+  };
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -170,7 +181,10 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
     // otherwise fall back to card's preview FEN (for Studio editing)
     const runtimeFen = session?.eventParams?.fen;
     const fenToUse = runtimeFen || session?.card?.board?.fen;
-    return parseFenPieces(fenToUse);
+    return parseFenPieces(fenToUse).map((piece) => ({
+      ...piece,
+      targetPosition: orientPosition(piece.targetPosition),
+    }));
   }, [session?.card?.board?.fen, session?.eventParams?.fen]);
   const boardPieces = useMemo(() => {
     if (Array.isArray(runtimePieces) && runtimePieces.length > 0) {
@@ -180,7 +194,7 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
           square: piece.square,
           type: piece.type,
           isWhite: piece.isWhite,
-          targetPosition: piece.targetPosition,
+          targetPosition: orientPosition(piece.targetPosition),
         }));
     }
     return fallbackFenPieces;
@@ -200,12 +214,15 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
     if (!anchorSquare) return null;
     const anchoredPiece = pieceBySquare.get(anchorSquare);
     if (anchoredPiece && Array.isArray(anchoredPiece.targetPosition)) {
-      return anchoredPiece.targetPosition;
+      return orientPosition(anchoredPiece.targetPosition);
     }
     const [x, , z] = squareToPosition(anchorSquare);
-    return [x, 0.15, z];
+    return orientPosition([x, 0.15, z]);
   }, [pieceBySquare, session?.eventParams?.cameraAnchorMode, session?.eventParams?.cameraAnchorSquare, session?.eventParams?.focusSquare, session?.eventParams?.square, session?.eventParams?.targetSquare]);
-  const objectStates = useMemo(() => resolveTrackStates(session?.card, session?.eventParams, boardPieces, playheadMs), [session?.card, session?.eventParams, boardPieces, playheadMs]);
+  const objectStates = useMemo(
+    () => resolveTrackStates(session?.card, session?.eventParams, boardPieces, playheadMs, orientPosition),
+    [session?.card, session?.eventParams, boardPieces, playheadMs, orientPosition],
+  );
 
   useEffect(() => {
     if (typeof onPieceMotionsChange !== 'function') return undefined;
@@ -233,7 +250,7 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
           (worldPosition[1] || 0) - (basePosition[1] || 0),
           (worldPosition[2] || 0) - (basePosition[2] || 0),
         ],
-        rotation: sampled.rotation || [0, 0, 0],
+        rotation: orientRotation(sampled.rotation || [0, 0, 0]),
         scale: sampled.scale || [1, 1, 1],
       };
     });
@@ -333,19 +350,20 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
     const cameraTrack = (session.card.tracks?.camera || []).find((track) => (track?.keys || []).length > 0);
     if (!cameraTrack) return;
 
-    // Treat only large jumps (or reverse jumps) as scrubbing.
+    // Treat reverse jumps as scrubbing. Forward playback cadence can vary by FPS
+    // and should not trigger transition mode.
     const playheadDelta = playheadMs - previousPlayheadRef.current;
-    const isScrubbing = playheadDelta < -1 || playheadDelta > 50;
+    const isScrubbing = playheadDelta < -1;
     previousPlayheadRef.current = playheadMs;
 
     const sample = sampleCameraTrack(cameraTrack, playheadMs);
     const targetOffset = cameraAnchorPosition || null;
     const basePosition = sample.position || [0, 7, 7];
     const baseTarget = sample.target || [0, 0, 0];
-    const targetPositionRaw = targetOffset ? addVec3(basePosition, targetOffset) : basePosition;
-    const targetCameraTargetRaw = targetOffset ? addVec3(baseTarget, targetOffset) : baseTarget;
-    const targetPosition = rotateBoardSpaceForBlack(targetPositionRaw, myColor);
-    const targetCameraTarget = rotateBoardSpaceForBlack(targetCameraTargetRaw, myColor);
+    const targetPosition = targetOffset ? addVec3(basePosition, targetOffset) : basePosition;
+    const targetCameraTarget = targetOffset ? addVec3(baseTarget, targetOffset) : baseTarget;
+    const orientedTargetPosition = orientPosition(targetPosition);
+    const orientedCameraTarget = orientPosition(targetCameraTarget);
     const targetFov = sample.fov || 55;
 
     const controls = controlsRef?.current;
@@ -363,8 +381,8 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
       const startTarget = controls?.target?.clone() || new THREE.Vector3(0, 0, 0);
       const startTime = performance.now();
       const durationMs = 200; // Scrubbing animation duration (slower, ~200ms)
-      const targetPositionVec = new THREE.Vector3(...targetPosition);
-      const targetCameraTargetVec = new THREE.Vector3(...targetCameraTarget);
+      const targetPositionVec = new THREE.Vector3(...orientedTargetPosition);
+      const targetCameraTargetVec = new THREE.Vector3(...orientedCameraTarget);
 
       const targetQuaternion = new THREE.Quaternion();
       const lookAtMatrix = new THREE.Matrix4();
@@ -401,21 +419,21 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
     } else {
       // Not scrubbing - apply immediately (playback is running)
       // Position
-      camera.position.set(...targetPosition);
+      camera.position.set(...orientedTargetPosition);
       
       // FOV
       camera.fov = targetFov;
 
       // Keep camera orientation target-driven to match Studio preview.
       if (!controls) {
-        camera.lookAt(...targetCameraTarget);
+        camera.lookAt(...orientedCameraTarget);
       }
 
       camera.updateProjectionMatrix();
 
       if (controls) {
         // Always update controls to look at the target
-        controls.target.set(...targetCameraTarget);
+        controls.target.set(...orientedCameraTarget);
         controls.update();
       }
     }
