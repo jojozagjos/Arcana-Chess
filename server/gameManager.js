@@ -64,6 +64,11 @@ function findPlayerIdByColor(playerColors, color) {
   return Object.entries(playerColors || {}).find(([, c]) => normalizeColorToken(c) === target)?.[0] || null;
 }
 
+function cloneSerializable(value) {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
 function sanitizeEdgeRankPawnsInFen(fen) {
   if (!fen || typeof fen !== 'string') return fen;
   const parts = fen.split(' ');
@@ -233,7 +238,7 @@ function replaceOwnBackRankPawnsInFen(fen, replacement = { white: 'N', black: 'n
 }
 
 function getFenPieceAtSquare(fen, square) {
-  if (!fen || !square || square.length !== 2) return null;
+  if (!fen || typeof fen !== 'string' || !square || square.length !== 2) return null;
   const parts = fen.split(' ');
   const placement = parts[0];
   if (!placement) return null;
@@ -268,7 +273,12 @@ function hasPawnLeftStartingSquareBefore(gameState, square, colorChar) {
   }
 
   const history = Array.isArray(gameState?.moveHistory) ? gameState.moveHistory : [];
-  for (const fen of history) {
+  for (const entry of history) {
+    const fen = typeof entry === 'string' ? entry : entry?.fen;
+    if (!fen || typeof fen !== 'string') {
+      // Unknown history shape: fail closed and prevent illegal 2-square advances.
+      return true;
+    }
     const piece = getFenPieceAtSquare(fen, square);
     if (!piece || piece.type !== 'p' || piece.color !== colorChar) {
       return true;
@@ -575,6 +585,11 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       knightOfStorms: { w: null, b: null },    // knight can move within 2-square radius
       berserkerRage: { w: null, b: null },    // { active, firstKillSquare, usedSecondKill }
       mindControlled: [],  // [{ square, originalColor, controlledBy }]
+      mindControlExtraMove: null,
+      promotionRitual: { w: null, b: null },
+      pendingExecution: null,
+      pendingBreakingPoint: null,
+      edgerunnerOverdrive: null,
       enPassantMaster: { w: false, b: false }, // enhanced en passant
       temporalEcho: null,  // { pattern, color } for repeating last move
       chainLightning: { w: false, b: false }, // next capture destroys adjacent enemies
@@ -632,6 +647,61 @@ export class GameManager {
         gameState.lastMoveTime = Date.now();
       }
     }
+  }
+
+  // If the active side is currently frozen by Time Freeze, skip their turn immediately.
+  // Returns true when a skip was applied.
+  _consumeTimeFreezeIfNeeded(gameState) {
+    const chess = gameState?.chess;
+    if (!chess || gameState?.status !== STATUS_ONGOING) return false;
+
+    const frozenColor = chess.turn();
+    if (!gameState.activeEffects?.timeFrozen?.[frozenColor]) return false;
+
+    gameState.activeEffects.timeFrozen[frozenColor] = false;
+    if (!gameState.activeEffects.timeFreezeArcanaLock) {
+      gameState.activeEffects.timeFreezeArcanaLock = { w: false, b: false };
+    }
+    gameState.activeEffects.timeFreezeArcanaLock[frozenColor] = true;
+
+    this._swapTurn(chess, gameState);
+    if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+    gameState.plyCount += 1;
+    this.decrementEffects(gameState);
+
+    const skippedPlayerId = findPlayerIdByColor(gameState.playerColors, frozenColor);
+    for (const pid of gameState.playerIds || []) {
+      if (!pid.startsWith(AI_PREFIX)) {
+        this.io.to(pid).emit('turnSkipped', {
+          skippedPlayer: skippedPlayerId,
+          skippedColor: frozenColor,
+          reason: 'Time Freeze',
+        });
+      }
+    }
+
+    return true;
+  }
+
+  async _settleAITurn(gameState) {
+    const chess = gameState?.chess;
+    if (!chess || gameState?.status !== STATUS_ONGOING || !gameState?.aiDifficulty) return false;
+
+    const aiSocketId = (gameState.playerIds || []).find((id) => id.startsWith(AI_PREFIX));
+    if (!aiSocketId) return false;
+
+    const aiColorName = gameState.playerColors?.[aiSocketId];
+    const aiTurnChar = aiColorName === WHITE ? WHITE_CHAR : BLACK_CHAR;
+    let advanced = false;
+
+    for (let i = 0; i < 3; i++) {
+      if (gameState.status !== STATUS_ONGOING) break;
+      if (chess.turn() !== aiTurnChar) break;
+      await this._settleAITurn(gameState);
+      advanced = true;
+    }
+
+    return advanced;
   }
 
   // If AI logic fails while AI is to move, force-turn-pass to prevent permanent softlocks.
@@ -704,6 +774,43 @@ export class GameManager {
 
     const chess = gameState.chess;
 
+    // Resolve deferred Execution board mutation after reveal/cutscene completion.
+    const pendingExecution = gameState.activeEffects?.pendingExecution;
+    if (pendingExecution?.targetSquare) {
+      const target = chess.get(pendingExecution.targetSquare);
+      if (target && target.type !== 'k') {
+        chess.remove(pendingExecution.targetSquare);
+      }
+      if (gameState.activeEffects) {
+        gameState.activeEffects.pendingExecution = null;
+      }
+    }
+
+    const pendingBreakingPoint = gameState.activeEffects?.pendingBreakingPoint;
+    if (pendingBreakingPoint?.targetSquare) {
+      const target = chess.get(pendingBreakingPoint.targetSquare);
+      if (target && target.type !== 'k') {
+        chess.remove(pendingBreakingPoint.targetSquare);
+      }
+
+      for (const displacement of Array.isArray(pendingBreakingPoint.displaced) ? pendingBreakingPoint.displaced : []) {
+        if (!displacement?.from || !displacement?.to) continue;
+        const displacedPiece = chess.get(displacement.from);
+        if (!displacedPiece || displacedPiece.type === 'k') continue;
+        if (displacedPiece.color === pendingBreakingPoint.moverColor) continue;
+        chess.remove(displacement.from);
+        if (!chess.get(displacement.to)) {
+          chess.put(displacedPiece, displacement.to);
+        } else {
+          chess.put(displacedPiece, displacement.from);
+        }
+      }
+
+      if (gameState.activeEffects) {
+        gameState.activeEffects.pendingBreakingPoint = null;
+      }
+    }
+
     // If the reveal required the turn to end, perform the swap now
     if (pending?.turnShouldEnd) {
       try {
@@ -711,6 +818,9 @@ export class GameManager {
         if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
         gameState.plyCount += 1;
         this.decrementEffects(gameState);
+
+        // Time Freeze should skip immediately once turn passes to the frozen side.
+        this._consumeTimeFreezeIfNeeded(gameState);
 
         // Broadcast updated game state to players
         for (const pid of gameState.playerIds) {
@@ -731,8 +841,8 @@ export class GameManager {
       // Determine if the AI should move now (find any AI id matching activeChar)
       const aiSocketId = gameState.playerIds.find((id) => id.startsWith('AI-'));
       if (aiSocketId) {
-        // Let performAIMove decide; it checks gameState.chess.turn()
-        await this.performAIMove(gameState);
+        // Let the settle helper decide; it handles chained freeze/skipped turns.
+        await this._settleAITurn(gameState);
         if (humanId) {
           const personalised = this.serialiseGameStateForViewer(gameState, humanId);
             this.io.to(humanId).emit('gameUpdated', personalised);
@@ -817,7 +927,7 @@ export class GameManager {
 
     // If the human chose black, the AI (white) should move first.
     if (chosenColor === 'black') {
-      await this.performAIMove(gameState);
+      await this._settleAITurn(gameState);
       const personalised = this.serialiseGameStateForViewer(gameState, socket.id);
       this.io.to(socket.id).emit('gameUpdated', personalised);
     }
@@ -1003,30 +1113,10 @@ export class GameManager {
     // Apply this before action-type handling so no branch can bypass it.
     const playerColorName = gameState.playerColors?.[socket.id];
     const playerColorChar = playerColorName === WHITE ? WHITE_CHAR : BLACK_CHAR;
-    if (playerColorChar && gameState.activeEffects?.timeFrozen?.[playerColorChar] && gameState.chess.turn() === playerColorChar) {
-      gameState.activeEffects.timeFrozen[playerColorChar] = false;
-      if (!gameState.activeEffects.timeFreezeArcanaLock) {
-        gameState.activeEffects.timeFreezeArcanaLock = { w: false, b: false };
-      }
-      gameState.activeEffects.timeFreezeArcanaLock[playerColorChar] = true;
-      this._swapTurn(gameState.chess, gameState);
-      if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
-      gameState.plyCount += 1;
-      this.decrementEffects(gameState);
-
+    if (playerColorChar && gameState.chess.turn() === playerColorChar && this._consumeTimeFreezeIfNeeded(gameState)) {
       this.broadcastGameUpdate(gameState);
-      for (const pid of gameState.playerIds) {
-        if (!pid.startsWith(AI_PREFIX)) {
-          this.io.to(pid).emit('turnSkipped', {
-            skippedPlayer: socket.id,
-            reason: 'Time Freeze',
-          });
-        }
-      }
 
-      if (gameState.aiDifficulty && gameState.status === STATUS_ONGOING) {
-        await this.performAIMove(gameState);
-      }
+      await this._settleAITurn(gameState);
 
       return { ok: true, turnSkipped: true, reason: 'Time Freeze' };
     }
@@ -1142,6 +1232,10 @@ export class GameManager {
       
       // Decrement effects after drawing (drawing counts as a player turn for effect expiration)
       this.decrementEffects(gameState);
+
+      // Time Freeze: if draw passed turn to a frozen side, skip immediately.
+      this._consumeTimeFreezeIfNeeded(gameState);
+      await this._settleAITurn(gameState);
       
       // Emit to both players (redacted to opponent)
       for (const pid of gameState.playerIds) {
@@ -1331,6 +1425,11 @@ export class GameManager {
       throw new Error('Mind Control: you must move the controlled piece first');
     }
 
+    const overdriveEntry = gameState.activeEffects?.edgerunnerOverdrive;
+    if (overdriveEntry?.active && overdriveEntry.color === moverColor && move?.from !== overdriveEntry.square) {
+      throw new Error('Edgerunner Overdrive: you must move the overdriven piece first');
+    }
+
     // Work with verbose moves so we can inspect captures and types
     const legalMoves = chess.moves({ verbose: true });
     let candidate = legalMoves.find((m) => {
@@ -1349,19 +1448,20 @@ export class GameManager {
       
       const controlOwner = controlEntry?.controller || controlEntry?.controlledBy;
       if (pieceAtFrom && controlEntry && controlOwner === moverColor) {
-        // This IS an enemy piece being mind-controlled by current player
-        // Validate it's a legal move for that piece
+        // This is an enemy piece being mind-controlled by current player.
+        // Validate using the controlled piece's original side-to-move legality.
         const tempChess = new Chess();
-        safeLoadFen(tempChess, chess.fen());
-        // Temporarily pretend the piece belongs to the controlling player
+        const fenParts = chess.fen().split(' ');
+        const originalColor = controlEntry.originalColor || pieceAtFrom.color;
+        fenParts[1] = originalColor;
+        if (fenParts.length > 3) fenParts[3] = '-';
+        safeLoadFen(tempChess, fenParts.join(' '));
+
         const piece = tempChess.get(move.from);
-        if (!piece) {
+        if (!piece || piece.color !== originalColor) {
           throw new Error('Controlled piece is no longer available');
         }
-        const originalColor = piece.color;
-        tempChess.remove(move.from);
-        tempChess.put({ type: piece.type, color: moverColor }, move.from);
-        
+
         // Now check if this move is legal
         const tempMoves = tempChess.moves({ verbose: true });
         const tempCandidate = tempMoves.find(m => {
@@ -1524,7 +1624,9 @@ export class GameManager {
     }
 
     // Divine Intervention: prevent king from being in check or captured
-    if (gameState.activeEffects.divineIntervention[opponentColor]) {
+    const divineState = gameState.activeEffects.divineIntervention?.[opponentColor];
+    const divineActive = divineState === true || (typeof divineState === 'object' && divineState?.active);
+    if (divineActive) {
       const targetPiece = chess.get(candidate.to);
       if (targetPiece && targetPiece.type === 'k') {
         throw new Error('Divine Intervention protects the king!');
@@ -1572,7 +1674,17 @@ export class GameManager {
 
     // Save FEN to history for time_travel
     if (!gameState.moveHistory) gameState.moveHistory = [];
-    gameState.moveHistory.push(chess.fen());
+    gameState.moveHistory.push({
+      fen: chess.fen(),
+      snapshot: {
+        activeEffects: cloneSerializable(gameState.activeEffects),
+        pawnShields: cloneSerializable(gameState.pawnShields),
+        capturedByColor: cloneSerializable(gameState.capturedByColor),
+        pawnFirstMoveConsumed: cloneSerializable(gameState.pawnFirstMoveConsumed),
+        lastMove: cloneSerializable(gameState.lastMove),
+        lastMoveByColor: cloneSerializable(gameState.lastMoveByColor),
+      },
+    });
     if (gameState.moveHistory.length > MOVE_HISTORY_LIMIT) gameState.moveHistory.shift();
 
     // Snapshot FEN before executing. If an error occurs after chess.move() but
@@ -1620,8 +1732,9 @@ export class GameManager {
     if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
     gameState.plyCount++;
 
-    if (gameState.activeEffects?.timeFreezeArcanaLock?.[moverColor]) {
-      gameState.activeEffects.timeFreezeArcanaLock[moverColor] = false;
+    const frozenColor = moverColor === WHITE_CHAR ? BLACK_CHAR : WHITE_CHAR;
+    if (gameState.activeEffects?.timeFreezeArcanaLock?.[frozenColor]) {
+      gameState.activeEffects.timeFreezeArcanaLock[frozenColor] = false;
     }
 
     // Check if a king was captured (should end game immediately)
@@ -1743,8 +1856,27 @@ export class GameManager {
       if (controlledEntry) {
         // Track the new position so it reverts at the correct square
         controlledEntry.square = result.to;
+        const controlOwner = controlledEntry?.controller || controlledEntry?.controlledBy;
+        if (controlOwner === moverColor && gameState.activeEffects) {
+          gameState.activeEffects.mindControlExtraMove = {
+            color: moverColor,
+            pending: true,
+          };
+        }
         gameState.activeEffects.mindControlled = gameState.activeEffects.mindControlled.filter((c) => c !== controlledEntry);
       }
+    }
+
+    const overdriveState = gameState.activeEffects?.edgerunnerOverdrive;
+    const overdriveMoved = Boolean(
+      overdriveState?.active
+      && overdriveState.color === moverColor
+      && overdriveState.square === result.from
+    );
+    if (overdriveMoved) {
+      overdriveState.square = result.to;
+      overdriveState.captured = !!result.captured;
+      overdriveState.movesUsed = (overdriveState.movesUsed || 0) + 1;
     }
 
     // Mirror Image: If a mirror image was captured, just remove it from tracking (no penalty)
@@ -2013,6 +2145,24 @@ export class GameManager {
                  !gameState.activeEffects.queensGambitUsed[moverColor] &&
                  result.piece === 'q'; // Queen must be the piece that moved
 
+    let hasPromotionRitual = false;
+    const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor];
+    if (promotionRitualState?.active) {
+      promotionRitualState.movesRemaining = Math.max(0, (promotionRitualState.movesRemaining || 0) - 1);
+      if (promotionRitualState.movesRemaining > 0) {
+        hasPromotionRitual = true;
+      } else {
+        gameState.activeEffects.promotionRitual[moverColor] = null;
+      }
+    }
+
+    let hasMindControlExtraMove = false;
+    const mindControlExtraMove = gameState.activeEffects?.mindControlExtraMove;
+    if (mindControlExtraMove?.color === moverColor && mindControlExtraMove.pending) {
+      hasMindControlExtraMove = true;
+      gameState.activeEffects.mindControlExtraMove = null;
+    }
+
     // Double Strike and Berserker state tracking
     const dsEffect = gameState.activeEffects.doubleStrike?.[moverColor];
     const brEffect = gameState.activeEffects.berserkerRage?.[moverColor];
@@ -2059,11 +2209,13 @@ export class GameManager {
     // Check if Berserker Rage is active and not yet used second capture
     const hasBerserkerRage = brEffect?.active && !brEffect.usedSecondKill && gameState.activeEffects.berserkerRageActive?.color === moverColor && !result.promotion;
 
+    const hasEdgerunnerOverdrive = overdriveMoved && !!result.captured && !result.promotion;
+
     // Only grant extra move if the game is not over (checkmate/stalemate)
     const gameIsOver = chess.isCheckmate() || chess.isStalemate() || chess.isDraw();
 
     // If player has extra move available, don't decrement effects or switch turns
-    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage) && !gameIsOver) {
+    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage || hasPromotionRitual || hasMindControlExtraMove || hasEdgerunnerOverdrive) && !gameIsOver) {
       // Mark that they used their extra move opportunity
       if (hasQueensGambit) {
         gameState.activeEffects.queensGambitUsed[moverColor] = true;
@@ -2109,6 +2261,10 @@ export class GameManager {
           }
         }
       }
+
+      if (hasEdgerunnerOverdrive && overdriveState) {
+        overdriveState.extraTurns = (overdriveState.extraTurns || 0) + 1;
+      }
       
       // chess.move() already swapped the active color in the FEN. We need to
       // swap it BACK so the same player can make their extra move. Without this,
@@ -2128,13 +2284,34 @@ export class GameManager {
           // Notify about extra move
           this.io.to(pid).emit('extraMoveAvailable', { 
             color: moverColor, 
-            type: hasQueensGambit ? 'queensGambit' : (hasDoubleStrike ? 'doubleStrike' : 'berserkerRage'),
+            type: hasQueensGambit
+              ? 'queensGambit'
+              : (hasDoubleStrike
+                ? 'doubleStrike'
+                : (hasBerserkerRage
+                  ? 'berserkerRage'
+                  : (hasPromotionRitual
+                    ? 'promotionRitual'
+                    : (hasMindControlExtraMove ? 'mindControl' : 'edgerunnerOverdrive')))),
             square: result.to,
           });
         }
       }
       return { gameState: this.serialiseGameState(gameState), appliedArcana: [], extraMove: true };
     }
+
+      if (overdriveMoved && overdriveState?.originSquare && overdriveState.square && overdriveState.square !== overdriveState.originSquare) {
+        const snapPiece = chess.get(overdriveState.square);
+        if (snapPiece && snapPiece.color === moverColor) {
+          chess.remove(overdriveState.square);
+          chess.put(snapPiece, overdriveState.originSquare);
+          result.to = overdriveState.originSquare;
+          if (gameState.lastMove) {
+            gameState.lastMove.to = overdriveState.originSquare;
+          }
+        }
+        gameState.activeEffects.edgerunnerOverdrive = null;
+      }
 
     // No extra move — now decrement turn-based effects and check for game end
     this.decrementEffects(gameState);
@@ -2225,14 +2402,20 @@ export class GameManager {
       const spawnSquare = candidateSquares.find((square) => !chess.get(square));
       if (!spawnSquare) return false;
 
+      const spawnRank = parseInt(spawnSquare[1], 10);
+      const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
+        || (checkedColor === 'b' && spawnRank === 1);
+      const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
+
       gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
-      chess.put({ type: 'p', color: checkedColor }, spawnSquare);
+      chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
 
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
           this.io.to(pid).emit('divineIntervention', {
             savedPlayer: checkedColor,
             pawnSquare: spawnSquare,
+            spawnedPiece: blockerType,
           });
         }
       }
@@ -2260,6 +2443,12 @@ export class GameManager {
       outcome = { type: 'draw' };
     }
 
+    // Time Freeze: if the move passed turn to a frozen side, skip immediately so
+    // players actually receive two consecutive turns without waiting for input.
+    if (!outcome && gameState.status === STATUS_ONGOING) {
+      this._consumeTimeFreezeIfNeeded(gameState);
+    }
+
     // Broadcast personalised updated state to both players (mask lastMove under fog per viewer)
     if (result.cursedData) {
       await new Promise((resolve) => setTimeout(resolve, CURSED_REMOVAL_ANIMATION_MS));
@@ -2279,9 +2468,9 @@ export class GameManager {
       }
     }
 
-    // If this is an AI game and still ongoing, make the AI move
+    // If this is an AI game and still ongoing, keep resolving turns until stable.
     if (gameState.aiDifficulty && gameState.status === 'ongoing') {
-      await this.performAIMove(gameState);
+      await this._settleAITurn(gameState);
       if (gameState?.lastMove?.cursed) {
         await new Promise((resolve) => setTimeout(resolve, CURSED_REMOVAL_ANIMATION_MS));
       }
@@ -2432,12 +2621,15 @@ export class GameManager {
         sharpshooter: { w: false, b: false },
         knightOfStorms: { w: null, b: null },
         berserkerRage: { w: null, b: null },
+        promotionRitual: { w: null, b: null },
+        mindControlExtraMove: null,
         enPassantMaster: { w: false, b: false },
         temporalEcho: null,
         chainLightning: { w: false, b: false },
         castleBroken: { w: 0, b: 0 },
         doubleStrikeActive: null,
         berserkerRageActive: null,
+        pendingExecution: null,
       };
     }
     
@@ -2550,6 +2742,7 @@ export class GameManager {
     effects.knightOfStorms = { w: null, b: null };
     effects.berserkerRage = { w: null, b: null };
     effects.chainLightning = { w: false, b: false };
+    if (!effects.promotionRitual) effects.promotionRitual = { w: null, b: null };
     
     // Decrement castle breaker turns (lasts 3 turns)
     if (effects.castleBroken) {

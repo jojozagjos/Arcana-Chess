@@ -150,11 +150,11 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       {pawnShields?.w && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.w.square) ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
       {pawnShields?.b && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.b.square) ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
       
-      {/* Iron Fortress shields - show only for currently active fortress color */}
-      {Effects.ShieldGlowEffect && active.ironFortress?.w && (!viewerColorCode || viewerColorCode === 'w') && active.ironFortressShields?.w?.map((sq, i) => (
+      {/* Iron Fortress shields - visible to both players while active */}
+      {Effects.ShieldGlowEffect && active.ironFortress?.w && active.ironFortressShields?.w?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-w-${i}`} square={sq} />
       ))}
-      {Effects.ShieldGlowEffect && active.ironFortress?.b && (!viewerColorCode || viewerColorCode === 'b') && active.ironFortressShields?.b?.map((sq, i) => (
+      {Effects.ShieldGlowEffect && active.ironFortress?.b && active.ironFortressShields?.b?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-b-${i}`} square={sq} />
       ))}
     </group>

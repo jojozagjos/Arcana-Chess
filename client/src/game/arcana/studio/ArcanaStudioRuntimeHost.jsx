@@ -44,6 +44,13 @@ function addVec3(...vectors) {
   ]), [0, 0, 0]);
 }
 
+function rotateBoardSpaceForBlack(vec3, myColor) {
+  if (!Array.isArray(vec3) || vec3.length < 3) return [0, 0, 0];
+  if (myColor !== 'black') return vec3;
+  // Rotate 180 degrees around board center (origin in scene board-space).
+  return [-(Number(vec3[0]) || 0), Number(vec3[1]) || 0, -(Number(vec3[2]) || 0)];
+}
+
 function resolveTrackRuntimeSquare(track, eventParams) {
   const explicitSquare = typeof track?.pieceSquare === 'string' ? track.pieceSquare.trim() : '';
   if (explicitSquare === 'target' || explicitSquare === 'source') {
@@ -335,8 +342,10 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
     const targetOffset = cameraAnchorPosition || null;
     const basePosition = sample.position || [0, 7, 7];
     const baseTarget = sample.target || [0, 0, 0];
-    const targetPosition = targetOffset ? addVec3(basePosition, targetOffset) : basePosition;
-    const targetCameraTarget = targetOffset ? addVec3(baseTarget, targetOffset) : baseTarget;
+    const targetPositionRaw = targetOffset ? addVec3(basePosition, targetOffset) : basePosition;
+    const targetCameraTargetRaw = targetOffset ? addVec3(baseTarget, targetOffset) : baseTarget;
+    const targetPosition = rotateBoardSpaceForBlack(targetPositionRaw, myColor);
+    const targetCameraTarget = rotateBoardSpaceForBlack(targetCameraTargetRaw, myColor);
     const targetFov = sample.fov || 55;
 
     const controls = controlsRef?.current;
@@ -416,7 +425,7 @@ export function ArcanaStudioRuntimeHost({ session, controlsRef, myColor, onCompl
         cancelAnimationFrame(cameraTransitionRef.current.frameId);
       }
     };
-  }, [camera, cameraAnchorPosition, controlsRef, hasCameraTimeline, playheadMs, session]);
+  }, [camera, cameraAnchorPosition, controlsRef, hasCameraTimeline, myColor, playheadMs, session]);
 
   if (!session?.card) return null;
 

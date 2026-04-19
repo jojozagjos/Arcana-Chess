@@ -216,8 +216,12 @@ function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = fa
   const moves = chess.moves({ square: fromSquare, verbose: true }) || [];
   if (!moves.length) return null;
 
-  const captureMoves = moves.filter((m) => !!m.captured);
-  const candidateMoves = preferCapture && captureMoves.length ? captureMoves : moves;
+  // Overdrive cannot capture kings.
+  const legalMoves = moves.filter((m) => m?.captured !== 'k');
+  if (!legalMoves.length) return null;
+
+  const captureMoves = legalMoves.filter((m) => !!m.captured);
+  const candidateMoves = preferCapture && captureMoves.length ? captureMoves : legalMoves;
 
   const enemyKingSquare = findKingSquare(chess, moverColor === 'w' ? 'b' : 'w');
   const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
@@ -1195,57 +1199,13 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         if (params.targetSquare) {
           const target = chess.get(params.targetSquare);
           if (target && target.color === colorChar && target.type !== 'k') {
-            const dashPath = [];
-            let captureCount = 0;
-            let currentSquare = params.targetSquare;
-
-            for (let step = 0; step < 2; step++) {
-              const burstMove = pickBestOverdriveMove(chess, currentSquare, colorChar);
-              if (!burstMove) {
-                if (step === 0) {
-                  result.message = 'Edgerunner Overdrive: Target has no legal burst move';
-                  break;
-                }
-                break;
-              }
-
-              const burstResult = chess.move({ from: currentSquare, to: burstMove.to, promotion: 'q' });
-              if (!burstResult) {
-                if (step === 0) {
-                  result.message = 'Edgerunner Overdrive: Failed to execute burst move';
-                }
-                break;
-              }
-
-              dashPath.push(burstResult.to);
-              if (burstResult.captured) captureCount += 1;
-              currentSquare = burstResult.to;
-            }
-
-            if (!dashPath.length) {
-              break;
-            }
-
-            if (captureCount > 0) {
-              const thirdMove = pickBestOverdriveMove(chess, currentSquare, colorChar, true)
-                || pickBestOverdriveMove(chess, currentSquare, colorChar, false);
-
-              if (thirdMove) {
-                const thirdResult = chess.move({ from: currentSquare, to: thirdMove.to, promotion: 'q' });
-                if (thirdResult) {
-                  dashPath.push(thirdResult.to);
-                  if (thirdResult.captured) captureCount += 1;
-                }
-              }
-            }
-
             result.success = true;
-            result.message = `Edgerunner Overdrive: ${target.type} burst through ${dashPath.length} move${dashPath.length === 1 ? '' : 's'} (${captureCount} capture${captureCount === 1 ? '' : 's'})`;
+            result.message = `Edgerunner Overdrive: ${target.type} is overdriven`;
             result.visualEffect = 'edgerunner_overdrive';
             result.soundEffect = 'arcana:edgerunner_overdrive';
             result.pieceType = target.type;
             result.pieceColor = target.color;
-            result.highlightSquares = [params.targetSquare, ...dashPath];
+            result.highlightSquares = [params.targetSquare];
             result.highlightColor = '#44ff88';
           } else {
             result.message = 'Edgerunner Overdrive: Must target your own non-king piece';

@@ -240,21 +240,21 @@ function BishopGeometry({ color, emissive }) {
         <cylinderGeometry args={[0.28, 0.34, 0.14, 20]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.25, 0]} castShadow>
-        <cylinderGeometry args={[0.15, 0.23, 0.4, 18]} />
+      <mesh position={[0, 0.22, 0]} castShadow>
+        <cylinderGeometry args={[0.15, 0.2, 0.34, 18]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.5, 0]} castShadow>
-        <cylinderGeometry args={[0.11, 0.15, 0.28, 18]} />
+      <mesh position={[0, 0.42, 0]} castShadow>
+        <cylinderGeometry args={[0.11, 0.15, 0.22, 18]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.1} metalness={0.35} roughness={0.55} />
       </mesh>
-      <mesh position={[0, 0.72, 0]} castShadow>
-        <sphereGeometry args={[0.15, 20, 16]} />
+      <mesh position={[0, 0.58, 0]} castShadow>
+        <sphereGeometry args={[0.135, 20, 16]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.12} metalness={0.38} roughness={0.5} />
       </mesh>
       {/* Finial */}
-      <mesh position={[0, 0.89, 0]} castShadow>
-        <sphereGeometry args={[0.055, 14, 12]} />
+      <mesh position={[0, 0.74, 0]} castShadow>
+        <sphereGeometry args={[0.05, 14, 12]} />
         <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={0.15} metalness={0.4} roughness={0.45} />
       </mesh>
     </>

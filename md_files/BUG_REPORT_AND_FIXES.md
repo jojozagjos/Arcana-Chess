@@ -1,5 +1,41 @@
 # Arcana Chess - Bug Report and Fixes
 
+## Active QA Bug Tracker (April 2026)
+
+Status legend:
+- [ ] Not started
+- [~] In progress
+- [x] Fixed and verified
+
+- [x] Shields appear before card animation completes
+- [x] Right-click can still select/move pieces on desktop
+- [x] Rematch can trigger unexpected fog sound/effect carry-over
+- [x] Iron Fortress shield visibility mismatch (owner vs opponent)
+- [x] Intermittent white-screen issue
+- [x] Time Freeze: lag, mono timing/visibility, turn sequencing
+- [x] Peek Card: remove grid flip effect; flip in reveal overlay from card back
+- [x] Fog of War cloud visuals missing
+- [ ] Camera drag speed inconsistent by FPS
+- [ ] Bishop's Blessing should shield all valid diagonal pieces
+- [x] Sanctuary/Cursed Square tile indicators missing
+- [x] Make bishop model shorter
+- [x] Necromancy visuals sync + studio parity + timing + Astral-like sequence
+- [x] Astral Rebirth should consistently run for each revived piece
+- [x] Divine Intervention invalid FEN pawn placement softlock
+- [x] Execution target removal should happen after animation
+- [x] Cutscene orientation must mirror correctly for black side
+- [x] Mind Control legality/forced-move/extra-turn flow
+- [x] Promotion Ritual should grant two consecutive moves
+- [x] Cutscenes only playing once for many cards
+- [x] Time Travel should reliably undo last 2 moves
+- [x] Breaking Point logic/cleanup/description mismatch
+- [x] Edgerunner Overdrive full remake (green screen + afterimages + behavior)
+
+Verification update (April 18, 2026):
+- [x] Full automated suite passes (`npm run test:all`)
+
+---
+
 **Date:** January 28, 2026  
 **Status:** CRITICAL BUGS IDENTIFIED AND FIXED
 

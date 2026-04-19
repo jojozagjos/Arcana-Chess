@@ -72,18 +72,35 @@ export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
     return standardMoves;
   }
 
-  let customMoves = [...standardMoves];
   const effects = gameState.activeEffects;
+  const overdriveEntry = effects?.edgerunnerOverdrive;
+  if (overdriveEntry?.active && overdriveEntry.color === myColorCode && overdriveEntry.square !== square) {
+    return [];
+  }
+
+  let customMoves = [...standardMoves];
 
   if (controlledEntry && piece.color !== myColorCode) {
     const tempChess = cloneChessFromFen(chess);
     if (!tempChess) return customMoves;
-    const tempPiece = tempChess.get(square);
-    if (tempPiece) {
-      tempChess.remove(square);
-      tempChess.put({ type: tempPiece.type, color: myColorCode }, square);
+    const moveColor = controlledEntry.originalColor || piece.color;
+    const fenParts = tempChess.fen().split(' ');
+    fenParts[1] = moveColor;
+    if (fenParts.length > 3) fenParts[3] = '-';
+    try {
+      tempChess.load(fenParts.join(' '));
       customMoves = tempChess.moves({ square, verbose: true });
+    } catch {
+      customMoves = [];
     }
+
+    const seenControlled = new Set();
+    return customMoves.filter((m) => {
+      const key = `${m.from}-${m.to}-${m.promotion || ''}`;
+      if (seenControlled.has(key)) return false;
+      seenControlled.add(key);
+      return true;
+    });
   }
 
   // SPECTRAL MARCH: Rook can pass through one friendly piece

@@ -594,12 +594,12 @@ export function FogOfWarEffect({ onComplete }) {
 
   // Generate cloud particles - reduced density for readability and perf
   const clouds = useMemo(() => {
-    return [...Array(48)].map(() => ({
+    return [...Array(72)].map(() => ({
       x: (Math.random() - 0.5) * 12,
       z: (Math.random() - 0.5) * 12,
-      y: 0.1 + Math.random() * 0.8,
-      scale: 0.3 + Math.random() * 0.4, // smaller clouds
-      speed: 0.05 + Math.random() * 0.12,
+      y: 0.08 + Math.random() * 0.95,
+      scale: 0.42 + Math.random() * 0.52,
+      speed: 0.08 + Math.random() * 0.16,
       phase: Math.random() * Math.PI * 2,
     }));
   }, []);
@@ -621,7 +621,7 @@ export function FogOfWarEffect({ onComplete }) {
   const fadeInProgress = Math.min(age / fadeInDuration, 1);
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} position={[0, 0.18, 0]}>
       {clouds.map((cloud, i) => (
         <FogCloud
           key={i}
@@ -644,10 +644,10 @@ function FogCloud({ x, z, y, scale, speed, phase, fadeInProgress, fading, finish
       const t = state.clock.elapsedTime;
       ref.current.position.x = x + Math.sin(t * speed + phase) * 0.8;
       ref.current.position.z = z + Math.cos(t * speed + phase) * 0.8;
-      ref.current.position.y = y + Math.sin(t * speed * 2 + phase) * 0.15;
+      ref.current.position.y = y + Math.sin(t * speed * 2 + phase) * 0.22;
 
-      const shimmer = Math.sin(t + phase) * 0.045;
-      const baseOpacity = 0.08 + shimmer; // generally more transparent
+      const shimmer = Math.sin(t + phase) * 0.06;
+      const baseOpacity = 0.13 + shimmer;
       const fadeOutFactor = fading ? Math.max(0, 1 - finishT) : 1;
       ref.current.material.opacity = Math.max(0, baseOpacity * fadeInProgress * fadeOutFactor) * fadeOpacity;
     }
@@ -657,12 +657,12 @@ function FogCloud({ x, z, y, scale, speed, phase, fadeInProgress, fading, finish
     <mesh ref={ref} position={[x, y, z]}>
       <sphereGeometry args={[scale, 10, 10]} />
       <meshStandardMaterial
-        emissive="#17202a"
-        emissiveIntensity={0.3}
+        emissive="#1f2d3d"
+        emissiveIntensity={0.8}
         color="#ffffff"
         transparent
         depthWrite={false}
-        opacity={0.0} // driven by FogCloud frame logic
+        opacity={0.0}
       />
     </mesh>
   );
@@ -1334,6 +1334,7 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
   const [anchorX, , anchorZ] = squareToPosition(anchorSquare);
   const ageRef = useRef(0);
   const [expired, setExpired] = useState(false);
+  const washRef = useRef();
   const gateRef = useRef();
   const shellRef = useRef();
   const burstRingRef = useRef();
@@ -1363,6 +1364,10 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
     return clamp(synced > 0 ? synced * 0.85 : 1.35, 1, 2.4);
   }, [syncDurationMs]);
 
+  const afterimageOffsets = useMemo(() => {
+    return [...Array(12)].map((_, i) => 0.03 + i * 0.05);
+  }, []);
+
   useFrame((state) => {
     ageRef.current += state.clock.getDelta();
     const lifeT = clamp(ageRef.current / lifeSeconds, 0, 1);
@@ -1372,29 +1377,35 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
     }
 
     const t = state.clock.elapsedTime;
+    if (washRef.current) {
+      const washPulse = 0.18 + Math.sin(t * 5.5) * 0.03;
+      const washLift = 0.12 + lifeT * 0.18;
+      washRef.current.scale.set(1 + lifeT * 0.03, 1 + lifeT * 0.03, 1);
+      washRef.current.material.opacity = Math.max(0.02, (washPulse + washLift) * fadeOpacity);
+    }
     if (gateRef.current) {
       const wobble = 1 + Math.sin(t * 18) * 0.12;
       gateRef.current.scale.set(wobble, 1, wobble);
       gateRef.current.rotation.y = t * 1.6;
-      gateRef.current.material.opacity = (0.62 - lifeT * 0.56) * fadeOpacity;
+      gateRef.current.material.opacity = (0.72 - lifeT * 0.58) * fadeOpacity;
     }
     if (shellRef.current) {
       const pulse = 0.92 + Math.sin(t * 10) * 0.1;
       shellRef.current.scale.set(pulse, pulse, pulse);
       shellRef.current.rotation.y = -t * 2.2;
-      shellRef.current.material.opacity = Math.max(0.01, (0.36 - lifeT * 0.31) * fadeOpacity);
+      shellRef.current.material.opacity = Math.max(0.01, (0.42 - lifeT * 0.33) * fadeOpacity);
     }
     if (burstRingRef.current) {
       const s = 0.34 + lifeT * 3.1;
       burstRingRef.current.scale.set(s, s, 1);
       burstRingRef.current.rotation.z = t * 1.1;
-      burstRingRef.current.material.opacity = Math.max(0.01, (0.56 - lifeT * 0.52) * fadeOpacity);
+      burstRingRef.current.material.opacity = Math.max(0.01, (0.64 - lifeT * 0.56) * fadeOpacity);
     }
     if (runnerRef.current && localPath.length) {
       const p = interpolateOverdrivePath(localPath, lifeT);
       runnerRef.current.position.set(p[0], p[1] + 0.06, p[2]);
       runnerRef.current.rotation.y = t * 6;
-      runnerRef.current.material.opacity = Math.max(0.02, (0.98 - lifeT * 0.74) * fadeOpacity);
+      runnerRef.current.material.opacity = Math.max(0.02, (1 - lifeT * 0.7) * fadeOpacity);
     }
   });
 
@@ -1404,23 +1415,39 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
 
   return (
     <group position={[anchorX, 0, anchorZ]}>
-      <ParticleBurst position={[0, 0.22, 0]} count={56} color="#00ffd2" size={0.065} speed={3.1} lifetime={0.6} />
-      <ParticleRing position={[0, 0.14, 0]} count={64} color="#2de7ff" size={0.042} expandSpeed={3.3} lifetime={0.62} />
+      <mesh ref={washRef} position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[9.2, 9.2]} />
+        <meshStandardMaterial emissive="#00ff66" emissiveIntensity={1.8} color="#30ff71" transparent depthWrite={false} opacity={0.18 * fadeOpacity} />
+      </mesh>
+
+      <ParticleBurst position={[0, 0.22, 0]} count={72} color="#31ff7e" size={0.075} speed={4.2} lifetime={0.56} />
+      <ParticleRing position={[0, 0.14, 0]} count={72} color="#00ffd2" size={0.046} expandSpeed={3.8} lifetime={0.62} />
 
       <mesh ref={gateRef} position={[0, 0.36, 0]}>
         <cylinderGeometry args={[0.54, 0.54, 1.05, 8, 1, true]} />
-        <meshStandardMaterial emissive="#0af7ff" emissiveIntensity={4.8} color="#8fffff" transparent depthWrite={false} opacity={0.62 * fadeOpacity} wireframe />
+        <meshStandardMaterial emissive="#00ff66" emissiveIntensity={5.1} color="#a6ffca" transparent depthWrite={false} opacity={0.72 * fadeOpacity} wireframe />
       </mesh>
 
       <mesh ref={shellRef} position={[0, 0.36, 0]}>
         <torusGeometry args={[0.48, 0.045, 14, 40]} />
-        <meshStandardMaterial emissive="#43ffbb" emissiveIntensity={4.6} color="#93ffe0" transparent depthWrite={false} opacity={0.3 * fadeOpacity} />
+        <meshStandardMaterial emissive="#46ff7b" emissiveIntensity={5} color="#c4ffd4" transparent depthWrite={false} opacity={0.34 * fadeOpacity} />
       </mesh>
 
       <mesh ref={burstRingRef} position={[0, 0.07, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.2, 0.62, 56]} />
-        <meshStandardMaterial emissive="#20d9ff" emissiveIntensity={5.1} color="#b6f7ff" transparent depthWrite={false} opacity={0.5 * fadeOpacity} />
+        <meshStandardMaterial emissive="#10ff7a" emissiveIntensity={5.3} color="#dfffe7" transparent depthWrite={false} opacity={0.62 * fadeOpacity} />
       </mesh>
+
+      {afterimageOffsets.map((offset, idx) => (
+        <OverdriveAfterimage
+          key={`overdrive-afterimage-${idx}`}
+          path={localPath}
+          offset={offset}
+          ageRef={ageRef}
+          lifeSeconds={lifeSeconds}
+          fadeOpacity={fadeOpacity}
+        />
+      ))}
 
       {localPath.map((node, idx) => (
         <OverdriveLaneMarker key={`overdrive-lane-${idx}`} node={node} idx={idx} ageRef={ageRef} lifeSeconds={lifeSeconds} fadeOpacity={fadeOpacity} />
@@ -1448,8 +1475,8 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
           ageRef={ageRef}
           startMs={Math.max(0, beat)}
           durationMs={360}
-          color={idx % 2 === 0 ? '#2de7ff' : '#18ff9b'}
-          emissiveIntensity={3.8}
+          color={idx % 2 === 0 ? '#31ff7e' : '#1fffad'}
+          emissiveIntensity={4.4}
           innerRadius={0.22}
           outerRadius={0.48}
           maxScale={2.25}
@@ -1460,7 +1487,7 @@ export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [],
 
       <mesh ref={runnerRef}>
         <octahedronGeometry args={[0.11, 0]} />
-        <meshStandardMaterial emissive="#dffcff" emissiveIntensity={6.2} color="#f4ffff" transparent depthWrite={false} opacity={0.9 * fadeOpacity} />
+        <meshStandardMaterial emissive="#e8fff1" emissiveIntensity={7} color="#f8fffb" transparent depthWrite={false} opacity={0.95 * fadeOpacity} />
       </mesh>
     </group>
   );
@@ -1541,8 +1568,51 @@ function OverdriveSegmentRibbon({ from, to, idx, ageRef, lifeSeconds, fadeOpacit
   return (
     <mesh ref={ref} position={center} rotation={[-Math.PI / 2, rotationY, 0]} scale={[1, 1, dist]}>
       <planeGeometry args={[0.16, 1]} />
-      <meshStandardMaterial emissive="#1ef0ff" emissiveIntensity={5.4} color="#b7ffff" transparent depthWrite={false} opacity={0.48 * fadeOpacity} />
+      <meshStandardMaterial emissive="#26ff79" emissiveIntensity={5.8} color="#d5ffe0" transparent depthWrite={false} opacity={0.52 * fadeOpacity} />
     </mesh>
+  );
+}
+
+function OverdriveAfterimage({ path, offset, ageRef, lifeSeconds, fadeOpacity }) {
+  const groupRef = useRef();
+  const coreRef = useRef();
+  const ringRef = useRef();
+
+  useFrame((state) => {
+    if (!groupRef.current) return;
+
+    const t = state.clock.elapsedTime;
+    const lifeT = clamp((ageRef.current || 0) / Math.max(0.001, lifeSeconds), 0, 1);
+    const trailT = clamp(lifeT - offset, 0, 1);
+
+    if (trailT <= 0 || !Array.isArray(path) || !path.length) {
+      groupRef.current.visible = false;
+      return;
+    }
+
+    groupRef.current.visible = true;
+    const p = interpolateOverdrivePath(path, trailT);
+    groupRef.current.position.set(p[0], p[1] + 0.03, p[2]);
+    groupRef.current.rotation.y = t * 5.5 + offset * 8;
+    const pulse = 0.82 + Math.sin(t * 9 + offset * 14) * 0.08;
+    groupRef.current.scale.setScalar(pulse + trailT * 0.18);
+
+    const opacity = Math.max(0.01, (0.38 - trailT * 0.24) * (1 - offset * 0.18) * fadeOpacity);
+    if (coreRef.current) coreRef.current.material.opacity = opacity;
+    if (ringRef.current) ringRef.current.material.opacity = opacity * 0.7;
+  });
+
+  return (
+    <group ref={groupRef} visible={false}>
+      <mesh ref={coreRef}>
+        <octahedronGeometry args={[0.09, 0]} />
+        <meshStandardMaterial emissive="#00ff66" emissiveIntensity={4.8} color="#bdffd0" transparent depthWrite={false} opacity={0.26 * fadeOpacity} />
+      </mesh>
+      <mesh ref={ringRef} position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.12, 0.22, 24]} />
+        <meshStandardMaterial emissive="#31ff7e" emissiveIntensity={3.8} color="#d8ffe4" transparent depthWrite={false} opacity={0.18 * fadeOpacity} />
+      </mesh>
+    </group>
   );
 }
 
@@ -2197,81 +2267,7 @@ export function AstralRebirthEffect({ square, onComplete }) {
 // Necromancy Effect - darker soul bloom with green-violet necrotic particles
 export function NecromancyEffect({ square, revivedSquares = [], onComplete }) {
   const focusSquare = square || revivedSquares[0] || null;
-  if (!focusSquare) return null;
-
-  const [x, , z] = squareToPosition(focusSquare);
-  const [progress, setProgress] = useState(0);
-  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 520);
-
-  useFrame((state, delta) => {
-    setProgress((prev) => {
-      const next = prev + delta * 0.72;
-      if (next >= 1 && !finishing) triggerFinish();
-      return Math.min(next, 1);
-    });
-  });
-
-  if (completed) return null;
-
-  const ringScale = 0.35 + easeOutCubic(progress) * 1.15;
-
-  return (
-    <group position={[x, 0, z]}>
-      <mesh position={[0, 0.42, 0]}>
-        <sphereGeometry args={[0.5 + progress * 0.35, 24, 24]} />
-        <meshStandardMaterial
-          emissive="#66bb6a"
-          emissiveIntensity={2.8 * (1 - finishT)}
-          color="#c8e6c9"
-          transparent
-          depthWrite={false}
-          opacity={0.28 * (1 - progress * 0.25) * (1 - finishT)}
-        />
-      </mesh>
-
-      {[...Array(32)].map((_, i) => {
-        const angle = (i / 32) * Math.PI * 2 - progress * Math.PI * 2.4;
-        const radius = 0.2 + Math.sin(progress * Math.PI) * 0.6;
-        const height = (i / 32) * 1.4;
-        return (
-          <mesh key={i} position={[Math.cos(angle) * radius, height * (1 - progress), Math.sin(angle) * radius]}>
-            <sphereGeometry args={[0.035, 8, 8]} />
-            <meshStandardMaterial
-              emissive={i % 2 === 0 ? '#aed581' : '#9ccc65'}
-              emissiveIntensity={3.5 * (1 - finishT)}
-              color={i % 2 === 0 ? '#dcedc8' : '#c5e1a5'}
-              transparent
-              depthWrite={false}
-              opacity={(1 - progress * 0.5) * 0.9 * (1 - finishT)}
-            />
-          </mesh>
-        );
-      })}
-
-      <mesh position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={[ringScale, ringScale, 1]}>
-        <ringGeometry args={[0.22, 0.72, 32]} />
-        <meshStandardMaterial
-          emissive="#7cb342"
-          emissiveIntensity={2 * (1 - progress)}
-          color="#c5e1a5"
-          transparent
-          depthWrite={false}
-          opacity={0.55 * (1 - progress * 0.65) * (1 - finishT)}
-        />
-      </mesh>
-
-      <mesh position={[0, 1.15, 0]}>
-        <octahedronGeometry args={[0.1, 0]} />
-        <meshStandardMaterial
-          emissive="#dcedc8"
-          emissiveIntensity={4}
-          color="#f1f8e9"
-          transparent
-          opacity={0.85 * (1 - finishT)}
-        />
-      </mesh>
-    </group>
-  );
+  return <AstralRebirthEffect square={focusSquare} onComplete={onComplete} />;
 }
 
 // Mind Control Effect - Purple aura
@@ -2901,7 +2897,7 @@ export function SanctuaryEffect({ square, onComplete }) {
 
   return (
     <group position={[x, 0, z]}>
-      <mesh position={[0, 0.058, 0]}>
+      <mesh position={[0, 0.068, 0]}>
         <boxGeometry args={[0.94, 0.012, 0.94]} />
         <meshStandardMaterial
           color="#d1a100"
@@ -2909,10 +2905,11 @@ export function SanctuaryEffect({ square, onComplete }) {
           emissiveIntensity={3.4 * live * pulse}
           metalness={0.05}
           roughness={0.5}
+          depthTest={false}
         />
       </mesh>
 
-      <mesh position={[0, 0.067, 0]}>
+      <mesh position={[0, 0.078, 0]}>
         <boxGeometry args={[0.76, 0.008, 0.76]} />
         <meshStandardMaterial
           color="#fff4bf"
@@ -2920,6 +2917,7 @@ export function SanctuaryEffect({ square, onComplete }) {
           emissiveIntensity={2.6 * live}
           metalness={0.05}
           roughness={0.55}
+          depthTest={false}
         />
       </mesh>
 
@@ -2933,6 +2931,7 @@ export function SanctuaryEffect({ square, onComplete }) {
             transparent
             opacity={0.7}
             depthWrite={false}
+            depthTest={false}
           />
         </mesh>
       ))}
@@ -2953,7 +2952,7 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
     return [...Array(10)].map((_, i) => ({
       angle: (i / 10) * Math.PI * 2,
       radius: 0.08 + (i % 3) * 0.09,
-      rise: 0.45 + (i % 4) * 0.12,
+      rise: 0.45 + (i % 4) * 0.13,
       phase: Math.random() * Math.PI * 2,
     }));
   }, []);
@@ -2961,10 +2960,11 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
   useFrame((state) => {
     const t = state.clock.elapsedTime;
     if (pulseRef.current) {
-      const scale = 1.0 + 0.04 * Math.sin(t * 2.1);
+      const scale = 1 + Math.sin(t * 2.1) * 0.05;
       pulseRef.current.scale.setScalar(scale);
       if (pulseRef.current.material) {
-        pulseRef.current.material.emissiveIntensity = (3.4 + Math.sin(t * 2.5) * 0.6) * fadeOpacity;
+        pulseRef.current.material.emissiveIntensity = (2.6 + Math.sin(t * 2.4) * 0.7) * fadeOpacity;
+        pulseRef.current.material.opacity = (0.62 + Math.sin(t * 2.4) * 0.12) * fadeOpacity;
       }
     }
     particleRefs.current.forEach((ref, i) => {
@@ -2978,22 +2978,25 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
       );
       if (ref.material) {
         const fade = Math.sin(riseLoop * Math.PI);
-        ref.material.opacity = Math.max(0.04, Math.pow(fade, 1.25) * fadeOpacity);
+        ref.material.opacity = Math.max(0.04, Math.pow(fade, 1.3) * fadeOpacity);
       }
     });
   });
 
   return (
-    <group position={[x, 0.02, z]}>
-      <mesh ref={pulseRef} position={[0, 0.038, 0]}>
+    <group position={[x, 0.07, z]}>
+      <mesh ref={pulseRef} position={[0, 0.012, 0]}>
         <boxGeometry args={[0.92, 0.01, 0.92]} />
         <meshStandardMaterial
-          emissive="#8a5f00"
-          emissiveIntensity={3.6}
-          color="#c58f00"
+          color="#8d6c00"
+          emissive="#b38300"
+          emissiveIntensity={2.6}
           metalness={0.05}
           roughness={0.5}
+          transparent
+          opacity={0.62}
           depthWrite={false}
+          depthTest={true}
         />
       </mesh>
 
@@ -3001,12 +3004,13 @@ export function SanctuaryIndicatorEffect({ square, fadeOpacity = 1 }) {
         <mesh key={`sanctuary-indicator-rise-${i}`} ref={(ref) => { particleRefs.current[i] = ref; }}>
           <octahedronGeometry args={[0.02, 0]} />
           <meshStandardMaterial
-            color="#ccb021"
-            emissive="#b88f17"
+            color="#ffffff"
+            emissive="#ffca28"
             emissiveIntensity={2.3 * fadeOpacity}
             transparent
             opacity={0.7}
             depthWrite={false}
+            depthTest={true}
           />
         </mesh>
       ))}
@@ -3069,19 +3073,7 @@ export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
 
   return (
     <group position={[x, 0, z]}>
-      <mesh position={[0, 0.058, 0]}>
-        <boxGeometry args={[0.94, 0.012, 0.94]} />
-        <meshStandardMaterial
-          color="#5e1717"
-          emissive="#8c1a1a"
-          emissiveIntensity={3.2 * glow}
-          metalness={0.02}
-          roughness={0.7}
-          depthWrite={false}
-        />
-      </mesh>
-
-      <mesh position={[0, 0.067, 0]}>
+      <mesh position={[0, 0.078, 0]}>
         <boxGeometry args={[0.76, 0.008, 0.76]} />
         <meshStandardMaterial
           color="#7d1f1f"
@@ -3090,6 +3082,7 @@ export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
           metalness={0.02}
           roughness={0.72}
           depthWrite={false}
+          depthTest={false}
         />
       </mesh>
 
@@ -3103,6 +3096,7 @@ export function CursedSquareEffect({ square, onComplete, fadeOpacity = 1 }) {
             transparent
             opacity={0.7}
             depthWrite={false}
+            depthTest={false}
           />
         </mesh>
       ))}
@@ -3132,6 +3126,7 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
       pulseRef.current.scale.setScalar(scale);
       if (pulseRef.current.material) {
         pulseRef.current.material.emissiveIntensity = (2.6 + Math.sin(t * 2.4) * 0.7) * fadeOpacity;
+        pulseRef.current.material.opacity = (0.62 + Math.sin(t * 2.4) * 0.12) * fadeOpacity;
       }
     }
 
@@ -3152,8 +3147,8 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
   });
 
   return (
-    <group position={[x, 0.02, z]}>
-      <mesh ref={pulseRef} position={[0, 0.038, 0]}>
+    <group position={[x, 0.07, z]}>
+      <mesh ref={pulseRef} position={[0, 0.012, 0]}>
         <boxGeometry args={[0.92, 0.01, 0.92]} />
         <meshStandardMaterial
           color="#5a1414"
@@ -3161,7 +3156,10 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
           emissiveIntensity={2.6}
           metalness={0.02}
           roughness={0.72}
+          transparent
+          opacity={0.62}
           depthWrite={false}
+          depthTest={true}
         />
       </mesh>
 
@@ -3169,15 +3167,17 @@ export function CursedSquareIndicatorEffect({ square, turnsLeft, fadeOpacity = 1
         <mesh key={`cursed-indicator-rise-${i}`} ref={(ref) => { particleRefs.current[i] = ref; }}>
           <dodecahedronGeometry args={[0.02, 0]} />
           <meshStandardMaterial
-            color="#ce71bc"
-            emissive="#b63f98"
+            color="#5a1414"
+            emissive="#8f1f1f"
             emissiveIntensity={2.2 * fadeOpacity}
             transparent
             opacity={0.7}
             depthWrite={false}
+            depthTest={true}
           />
         </mesh>
       ))}
+
     </group>
   );
 }

@@ -512,9 +512,8 @@ function applyTemporalEcho({ gameState, moverColor }) {
 
 function applyTimeFreeze({ gameState, moverColor }) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
-  gameState.activeEffects.timeFreezeArcanaLock = gameState.activeEffects.timeFreezeArcanaLock || { w: false, b: false };
-  gameState.activeEffects.timeFrozen = gameState.activeEffects.timeFrozen || { w: false, b: false };
-  gameState.activeEffects.timeFreezeArcanaLock[opponentColor] = false;
+  gameState.activeEffects.timeFreezeArcanaLock = { w: false, b: false };
+  gameState.activeEffects.timeFrozen = { w: false, b: false };
   gameState.activeEffects.timeFrozen[opponentColor] = true;
   return { params: { frozenColor: opponentColor } };
 }
@@ -674,11 +673,18 @@ function applyBerserkerRage({ gameState, moverColor, moveResult }) {
   return null;
 }
 
-function applyExecution({ chess, moverColor, params }) {
+function applyExecution({ chess, gameState, moverColor, params }) {
   if (params?.targetSquare) {
     const target = chess.get(params.targetSquare);
     if (target && target.color !== moverColor && target.type !== 'k') {
-      chess.remove(params.targetSquare);
+      if (!gameState.activeEffects) gameState.activeEffects = {};
+      // Defer board mutation until reveal completion so the piece vanishes in sync with the cutscene impact.
+      gameState.activeEffects.pendingExecution = {
+        targetSquare: params.targetSquare,
+        pieceType: target.type,
+        pieceColor: target.color,
+        casterColor: moverColor,
+      };
       return {
         params: {
           square: params.targetSquare,
@@ -808,7 +814,7 @@ function applyMirrorImage({ chess, gameState, moverColor, params }) {
   
   // Cannot use on king
   if (piece.type === 'k') return null;
-  
+
   // Find an adjacent free square for the duplicate.
   // Pawns cannot be placed on back ranks (1/8) because that creates invalid chess.js FEN.
   const adjacentSquares = getAdjacentSquares(targetSquare);
@@ -818,15 +824,15 @@ function applyMirrorImage({ chess, gameState, moverColor, params }) {
     const rank = sq[1];
     return rank !== '1' && rank !== '8';
   });
-  
+
   if (!freeSquare) {
     // No free adjacent square available
     return null;
   }
-  
+
   // Place the duplicate piece on the board
   chess.put({ type: piece.type, color: piece.color }, freeSquare);
-  
+
   // Track the mirror image so it disappears after 6 turns
   gameState.activeEffects.mirrorImages.push({
     square: freeSquare, // Track the duplicate, not the original
@@ -834,7 +840,7 @@ function applyMirrorImage({ chess, gameState, moverColor, params }) {
     color: piece.color,
     turnsLeft: 6,
   });
-  
+
   return { params: { originalSquare: targetSquare, duplicateSquare: freeSquare, type: piece.type } };
 }
 
@@ -848,18 +854,18 @@ function applySacrifice({ chess, gameState, socketId, moverColor, params, io }) 
       // Choose cards biased by the sacrificed piece type (stronger pieces -> better cards)
       const card1 = makeArcanaInstance(pickWeightedArcanaForSacrifice(piece.type));
       const card2 = makeArcanaInstance(pickWeightedArcanaForSacrifice(piece.type));
-        gameState.arcanaByPlayer[socketId].push(card1, card2);
-        // Notify the owning player immediately about the gained cards so the client
-        // can show draw animations (mirror Focus Fire behavior).
-        try {
-          if (io && socketId && !socketId.startsWith('AI-')) {
-            io.to(socketId).emit('arcanaDrawn', { playerId: socketId, arcana: card1, reason: 'Sacrifice reward' });
-            io.to(socketId).emit('arcanaDrawn', { playerId: socketId, arcana: card2, reason: 'Sacrifice reward' });
-          }
-        } catch (e) {
-          // Non-fatal: continue even if emit fails
-          console.warn('Failed to emit arcanaDrawn for sacrifice reward', e);
+      gameState.arcanaByPlayer[socketId].push(card1, card2);
+      // Notify the owning player immediately about the gained cards so the client
+      // can show draw animations (mirror Focus Fire behavior).
+      try {
+        if (io && socketId && !socketId.startsWith('AI-')) {
+          io.to(socketId).emit('arcanaDrawn', { playerId: socketId, arcana: card1, reason: 'Sacrifice reward' });
+          io.to(socketId).emit('arcanaDrawn', { playerId: socketId, arcana: card2, reason: 'Sacrifice reward' });
         }
+      } catch (e) {
+        // Non-fatal: continue even if emit fails
+        console.warn('Failed to emit arcanaDrawn for sacrifice reward', e);
+      }
       return { params: { sacrificed: targetSquare, pieceType: piece.type, gained: [card1.id, card2.id] } };
     }
   }
@@ -873,17 +879,17 @@ function applySacrifice({ chess, gameState, socketId, moverColor, params, io }) 
  */
 function getMovesForColor(chess, color) {
   const currentTurn = chess.turn();
-  
+
   // If it's already the requested color's turn, just return moves
   if (currentTurn === color) {
     return chess.moves({ verbose: true });
   }
-  
+
   // Otherwise, temporarily flip the turn in the FEN
   const fen = chess.fen();
   const fenParts = fen.split(' ');
   fenParts[1] = color; // Set turn to requested color
-  
+
   try {
     const tempChess = new Chess();
     tempChess.load(fenParts.join(' '));
@@ -1325,7 +1331,8 @@ function applyCursedSquare({ gameState, moverColor, params }) {
 }
 
 function applyTimeTravel({ gameState }) {
-  const undone = undoMoves(gameState, 2);
+  // Rewind two full moves (both players), i.e. 4 plies.
+  const undone = undoMoves(gameState, 4);
   if (!Array.isArray(undone) || undone.length === 0) {
     return null;
   }
@@ -1504,6 +1511,7 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
 
   if (!gameState.activeEffects) gameState.activeEffects = {};
   if (!gameState.activeEffects.mindControlled) gameState.activeEffects.mindControlled = [];
+  if (!gameState.activeEffects.mindControlExtraMove) gameState.activeEffects.mindControlExtraMove = null;
   
   // Track controlled piece - DO NOT change its color, keep it as enemy piece
   // The move validation logic will allow the caster to move it despite the color difference
@@ -1512,6 +1520,7 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
     controller: moverColor,
     originalColor: targetPiece.color,
     type: targetPiece.type,
+    pendingOwnMove: true,
   });
 
   // Do NOT modify the piece on the board - keep its original color and appearance
@@ -1520,7 +1529,7 @@ function applyMindControl({ chess, gameState, moverColor, params }) {
   return { params: { square: targetSquare, targetSquare, color: targetPiece.color, isControlled: true } };
 }
 
-function applyBreakingPoint({ chess, moverColor, params }) {
+function applyBreakingPoint({ chess, gameState, moverColor, params }) {
   const epicenter = params?.targetSquare;
   if (!epicenter) return null;
 
@@ -1530,11 +1539,6 @@ function applyBreakingPoint({ chess, moverColor, params }) {
   }
   const shatteredPieceType = targetPiece.type;
   const shatteredPieceColor = targetPiece.color;
-
-  // 1) Shatter the primary target.
-  chess.remove(epicenter);
-
-  // 2) Shockwave: try to displace adjacent enemy non-king pieces one square away.
   const displaced = [];
   const file = epicenter.charCodeAt(0) - 97;
   const rank = parseInt(epicenter[1], 10);
@@ -1557,12 +1561,20 @@ function applyBreakingPoint({ chess, moverColor, params }) {
 
       const dstSquare = `${String.fromCharCode(97 + dstFile)}${dstRank}`;
       if (chess.get(dstSquare)) continue;
+      if (piece.type === 'p' && (dstRank === 1 || dstRank === 8)) continue;
 
-      chess.remove(srcSquare);
-      chess.put(piece, dstSquare);
       displaced.push({ from: srcSquare, to: dstSquare, piece: piece.type });
     }
   }
+
+  if (!gameState.activeEffects) {
+    gameState.activeEffects = {};
+  }
+  gameState.activeEffects.pendingBreakingPoint = {
+    targetSquare: epicenter,
+    moverColor,
+    displaced,
+  };
 
   return {
     params: {
@@ -1576,7 +1588,7 @@ function applyBreakingPoint({ chess, moverColor, params }) {
   };
 }
 
-function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
+function applyEdgerunnerOverdrive({ chess, gameState, moverColor, params }) {
   const startSquare = params?.targetSquare;
   if (!startSquare) return null;
 
@@ -1585,59 +1597,29 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
     return null;
   }
 
-  const dashPath = [];
-  let captureCount = 0;
-  let currentSquare = startSquare;
-
-  // Always attempt two bursts.
-  for (let step = 0; step < 2; step++) {
-    const burstMove = pickBestOverdriveMove(chess, currentSquare, moverColor);
-    if (!burstMove) {
-      if (step === 0) return null;
-      break;
-    }
-
-    const burstResult = chess.move({ from: currentSquare, to: burstMove.to, promotion: 'q' });
-    if (!burstResult) {
-      if (step === 0) return null;
-      break;
-    }
-
-    dashPath.push(burstResult.to);
-    if (burstResult.captured) captureCount += 1;
-    currentSquare = burstResult.to;
+  if (!gameState.activeEffects) {
+    gameState.activeEffects = {};
   }
 
-  if (!dashPath.length) return null;
+  gameState.activeEffects.edgerunnerOverdrive = {
+    active: true,
+    color: moverColor,
+    square: startSquare,
+    originSquare: startSquare,
+    movesUsed: 0,
+    captured: false,
+  };
 
-  // Gain a third burst only if one of the first two bursts captured.
-  if (captureCount > 0) {
-    const thirdMove = pickBestOverdriveMove(chess, currentSquare, moverColor, true)
-      || pickBestOverdriveMove(chess, currentSquare, moverColor, false);
-
-    if (thirdMove) {
-      const thirdResult = chess.move({ from: currentSquare, to: thirdMove.to, promotion: 'q' });
-      if (thirdResult) {
-        dashPath.push(thirdResult.to);
-        if (thirdResult.captured) captureCount += 1;
-        currentSquare = thirdResult.to;
-      }
-    }
-  }
-
-  const [firstTo, secondTo, thirdTo] = dashPath;
-  const finalSquare = dashPath[dashPath.length - 1];
   return {
     params: {
-      square: finalSquare,
+      square: startSquare,
       targetSquare: startSquare,
       pieceType: startPiece.type,
       pieceColor: startPiece.color,
-      firstTo: firstTo || null,
-      secondTo,
-      thirdTo: thirdTo || null,
-      dashPath,
-      captureCount,
+      originSquare: startSquare,
+      dashPath: [startSquare],
+      captureCount: 0,
+      active: true,
     },
   };
 }
@@ -1646,9 +1628,13 @@ function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = fa
   const moves = chess.moves({ square: fromSquare, verbose: true }) || [];
   if (!moves.length) return null;
 
+  // Overdrive cannot capture kings.
+  const legalMoves = moves.filter((m) => m?.captured !== 'k');
+  if (!legalMoves.length) return null;
+
   const candidateMoves = preferCapture
-    ? (moves.filter((m) => !!m.captured).length ? moves.filter((m) => !!m.captured) : moves)
-    : moves;
+    ? (legalMoves.filter((m) => !!m.captured).length ? legalMoves.filter((m) => !!m.captured) : legalMoves)
+    : legalMoves;
 
   const enemyKingSquare = findKing(chess, moverColor === 'w' ? 'b' : 'w');
   const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
@@ -1894,15 +1880,30 @@ function undoMoves(gameState, count) {
   // Each entry in moveHistory is a pre-move FEN. To undo N moves, we go
   // back N entries.
   const targetIdx = Math.max(0, history.length - count);
-  const targetFen = history[targetIdx];
+  const targetEntry = history[targetIdx];
+  const targetFen = typeof targetEntry === 'string' ? targetEntry : targetEntry?.fen;
   
   if (targetFen) {
     // Record what we're undoing
     for (let i = history.length - 1; i >= targetIdx; i--) {
-      undone.push({ fen: history[i] });
+      const entry = history[i];
+      const fen = typeof entry === 'string' ? entry : entry?.fen;
+      undone.push({ fen });
     }
     
     chess.load(targetFen);
+
+    // Restore captured auxiliary state when snapshots are available.
+    if (targetEntry && typeof targetEntry === 'object' && targetEntry.snapshot) {
+      const snap = targetEntry.snapshot;
+      if (snap.activeEffects !== undefined) gameState.activeEffects = JSON.parse(JSON.stringify(snap.activeEffects));
+      if (snap.pawnShields !== undefined) gameState.pawnShields = JSON.parse(JSON.stringify(snap.pawnShields));
+      if (snap.capturedByColor !== undefined) gameState.capturedByColor = JSON.parse(JSON.stringify(snap.capturedByColor));
+      if (snap.pawnFirstMoveConsumed !== undefined) gameState.pawnFirstMoveConsumed = JSON.parse(JSON.stringify(snap.pawnFirstMoveConsumed));
+      if (snap.lastMove !== undefined) gameState.lastMove = JSON.parse(JSON.stringify(snap.lastMove));
+      if (snap.lastMoveByColor !== undefined) gameState.lastMoveByColor = JSON.parse(JSON.stringify(snap.lastMoveByColor));
+    }
+
     // Trim moveHistory to the restored point
     gameState.moveHistory = history.slice(0, targetIdx);
   }

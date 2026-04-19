@@ -188,6 +188,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const [highlightColor, setHighlightColor] = useState('#88c0d0'); // Default cyan color for highlights
   const [highlightedArcana, setHighlightedArcana] = useState(null); // which arcana produced highlightedSquares
   const [localTurnArcana, setLocalTurnArcana] = useState({ line_of_sight: false, map_fragments: false });
+  const [pendingReviveSquares, setPendingReviveSquares] = useState([]);
   const [peekCardDialog, setPeekCardDialog] = useState(null); // { cardCount, opponentId } when selecting card to peek
   const [peekCardRevealed, setPeekCardRevealed] = useState(null); // { card, cardIndex } when card is revealed
   const [peekRevealFlipped, setPeekRevealFlipped] = useState(false);
@@ -213,6 +214,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const [ascensionFxToken, setAscensionFxToken] = useState(0);
   // WebGL context loss state - prevents flashing during recovery
   const [isContextLost, setIsContextLost] = useState(false);
+  const [canvasRecoveryNonce, setCanvasRecoveryNonce] = useState(0);
   const contextLossCountRef = useRef(0); // Track consecutive context losses
   const lastAscensionFxAtRef = useRef(0);
 
@@ -221,6 +223,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   // Store GL instance reference for context management
   const glRef = useRef(null);
   const contextRestoreTimerRef = useRef(null);
+  const contextRecoveryWatchdogRef = useRef(null);
   const replayFenHistoryRef = useRef([]);
   const prevReplayIndexRef = useRef(0);
   const studioRuntimeQueueRef = useRef([]);
@@ -241,27 +244,49 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       setCardReveal(null);
       setIsCardAnimationPlaying(false);
       setActiveVisualArcana(null);
+      setPendingReviveSquares([]);
+      reviveSequenceTokenRef.current += 1;
       console.warn(
         `[GameScene] Context loss #${contextLossCountRef.current}. Resetting active visuals and tightening effect budgets.`
       );
+
+      if (contextRecoveryWatchdogRef.current) clearTimeout(contextRecoveryWatchdogRef.current);
+      contextRecoveryWatchdogRef.current = setTimeout(() => {
+        // Fallback: if context restore stalls, remount canvas to recover from white-screen lockups.
+        setCanvasRecoveryNonce((prev) => prev + 1);
+        setIsContextLost(false);
+      }, 3500);
     } else if (contextLossCountRef.current > 0) {
       contextLossCountRef.current = 0;
       effectResourcePool.restoreDefaults();
       console.log('[GameScene] Context restored. Effect limits restored to normal.');
+      if (contextRecoveryWatchdogRef.current) {
+        clearTimeout(contextRecoveryWatchdogRef.current);
+        contextRecoveryWatchdogRef.current = null;
+      }
     }
+
+    return () => {
+      if (contextRecoveryWatchdogRef.current) {
+        clearTimeout(contextRecoveryWatchdogRef.current);
+        contextRecoveryWatchdogRef.current = null;
+      }
+    };
   }, [isContextLost]);
 
   useEffect(() => {
     if (!gameState?.id) return;
     pendingLastArcanaRef.current = [];
     lastProcessedArcanaAtRef.current = null;
-    lastActiveVisualKeyRef.current = null;
     lastSocketArcanaRef.current = { key: null, at: 0 };
     cardAnimationLockRef.current = false;
     isCardAnimationPlayingRef.current = false;
     setCardReveal(null);
     setActiveVisualArcana(null);
     setIsCardAnimationPlaying(false);
+    setActiveFogEffects({});
+    setPendingReviveSquares([]);
+    reviveSequenceTokenRef.current += 1;
   }, [gameState?.id]);
 
   // Safety watchdog: ensure Studio runtime sessions cannot lock controls indefinitely.
@@ -302,13 +327,20 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   // Helper to convert color name to chess.js color code
   const toColorCode = (color) => color === 'white' ? 'w' : 'b';
   const myColorCode = toColorCode(myColor);
-  const visiblePawnShields = activeVisualArcana?.arcanaId === 'shield_pawn' ? null : gameState?.pawnShields;
+  const shouldHideShields = isCardAnimationPlaying || activeVisualArcana?.arcanaId === 'shield_pawn';
+  const visiblePawnShields = shouldHideShields ? null : gameState?.pawnShields;
 
   const mindControlledEntry = useMemo(() => {
     const entries = gameState?.activeEffects?.mindControlled || [];
     const currentColorCode = myColor === 'white' ? 'w' : 'b';
     return entries.find((entry) => (entry?.controller || entry?.controlledBy) === currentColorCode) || null;
   }, [gameState?.activeEffects?.mindControlled, myColor]);
+
+  const overdriveEntry = useMemo(() => {
+    const entry = gameState?.activeEffects?.edgerunnerOverdrive || null;
+    if (!entry?.active) return null;
+    return entry;
+  }, [gameState?.activeEffects?.edgerunnerOverdrive]);
 
   // Track move keys for which we've already played a sound (de-dup across async paths)
   const playedMoveKeysRef = useRef(new Set());
@@ -328,11 +360,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   // Queue for arcana events that should only trigger visuals after animations finish
   const pendingLastArcanaRef = useRef([]);
   const lastProcessedArcanaAtRef = useRef(null);
-  const lastActiveVisualKeyRef = useRef(null);
   const lastSocketArcanaRef = useRef({ key: null, at: 0 });
+  const reviveSequenceTokenRef = useRef(0);
+  const timeTravelSequenceTokenRef = useRef(0);
   const firedRuntimeVfxRef = useRef(new Map());
   const cardAnimationLockRef = useRef(false);
   const isCardAnimationPlayingRef = useRef(false);
+  const pendingReviveSquareSet = useMemo(() => new Set(pendingReviveSquares), [pendingReviveSquares]);
   const OPPONENT_DRAW_REVEAL_MS = 1800;
   const FILTERED_CYCLE_CATEGORY_META = {
     offense: { label: 'Offense', hint: 'Damage and pressure tools', glyph: 'X' },
@@ -1230,14 +1264,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       return;
     }
 
-    // Otherwise process immediately, but avoid duplicating an active visual
-    const key = `${lastArcanaEvent.arcanaId}:${lastArcanaEvent.owner}`;
-    if (lastActiveVisualKeyRef.current === key) {
-      lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
-      return;
-    }
+    // Otherwise process immediately.
     lastProcessedArcanaAtRef.current = lastArcanaEvent.at || Date.now();
-    lastActiveVisualKeyRef.current = key;
 
     const playback = playStudioArcanaRuntime(lastArcanaEvent);
     return () => {
@@ -1253,14 +1281,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     // Process queued events in order, but only one at a time to avoid overlap
     const next = pendingLastArcanaRef.current.shift();
     if (!next) return;
-    // avoid duplicates if we've just started the same visual
-    const nextKey = `${next.arcanaId}:${next.owner}`;
-    if (lastActiveVisualKeyRef.current === nextKey) {
-      lastProcessedArcanaAtRef.current = next.at || Date.now();
-      return;
-    }
     lastProcessedArcanaAtRef.current = next.at || Date.now();
-    lastActiveVisualKeyRef.current = nextKey;
 
     playStudioArcanaRuntime(next);
   }, [isCardAnimationPlaying, playStudioArcanaRuntime]);
@@ -1272,21 +1293,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       fogClearTimeoutRef.current = null;
     }
 
-    if (!gameState?.activeEffects?.fogOfWar) {
-      fogClearTimeoutRef.current = setTimeout(() => {
-        setActiveFogEffects({});
-      }, 1600);
-      return;
-    }
-
-    const fogStatus = gameState.activeEffects.fogOfWar;
+    const fogStatus = gameState?.activeEffects?.fogOfWar || { w: false, b: false };
     const newFogEffects = {};
 
     // Check if white or black has fog active
-    if (fogStatus.w) {
+    if (Boolean(fogStatus.w)) {
       newFogEffects.w = true;
     }
-    if (fogStatus.b) {
+    if (Boolean(fogStatus.b)) {
       newFogEffects.b = true;
     }
 
@@ -1307,7 +1321,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         fogClearTimeoutRef.current = null;
       }
     };
-  }, [gameState?.activeEffects?.fogOfWar]);
+  }, [gameState?.activeEffects, gameState?.id]);
 
   // Load arcana visual effects module on demand when visuals or persistent effects are present
   useEffect(() => {
@@ -1401,7 +1415,6 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       );
       // Divine Intervention is passive and should not play activation cutscenes.
       const shouldPlayAnimation = arcanaId !== 'divine_intervention' && (isCutsceneCard || hasStudioAnimation);
-      const visualKey = `${arcanaId}:${owner || 'unknown'}`;
       const cutsceneStartDelayMs = Math.max(0, Number(params?.cutsceneStartDelayMs || 0));
       const shouldQueueForCardAnimation = shouldPlayAnimation && (isCardAnimationPlayingRef.current || cardAnimationLockRef.current);
 
@@ -1428,7 +1441,6 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       if (shouldPlayAnimation) {
         lastProcessedArcanaAtRef.current = payload.at || Date.now();
-        lastActiveVisualKeyRef.current = visualKey;
         const runPlayback = () => {
           playStudioArcanaRuntime({ ...payload, params: { ...(params || {}), fen: latestFenRef.current || gameState?.fen } });
         };
@@ -1439,6 +1451,100 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           runPlayback();
         }
       }
+
+      const queueSequentialReviveReveal = (effectArcanaId, squares, baseDelayMs = 0) => {
+        const uniqueSquares = [...new Set((Array.isArray(squares) ? squares : []).filter(Boolean))];
+        if (uniqueSquares.length === 0) return;
+
+        if (uniqueSquares.length === 1) {
+          setPendingReviveSquares([]);
+          setActiveVisualArcana({
+            arcanaId: effectArcanaId,
+            params: { square: uniqueSquares[0], revivedSquares: uniqueSquares, rebornSquare: uniqueSquares[0] },
+          });
+          return;
+        }
+
+        const sequenceToken = ++reviveSequenceTokenRef.current;
+        const revealStepMs = 820;
+        const startDelayMs = Math.max(0, Number(baseDelayMs || 0));
+
+        setPendingReviveSquares(uniqueSquares);
+        setActiveVisualArcana(null);
+
+        uniqueSquares.forEach((square, index) => {
+          const revealTimeout = setTimeout(() => {
+            if (reviveSequenceTokenRef.current !== sequenceToken) return;
+            setPendingReviveSquares((prev) => prev.filter((sq) => sq !== square));
+            setActiveVisualArcana({
+              arcanaId: effectArcanaId,
+              params: { square, revivedSquares: [square], rebornSquare: square },
+            });
+          }, startDelayMs + index * revealStepMs);
+          timeoutsRef.current.push(revealTimeout);
+        });
+
+        const finishTimeout = setTimeout(() => {
+          if (reviveSequenceTokenRef.current !== sequenceToken) return;
+          setPendingReviveSquares([]);
+          setActiveVisualArcana(null);
+        }, startDelayMs + uniqueSquares.length * revealStepMs + 420);
+        timeoutsRef.current.push(finishTimeout);
+      };
+
+      const queueSequentialTimeTravelRewind = (preArcanaFen, undoneSnapshots, baseDelayMs = 0) => {
+        const frames = [];
+        if (typeof preArcanaFen === 'string' && preArcanaFen.trim()) {
+          frames.push(preArcanaFen.trim());
+        }
+
+        for (const entry of Array.isArray(undoneSnapshots) ? undoneSnapshots : []) {
+          const fen = typeof entry === 'string' ? entry : entry?.fen;
+          if (typeof fen === 'string' && fen.trim()) {
+            frames.push(fen.trim());
+          }
+        }
+
+        if (frames.length === 0) return;
+
+        const sequenceToken = ++timeTravelSequenceTokenRef.current;
+        const startDelayMs = Math.max(0, Number(baseDelayMs || 0));
+        const stepDelayMs = 520;
+
+        setBoardVisualLockedForCutscene(true);
+        setIsCardAnimationPlaying(true);
+        setPendingReviveSquares([]);
+        setSelectedSquare(null);
+        setLegalTargets([]);
+        setActiveVisualArcana({
+          arcanaId: 'time_travel',
+          params: {
+            square: 'e4',
+            preArcanaFen: frames[0],
+            undone: Array.isArray(undoneSnapshots) ? undoneSnapshots : [],
+            rewoundCount: Math.max(0, frames.length - 1),
+          },
+        });
+        setRenderFen(frames[0]);
+
+        frames.slice(1).forEach((fen, index) => {
+          const timeout = setTimeout(() => {
+            if (timeTravelSequenceTokenRef.current !== sequenceToken) return;
+            setRenderFen(fen);
+          }, startDelayMs + (index + 1) * stepDelayMs);
+          timeoutsRef.current.push(timeout);
+        });
+
+        const finishTimeout = setTimeout(() => {
+          if (timeTravelSequenceTokenRef.current !== sequenceToken) return;
+          setBoardVisualLockedForCutscene(false);
+          setActiveVisualArcana((prev) => (prev?.arcanaId === 'time_travel' ? null : prev));
+          setIsCardAnimationPlaying(false);
+          const latestFen = latestFenRef.current;
+          if (latestFen) setRenderFen(latestFen);
+        }, startDelayMs + frames.length * stepDelayMs + 220);
+        timeoutsRef.current.push(finishTimeout);
+      };
 
       // Client-side highlights for utility cards - ONLY show if YOU used the card
       const isMyCard = owner === socket?.id;
@@ -1451,15 +1557,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             : Array.isArray(params?.revived)
               ? params.revived
               : [];
-          if (revivedSquares.length > 0) {
-            setActiveVisualArcana({
-              arcanaId: 'necromancy',
-              params: {
-                square: revivedSquares[0],
-                revivedSquares,
-              },
-            });
-          }
+          queueSequentialReviveReveal('necromancy', revivedSquares, params?.cutsceneStartDelayMs || 0);
           break;
         }
         case 'astral_rebirth': {
@@ -1468,17 +1566,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             : Array.isArray(params?.revived)
               ? params.revived
               : [];
-          const focusSquare = params?.rebornSquare || revivedSquares[0] || params?.square || null;
-          if (focusSquare) {
-            setActiveVisualArcana({
-              arcanaId: 'astral_rebirth',
-              params: {
-                square: focusSquare,
-                rebornSquare: focusSquare,
-                revivedSquares,
-              },
-            });
-          }
+          queueSequentialReviveReveal('astral_rebirth', revivedSquares, params?.cutsceneStartDelayMs || 0);
           break;
         }
         case 'time_freeze': {
@@ -1486,6 +1574,18 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             arcanaId: 'time_freeze',
             params: { frozenColor: params?.frozenColor || null },
           });
+          const vfxTimeout = setTimeout(() => {
+            setActiveVisualArcana((prev) => (prev?.arcanaId === 'time_freeze' ? null : prev));
+          }, 2200);
+          timeoutsRef.current.push(vfxTimeout);
+          break;
+        }
+        case 'time_travel': {
+          queueSequentialTimeTravelRewind(
+            params?.preArcanaFen || latestFenRef.current || gameState?.fen || null,
+            Array.isArray(params?.undone) ? params.undone : [],
+            params?.cutsceneStartDelayMs || 0,
+          );
           break;
         }
         case 'chaos_theory': {
@@ -1888,6 +1988,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         setPendingMoveError('Mind Control: you must move the controlled piece first.');
         return;
       }
+      if (overdriveEntry?.color === myColorCode && square !== overdriveEntry.square) {
+        setPendingMoveError('Edgerunner Overdrive: you must move the overdriven piece first.');
+        return;
+      }
       if (piece.color !== myColorCode && !controlledEntry) return;
 
       setSelectedSquare(square);
@@ -1979,6 +2083,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         setPendingMoveError('Mind Control: move the controlled piece first.');
         return;
       }
+      if (overdriveEntry?.color === myColorCode && square !== overdriveEntry.square) {
+        setSelectedSquare(null);
+        setLegalTargets([]);
+        setPendingMoveError('Edgerunner Overdrive: move the overdriven piece first.');
+        return;
+      }
       if (piece && (piece.color === myColorCode || controlledEntry)) {
         setSelectedSquare(square);
         const moves = getArcanaEnhancedMoves(chess, square, gameState, myColor);
@@ -2066,6 +2176,27 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
     return isRoyalSwapReturnMove ? null : lastMove;
   }, [lastMove, gameState?.activeEffects?.royalSwap]);
+
+  // Prefer authoritative server turn value to avoid stale local-chess turn reads
+  // during rapid Time Freeze skip/extra-turn transitions.
+  const currentTurnChar = gameState?.turn || (typeof chess?.turn === 'function' ? chess.turn() : null);
+  const freezeEffects = gameState?.activeEffects || {};
+  const hasActiveFrozenSide = Boolean(freezeEffects?.timeFrozen?.w || freezeEffects?.timeFrozen?.b);
+  const lock = freezeEffects?.timeFreezeArcanaLock || { w: false, b: false };
+  // Lock is set on the skipped color. Keep mono only while it's the opposite side's turn
+  // (the bonus immediate turn window), then clear when skipped side actually gets a turn.
+  const hasActiveFreezeLockWindow = Boolean(
+    (lock.w && currentTurnChar === 'b')
+    || (lock.b && currentTurnChar === 'w')
+  );
+  const showTimeFreezeMonochrome = Boolean(
+    !cardReveal
+    && !isCardAnimationPlaying
+    && (
+      hasActiveFrozenSide
+      || hasActiveFreezeLockWindow
+    )
+  );
 
   const cinematicMotionBySquare = useMemo(() => {
     if (!activeVisualArcana?.arcanaId) return new Map();
@@ -2424,7 +2555,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         </div>
       )}
       <Canvas 
-        key={`board-${myColor}`}
+        key={`board-${myColor}-${canvasRecoveryNonce}`}
         camera={{ position: cameraPosition, fov: 40 }} 
         shadows
         gl={{ 
@@ -2565,8 +2696,18 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         />
         <group>
           {piecesState.map((p) => {
+            if (pendingReviveSquareSet.has(p.square)) return null;
             const studioMotion = studioPieceMotions[p.square] || null;
             const controlledByMe = mindControlledEntry?.square === p.square;
+            const isOverdrivenPiece = overdriveEntry?.color === myColorCode && overdriveEntry?.square === p.square;
+            const overdriveMotion = isOverdrivenPiece
+              ? {
+                  active: true,
+                  profile: 'overdrive',
+                  intensity: 0.2,
+                  phase: (p.square.charCodeAt(0) * 11 + parseInt(p.square[1], 10) * 7) % 29,
+                }
+              : null;
             return (
               <ChessPiece
                 key={p.uid}
@@ -2575,8 +2716,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                 targetPosition={p.targetPosition}
                 square={p.square}
                 isMirrorDuplicate={mirrorImageSquares.has(p.square)}
-                accentColor={controlledByMe ? '#b48ead' : null}
-                cutsceneMotion={studioMotion || cinematicMotionBySquare.get(p.square) || null}
+                accentColor={isOverdrivenPiece ? '#f2b84b' : (controlledByMe ? '#b48ead' : null)}
+                cutsceneMotion={studioMotion || cinematicMotionBySquare.get(p.square) || overdriveMotion}
                 onClickSquare={(sq) => {
                   const fileIndex = 'abcdefgh'.indexOf(sq[0]);
                   const rankIndex = 8 - parseInt(sq[1], 10);
@@ -2594,6 +2735,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             activeVisualArcana={activeVisualArcana}
             gameState={gameState}
             pawnShields={visiblePawnShields}
+            showFog={Boolean(gameState?.activeEffects?.fogOfWar?.w || gameState?.activeEffects?.fogOfWar?.b)}
             viewerColorCode={myColorCode}
           />
         )}
@@ -3195,7 +3337,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                 opacity: peekRevealFlipped ? 1 : 0.35,
               }}
             >
-              <ArcanaCard arcana={peekCardRevealed.card} disableHover disableTooltip />
+              {peekRevealFlipped ? (
+                <ArcanaCard arcana={peekCardRevealed.card} disableHover disableTooltip />
+              ) : (
+                <div style={styles.peekRevealBack}>?</div>
+              )}
             </div>
             <div style={styles.peekMetaRow}>
               <span style={{ ...styles.peekRarityBadge, color: getRarityColor(peekCardRevealed.card?.rarity || 'common') }}>
@@ -3289,13 +3435,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       {/* activeVisualArcana overlay removed - CardRevealAnimation handles all card displays */}
 
-      {Boolean(
-        activeVisualArcana?.arcanaId === 'time_freeze'
-        || gameState?.activeEffects?.timeFrozen?.w
-        || gameState?.activeEffects?.timeFrozen?.b
-        || gameState?.activeEffects?.timeFreezeArcanaLock?.w
-        || gameState?.activeEffects?.timeFreezeArcanaLock?.b
-      ) && (
+      {showTimeFreezeMonochrome && (
         <div style={styles.timeFreezeMonochromeOverlay} />
       )}
 
@@ -3323,17 +3463,17 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       )}
 
       {/* Fog of War effect particles - persist while fog is active */}
-      {activeFogEffects?.[myColorCode] && (
+      {(activeFogEffects?.w || activeFogEffects?.b || gameState?.activeEffects?.fogOfWar?.w || gameState?.activeEffects?.fogOfWar?.b) && (
         <ParticleErrorBoundary>
           <Suspense fallback={null}>
             <ParticleOverlay
-              key={`fog-${myColorCode}`}
+              key={`fog-${myColorCode}-${Number(Boolean(activeFogEffects?.w || gameState?.activeEffects?.fogOfWar?.w))}-${Number(Boolean(activeFogEffects?.b || gameState?.activeEffects?.fogOfWar?.b))}`}
               type="fog"
-            rarity="rare"
-            active={true}
-            style={{ opacity: 0.58 }}
-            density={0.8}
-          />
+              rarity="rare"
+              active={true}
+              style={{ opacity: 0.74, zIndex: 18, mixBlendMode: 'screen' }}
+              density={1.15}
+            />
         </Suspense>
         </ParticleErrorBoundary>
       )}
@@ -3473,6 +3613,10 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, blockedEff
       const validTarget = isValidTargetSquare(file, rank);
       const vision = isVisionMove(file, rank);
       const highlighted = isHighlighted(file, rank);
+      const fileChar = 'abcdefgh'[file];
+      const rankNum = 8 - rank;
+      const sq = `${fileChar}${rankNum}`;
+      const hasTileEffect = blockedEffectSquares instanceof Set && blockedEffectSquares.has(sq);
 
       let color = baseColor;
       let opacity = 1;
@@ -3495,19 +3639,20 @@ function Board({ selectedSquare, legalTargets, lastMove, pawnShields, blockedEff
         if (vision) color = '#bf616a'; // Red for opponent's potential moves (vision)
         if (highlighted) color = highlightColor || '#88c0d0'; // Cyan for Line of Sight, Map Fragments, etc
         if (shielded) color = '#b48ead';
+        if (hasTileEffect) color = '#f2bb4a';
       }
 
       const hoverThreat = isHoverThreatSource(file, rank);
-      const fileChar = 'abcdefgh'[file];
-      const rankNum = 8 - rank;
-      const sq = `${fileChar}${rankNum}`;
       const isHoveringThis = hoveredSquare === sq;
 
       tiles.push(
         <group key={`${file}-${rank}`} position={[file - 3.5, 0, rank - 3.5]}>
           <mesh
             receiveShadow
-            onPointerDown={() => onTileClick(file, rank)}
+            onPointerDown={(e) => {
+              if (e.pointerType === 'mouse' && e.button !== 0) return;
+              onTileClick(file, rank);
+            }}
             onPointerOver={(e) => { e.stopPropagation(); setHoveredSquare(sq); onTileHover && onTileHover(file, rank, true); }}
             onPointerOut={(e) => { e.stopPropagation(); setHoveredSquare(null); onTileHover && onTileHover(file, rank, false); }}
           >
@@ -3679,27 +3824,28 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
         {groupedCards.map(({ card, indices }) => {
           const isSelected = selectedArcanaId === card.id;
           const count = indices.length;
+          const displayCard = card;
           
           return (
             <div
-              key={card.id}
+              key={displayCard.id}
               style={{
                 position: 'relative',
                 transition: 'transform 0.18s ease',
-                transform: hoveredStackCardId === card.id ? 'scale(1.05)' : 'scale(1)',
+                transform: hoveredStackCardId === displayCard.id ? 'scale(1.05)' : 'scale(1)',
                 transformOrigin: 'center center',
               }}
-              onMouseEnter={() => setHoveredStackCardId(card.id)}
+              onMouseEnter={() => setHoveredStackCardId(displayCard.id)}
               onMouseLeave={() => setHoveredStackCardId(null)}
             >
               <ArcanaCard
-                arcana={card}
+                arcana={displayCard}
                 size="small"
                 stackCount={count}
                 disableHoverScale
                 isSelected={isSelected}
-                hoverInfo={card.endsTurn ? `${card.description}\n\n⚠️ ENDS YOUR TURN` : card.description}
-                onClick={() => isCardAnimationPlaying ? null : onSelectArcana(isSelected ? null : card.id)}
+                hoverInfo={displayCard.endsTurn ? `${displayCard.description}\n\n⚠️ ENDS YOUR TURN` : displayCard.description}
+                onClick={() => isCardAnimationPlaying ? null : onSelectArcana(isSelected ? null : displayCard.id)}
               />
             </div>
           );
@@ -3764,6 +3910,10 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
     glow: isOpponentDraw ? 'transparent' : baseColors.glow,
     inner: isOpponentDraw ? 'transparent' : baseColors.inner,
   };
+  const displayArcana = arcana?.rarity === '???'
+    ? { ...arcana, description: '???' }
+    : arcana;
+  const revealDescription = displayArcana?.description || '';
 
   const handleClick = () => {
     // Only allow click-dismiss for your own draw animation
@@ -3996,13 +4146,13 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
                 🂠
               </div>
             ) : (
-              <ArcanaCard arcana={arcana} size="large" disableHover />
+              <ArcanaCard arcana={displayArcana} size="large" disableHover />
             )}
           </div>
         </div>
         
         {/* Description text - properly centered (hidden for opponent draws) */}
-        {!isHidden && (
+        {!isHidden && revealDescription && (
           <div style={{
             position: 'absolute',
             bottom: '15%',
@@ -4023,7 +4173,7 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
               maxWidth: 550,
               textAlign: 'center',
             }}>
-              {arcana.description}
+              {revealDescription}
             </div>
           </div>
         )}
@@ -4566,14 +4716,14 @@ const styles = {
     transition: 'transform 0.26s ease, opacity 0.2s ease',
   },
   cardBackSelected: {
-    transform: 'rotateY(180deg) scale(1.03)',
+    transform: 'scale(1.03)',
     borderColor: 'rgba(158, 228, 255, 0.9)',
     boxShadow: '0 0 0 2px rgba(118, 222, 255, 0.35), 0 16px 34px rgba(0,0,0,0.58)',
     filter: 'brightness(1.08)',
   },
   cardBackInnerSelected: {
-    transform: 'rotateY(180deg)',
-    opacity: 0.2,
+    transform: 'none',
+    opacity: 1,
   },
   cardBackLabel: {
     marginTop: 8,
@@ -4599,6 +4749,20 @@ const styles = {
     transformStyle: 'preserve-3d',
     transition: 'transform 620ms cubic-bezier(0.22, 1, 0.36, 1), opacity 320ms ease',
     willChange: 'transform, opacity',
+  },
+  peekRevealBack: {
+    width: 230,
+    height: 320,
+    borderRadius: 14,
+    background: 'linear-gradient(165deg, #22334d 0%, #162435 44%, #0f1720 100%)',
+    border: '1px solid rgba(137, 201, 235, 0.45)',
+    boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#bcd8ef',
+    fontSize: 48,
+    fontWeight: 700,
   },
   peekMetaRow: {
     marginTop: 10,

@@ -81,6 +81,27 @@ function emitAck(socket, event, payload = {}, timeoutMs = 6000) {
   });
 }
 
+function socketTurnCharFromState(state, socketId) {
+  const colorName = state?.playerColors?.[socketId];
+  if (colorName === 'white') return 'w';
+  if (colorName === 'black') return 'b';
+  return null;
+}
+
+function isSocketTurn(state, socketId) {
+  const turnChar = socketTurnCharFromState(state, socketId);
+  return Boolean(turnChar) && state?.turn === turnChar;
+}
+
+async function waitUntil(predicate, timeoutMs = 2000, stepMs = 25) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return true;
+    await delay(stepMs);
+  }
+  return false;
+}
+
 async function run() {
   const serverProcess = spawn(process.execPath, ['server/index.js'], {
     cwd: process.cwd(),
@@ -96,6 +117,8 @@ async function run() {
   let blackSocket = null;
   let socketA = null;
   let socketB = null;
+  let latestWhiteState = null;
+  let latestBlackState = null;
 
   try {
     await waitForServerReady(serverProcess);
@@ -128,6 +151,15 @@ async function run() {
 
     ok(!!whiteSocket && !!blackSocket, 'White/Black sockets should be identified');
 
+    latestWhiteState = started.gameState;
+    latestBlackState = started.gameState;
+    whiteSocket.on('gameUpdated', (state) => {
+      latestWhiteState = state;
+    });
+    blackSocket.on('gameUpdated', (state) => {
+      latestBlackState = state;
+    });
+
     const listArcanaAck = await emitAck(whiteSocket, 'getArcanaList', {});
     ok(listArcanaAck?.ok === true && Array.isArray(listArcanaAck.arcana), 'getArcanaList should succeed');
 
@@ -137,8 +169,12 @@ async function run() {
     const whiteOutOfTurn = await emitAck(whiteSocket, 'playerAction', { move: { from: 'd2', to: 'd4' } });
     ok(whiteOutOfTurn?.ok === false, 'White out-of-turn move should fail');
 
+    // The server updates turn state via socket broadcasts; wait for black turn before submitting black's move.
+    const blackTurnReady = await waitUntil(() => isSocketTurn(latestBlackState, blackSocket.id), 2500, 25);
+    ok(blackTurnReady, `Expected black turn before e7-e5; latest turn=${latestBlackState?.turn}`);
+
     const blackMove1 = await emitAck(blackSocket, 'playerAction', { move: { from: 'e7', to: 'e5' } });
-    ok(blackMove1?.ok === true, 'Black legal move e7-e5 should succeed');
+    ok(blackMove1?.ok === true, `Black legal move e7-e5 should succeed${blackMove1?.error ? ` (${blackMove1.error})` : ''}`);
 
     const whiteInvalidMove = await emitAck(whiteSocket, 'playerAction', { move: { from: 'e4', to: 'e6' } });
     ok(whiteInvalidMove?.ok === false, 'Illegal pawn move e4-e6 should fail');

@@ -709,7 +709,6 @@ const BASE_CUTSCENE_CONFIGS = {
   astral_rebirth: astralRebirthCutscene,
   promotion_ritual: promotionRitualCutscene,
   breaking_point: breakingPointCutscene,
-  edgerunner_overdrive: edgerunnerOverdriveCutscene,
 };
 
 function normalizeRuntimeCardId(cardId = '') {

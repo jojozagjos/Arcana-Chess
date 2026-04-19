@@ -788,6 +788,26 @@ test('Time Travel applies and rewinds when move history exists', () => {
   assertEqual(gameState.chess.fen(), initialFen, 'Board should rewind to the saved snapshot');
 });
 
+test('Time Travel rewinds two full moves when enough history exists', () => {
+  const gameState = createMockGameState();
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'time_travel', name: 'Time Travel' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+  gameState.moveHistory = [];
+
+  const openingFen = gameState.chess.fen();
+  ['e4', 'e5', 'Nf3', 'Nc6'].forEach((san) => {
+    gameState.moveHistory.push(gameState.chess.fen());
+    gameState.chess.move(san);
+  });
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'time_travel', params: {} }], null, null);
+
+  assertEqual(applied.length, 1, 'Time Travel should apply when sufficient history exists');
+  assertEqual(applied[0].params.rewoundCount, 4, 'Expected four plies (two full moves) to be rewound');
+  assertEqual(gameState.chess.fen(), openingFen, 'Board should rewind two full moves to the opening position');
+});
+
 test('Promotion Ritual rejects non-pawn target', () => {
   const gameState = createMockGameState();
   const socketId = 'player1';
@@ -811,6 +831,24 @@ test('Promotion Ritual promotes a valid pawn target', () => {
 
   assertEqual(applied.length, 1, 'Promotion Ritual should apply on valid pawn target');
   assert(promoted && promoted.type === 'q' && promoted.color === 'w', 'Pawn should be promoted to a white queen');
+});
+
+test('Breaking Point does not displace pawns onto back rank', () => {
+  const gameState = createMockGameState('4k3/3p4/3r4/8/8/8/8/4K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'breaking_point', name: 'Breaking Point' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'breaking_point', params: { targetSquare: 'd6' } }], null, null);
+
+  assertEqual(applied.length, 1, 'Breaking Point should apply on a valid enemy target');
+  assert(gameState.chess.get('d6'), 'Epicenter target should remain until reveal finalization');
+  const pending = gameState.activeEffects?.pendingBreakingPoint;
+  assert(pending && pending.targetSquare === 'd6', 'Breaking Point should stage deferred resolution data');
+
+  const pawnAtD7 = gameState.chess.get('d7');
+  assert(pawnAtD7 && pawnAtD7.type === 'p' && pawnAtD7.color === 'b', 'Adjacent pawn should remain in place when displacement would land on back rank');
+  assert(!gameState.chess.get('d8'), 'No pawn should be displaced onto back rank');
 });
 
 test('Chaos Theory returns from/to mapping in shuffle payload', () => {

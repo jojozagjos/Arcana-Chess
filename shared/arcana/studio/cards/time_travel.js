@@ -222,23 +222,6 @@ export const STUDIO_CARD_OVERRIDE = {
           {
             "id": "evt_1_2",
             "timeMs": 1200,
-            "type": "overlay:monochrome",
-            "delayMs": 0,
-            "payload": {
-              "phase": "rewind_pieces",
-              "cardId": "time_travel",
-              "legacyAction": "overlay_monochrome",
-              "duration": 700,
-              "soundMap": {
-                "timewarp": "arcana:time_travel_warp",
-                "rewind": "arcana:time_travel_rewind",
-                "complete": "arcana:time_travel_complete"
-              }
-            }
-          },
-          {
-            "id": "evt_1_3",
-            "timeMs": 1200,
             "type": "sound_play",
             "delayMs": 0,
             "payload": {
@@ -415,7 +398,6 @@ export const STUDIO_CARD_OVERRIDE = {
             "actions": [
               "vfx_afterimage_trails",
               "vfx_rewind_animation",
-              "overlay_monochrome",
               "sound_rewind"
             ],
             "delay": 400
