@@ -338,6 +338,11 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     return entries.find((entry) => (entry?.controller || entry?.controlledBy) === currentColorCode) || null;
   }, [gameState?.activeEffects?.mindControlled, myColor]);
 
+  const overdriveEntry = useMemo(() => {
+    const entry = gameState?.activeEffects?.edgerunnerOverdrive;
+    return entry?.active ? entry : null;
+  }, [gameState?.activeEffects?.edgerunnerOverdrive]);
+
   // Track move keys for which we've already played a sound (de-dup across async paths)
   const playedMoveKeysRef = useRef(new Set());
   const recentMoveSoundKeysRef = useRef(new Map());

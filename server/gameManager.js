@@ -2211,26 +2211,17 @@ export class GameManager {
     const hasQueensGambit = gameState.activeEffects.queensGambit[moverColor] > 0 && 
                  !gameState.activeEffects.queensGambitUsed[moverColor] &&
                  result.piece === 'q'; // Queen must be the piece that moved
-    const hasMindControlExtraMove = Boolean(gameState.activeEffects?.mindControlExtraTurn?.[moverColor]);
+    let hasMindControlExtraMove = Boolean(gameState.activeEffects?.mindControlExtraTurn?.[moverColor]);
+    const mindControlExtraMove = gameState.activeEffects?.mindControlExtraMove;
+    if (mindControlExtraMove?.color === moverColor && mindControlExtraMove.pending) {
+      hasMindControlExtraMove = true;
+      gameState.activeEffects.mindControlExtraMove = null;
+    }
 
     // Promotion Ritual grants 2 immediate board moves after the promotion resolves.
     // Consume one charge per board move and keep the turn while charges remain.
-    const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor] || null;
-    if (promotionRitualState?.active && Number.isFinite(promotionRitualState.movesRemaining) && promotionRitualState.movesRemaining > 0) {
-      promotionRitualState.movesRemaining = Math.max(0, promotionRitualState.movesRemaining - 1);
-      if (promotionRitualState.movesRemaining === 0) {
-        promotionRitualState.active = false;
-        promotionRitualState.monochrome = false;
-      }
-    }
-    const hasPromotionRitualExtraMove = Boolean(
-      promotionRitualState?.active
-      && Number.isFinite(promotionRitualState.movesRemaining)
-      && promotionRitualState.movesRemaining > 0
-    );
-
     let hasPromotionRitual = false;
-    const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor];
+    const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor] || null;
     if (promotionRitualState?.active) {
       promotionRitualState.movesRemaining = Math.max(0, (promotionRitualState.movesRemaining || 0) - 1);
       if (promotionRitualState.movesRemaining > 0) {
@@ -2239,13 +2230,7 @@ export class GameManager {
         gameState.activeEffects.promotionRitual[moverColor] = null;
       }
     }
-
-    let hasMindControlExtraMove = false;
-    const mindControlExtraMove = gameState.activeEffects?.mindControlExtraMove;
-    if (mindControlExtraMove?.color === moverColor && mindControlExtraMove.pending) {
-      hasMindControlExtraMove = true;
-      gameState.activeEffects.mindControlExtraMove = null;
-    }
+    const hasPromotionRitualExtraMove = hasPromotionRitual;
 
     // Double Strike and Berserker state tracking
     const dsEffect = gameState.activeEffects.doubleStrike?.[moverColor];
