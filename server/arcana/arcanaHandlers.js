@@ -1597,7 +1597,7 @@ function applyEdgerunnerOverdrive({ chess, gameState, moverColor, params }) {
   if (!startSquare) return null;
 
   const startPiece = chess.get(startSquare);
-  if (!startPiece || startPiece.color !== moverColor || startPiece.type === 'k') {
+  if (!startPiece || startPiece.color !== moverColor || startPiece.type === 'k' || startPiece.type === 'p') {
     return null;
   }
 

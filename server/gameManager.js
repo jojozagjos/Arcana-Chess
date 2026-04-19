@@ -799,15 +799,15 @@ export class GameManager {
     const pendingPromotion = gameState.activeEffects?.pendingPromotionRitual;
     if (pendingPromotion?.targetSquare && pendingPromotion?.moverColor) {
       const targetSquare = pendingPromotion.targetSquare;
-      const moverColor = pendingPromotion.moverColor;
+      const moverColorPromo = pendingPromotion.moverColor;
       const pawn = chess.get(targetSquare);
-      if (pawn && pawn.type === 'p' && pawn.color === moverColor) {
+      if (pawn && pawn.type === 'p' && pawn.color === moverColorPromo) {
         chess.remove(targetSquare);
-        chess.put({ type: 'q', color: moverColor }, targetSquare);
+        chess.put({ type: 'q', color: moverColorPromo }, targetSquare);
         deferredBoardMutationApplied = true;
       }
       gameState.activeEffects.promotionRitual = gameState.activeEffects.promotionRitual || {};
-      gameState.activeEffects.promotionRitual[moverColor] = {
+      gameState.activeEffects.promotionRitual[moverColorPromo] = {
         active: true,
         movesRemaining: 2,
         monochrome: true,
@@ -819,7 +819,7 @@ export class GameManager {
 
     // Non-turn-ending reveals can still mutate board state (Execution/Promotion Ritual).
     // Push an immediate update so clients do not wait for a later move to see changes.
-    if (!pending?.turnShouldEnd && deferredBoardMutationApplied) {
+    if (!(pending?.turnShouldEnd) && deferredBoardMutationApplied) {
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
           const personalised = this.serialiseGameStateForViewer(gameState, pid);
@@ -2197,18 +2197,43 @@ export class GameManager {
     let hasEdgerunnerOverdrive = false;
     const edgerunnerState = gameState.activeEffects?.edgerunnerOverdrive;
     if (edgerunnerState?.active && edgerunnerState.color === moverColor && !result.promotion) {
+      // Track the full path of the overdrive piece
+      if (!Array.isArray(edgerunnerState.path)) edgerunnerState.path = [edgerunnerState.startSquare || result.from];
+      edgerunnerState.path.push(result.to);
+      if (!Array.isArray(edgerunnerState.captures)) edgerunnerState.captures = [];
+      if (result.captured) {
+        // Record the actual square that was captured (handles en-passant)
+        try {
+          const capturedSq = this.getCapturedSquare ? this.getCapturedSquare(result) : result.to;
+          if (capturedSq) edgerunnerState.captures.push(capturedSq);
+        } catch (e) {
+          if (typeof logger?.warn === 'function') logger.warn('[Edgerunner] failed to record capture square', e);
+          edgerunnerState.captures.push(result.to);
+        }
+      }
       const maxMoves = Math.max(1, Number(edgerunnerState.maxMoves || 5));
       const movesUsed = Math.max(0, Number(edgerunnerState.movesUsed || 0)) + 1;
       const baseRemaining = Math.max(0, Number(edgerunnerState.movesRemaining || 0) - 1);
       const bonus = result.captured ? 1 : 0;
-      const cappedRemaining = Math.min(baseRemaining + bonus, Math.max(0, maxMoves - movesUsed));
+      let cappedRemaining = Math.min(baseRemaining + bonus, Math.max(0, maxMoves - movesUsed));
+
+      
 
       edgerunnerState.movesUsed = movesUsed;
       edgerunnerState.movesRemaining = cappedRemaining;
       edgerunnerState.currentSquare = result.to;
       edgerunnerState.captureCount = Math.max(0, Number(edgerunnerState.captureCount || 0)) + (result.captured ? 1 : 0);
 
+      // Set a flag so the client keeps visuals/audio until snapback
+      gameState.edgerunnerSnapbackPending = cappedRemaining === 0 ? Date.now() + 5000 : false;
       hasEdgerunnerOverdrive = cappedRemaining > 0;
+
+      // If this was the last move, end the player's turn
+      if (cappedRemaining === 0) {
+        gameState.turnEnded = true;
+      }
+    } else {
+      gameState.edgerunnerSnapbackPending = false;
     }
 
     // Double Strike and Berserker state tracking
@@ -2342,53 +2367,168 @@ export class GameManager {
       return { gameState: this.serialiseGameState(gameState), appliedArcana: [], extraMove: true };
     }
 
-    // End of overdrive sequence: snap the piece back to its starting square.
-    if (edgerunnerState?.active && edgerunnerState.color === moverColor) {
-      const currentSquare = edgerunnerState.currentSquare;
+    // End of overdrive sequence: snap the piece back to its starting square (after all moves are used)
+    if (edgerunnerState?.active && edgerunnerState.color === moverColor && Array.isArray(edgerunnerState.path) && edgerunnerState.movesRemaining === 0) {
+      const path = edgerunnerState.path;
       const startSquare = edgerunnerState.startSquare;
+      const finalSquare = path[path.length - 1];
       const safeBackRankPawnType = (sq, type) => {
         if (type !== 'p' || !sq || typeof sq !== 'string') return type;
         const rank = parseInt(sq[1], 10);
         if (rank === 1 || rank === 8) return 'n';
         return type;
       };
-      if (currentSquare && startSquare && currentSquare !== startSquare) {
-        const overdrivePiece = chess.get(currentSquare);
-        if (overdrivePiece && overdrivePiece.color === moverColor && !chess.get(startSquare)) {
-          const fenBeforeSnapback = chess.fen();
-          const removedPiece = chess.remove(currentSquare);
-          if (!removedPiece) {
-            safeLoadFen(chess, fenBeforeSnapback);
-          }
-          const pieceToRestore = removedPiece
-            ? { ...removedPiece, type: safeBackRankPawnType(startSquare, removedPiece.type) }
-            : null;
-          const restored = pieceToRestore ? chess.put(pieceToRestore, startSquare) : false;
-          if (!restored) {
-            safeLoadFen(chess, fenBeforeSnapback);
-            if (!chess.get(currentSquare) && removedPiece) {
-              chess.put({ ...removedPiece, type: safeBackRankPawnType(currentSquare, removedPiece.type) }, currentSquare);
-            }
-          }
-        } else if (!chess.get(startSquare) && edgerunnerState.pieceType) {
-          // Fail-safe: if the tracked piece vanished due to edge-case mutation,
-          // restore it to the original square so Overdrive never deletes a piece.
-          const restoreType = safeBackRankPawnType(startSquare, edgerunnerState.pieceType);
-          const restored = chess.put({ type: restoreType, color: moverColor }, startSquare);
-          if (!restored && currentSquare) {
-            const fallbackPiece = chess.get(currentSquare);
-            if (fallbackPiece && fallbackPiece.color === moverColor) {
-              const fenBeforeFallback = chess.fen();
-              chess.remove(currentSquare);
-              const fallbackType = safeBackRankPawnType(startSquare, fallbackPiece.type);
-              if (!chess.put({ ...fallbackPiece, type: fallbackType }, startSquare)) {
-                safeLoadFen(chess, fenBeforeFallback);
-              }
-            }
+      const snapbackLog = { path, startSquare, finalSquare, before: { start: chess.get(startSquare), final: chess.get(finalSquare) } };
+      // Emit diagnostic event so clients can show snapback progress during testing
+      if (Array.isArray(gameState.playerIds)) {
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            try { this.io.to(pid).emit('edgerunnerSnapbackStatus', { status: 'attempt', path, startSquare, finalSquare }); } catch (e) {}
           }
         }
       }
-      gameState.activeEffects.edgerunnerOverdrive = null;
+
+      // Locate the overdrive piece by scanning the path from last -> first. This is robust
+      // against intermediate effects that might have moved pieces off the recorded finalSquare.
+      let overdriveSquare = null;
+      let overdrivePiece = null;
+      for (let i = path.length - 1; i >= 0; i--) {
+        const sq = path[i];
+        const p = chess.get(sq);
+        if (p && p.color === moverColor) {
+          overdriveSquare = sq;
+          overdrivePiece = p;
+          break;
+        }
+      }
+
+      // If we can't find the piece on the path, do not spawn a replacement (avoids duplicates).
+      if (!overdrivePiece) {
+        snapbackLog.note = 'piece not found on path; skipping restore to avoid duplication';
+        if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog));
+        gameState.activeEffects.edgerunnerOverdrive = null;
+        gameState.edgerunnerSnapbackPending = Date.now() + 5000;
+      } else {
+        // Atomically move the original piece back to its start square with rollback.
+        const overdrivePieceNow = chess.get(overdriveSquare);
+        const occupant = chess.get(startSquare);
+        const startWasCaptured = Array.isArray(edgerunnerState.captures) && edgerunnerState.captures.includes(startSquare);
+        let movedBack = false;
+        let manualSnapback = false;
+
+        if (!overdrivePieceNow) {
+          snapbackLog.note = 'overdrive piece not found at expected square';
+          if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog));
+        } else if (startSquare === overdriveSquare) {
+          // already at start
+          movedBack = true;
+        } else if (!occupant) {
+          // start empty: remove then try to put; rollback if put fails or throws
+          let taken;
+          try {
+            taken = chess.remove(overdriveSquare);
+            if (taken) {
+              const putOk = chess.put({ ...taken, type: safeBackRankPawnType(startSquare, taken.type) }, startSquare);
+              if (!putOk) {
+                // restore original
+                try { chess.put(taken, overdriveSquare); } catch (_) {}
+                snapbackLog.note = 'put to startSquare failed; restored original';
+                if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog));
+              } else {
+                movedBack = true;
+                manualSnapback = true;
+              }
+            }
+          } catch (err) {
+            // on exception, try to restore original and log
+            if (taken) {
+              try { chess.put(taken, overdriveSquare); } catch (_) {}
+            }
+            snapbackLog.note = 'exception during put to startSquare; restored original';
+            if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog), err);
+          }
+        } else if (startWasCaptured) {
+          // occupant at startSquare was captured during the sequence; safe to replace but rollback on failure
+          let savedOccupant;
+          let taken;
+          try {
+            // savedOccupant = chess.remove(startSquare);
+            taken = chess.remove(overdriveSquare);
+            if (taken) {
+              const putOk = chess.put({ ...taken, type: safeBackRankPawnType(startSquare, taken.type) }, startSquare);
+              if (!putOk) {
+                if (savedOccupant) try { chess.put(savedOccupant, startSquare); } catch (_) {}
+                if (taken) try { chess.put(taken, overdriveSquare); } catch (_) {}
+                snapbackLog.note = 'put failed replacing captured occupant; restored both';
+                if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog));
+              } else {
+                movedBack = true;
+                manualSnapback = true;
+              }
+            } else {
+              if (savedOccupant) try { chess.put(savedOccupant, startSquare); } catch (_) {}
+              snapbackLog.note = 'no overdrive piece when trying to replace captured occupant; occupant restored';
+              if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog));
+            }
+          } catch (err) {
+            // Attempt to restore both sides on error
+            if (savedOccupant) try { chess.put(savedOccupant, startSquare); } catch (_) {}
+            if (taken) try { chess.put(taken, overdriveSquare); } catch (_) {}
+            snapbackLog.note = 'exception during replacement; restored both where possible';
+            if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog), err);
+          }
+        } else {
+          snapbackLog.note = 'start square occupied by unrelated piece; skipping forced restore to avoid deleting unrelated piece';
+          if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog));
+        }
+
+        // Remove stray duplicates along the path (except the restored startSquare and the overdriveSquare if we left it in place)
+        for (const sq of path) {
+          if (sq === startSquare) continue;
+          // If we did NOT move the piece back, never remove the overdrive piece from its last square
+          if (!movedBack && sq === overdriveSquare) continue;
+          // If we did move it back, also skip the overdriveSquare (now empty)
+          if (movedBack && sq === overdriveSquare) continue;
+          const p = chess.get(sq);
+          if (!p) continue;
+          const matchType = (overdrivePieceNow && overdrivePieceNow.type) ? overdrivePieceNow.type : edgerunnerState.pieceType;
+          if (p.color === moverColor && matchType && p.type === matchType) chess.remove(sq);
+        }
+
+        snapbackLog.after = { start: chess.get(startSquare), final: chess.get(finalSquare) };
+        if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Snapback]', JSON.stringify(snapbackLog));
+        // Emit final snapback status to clients
+        if (Array.isArray(gameState.playerIds)) {
+          const finalStatus = movedBack ? 'completed' : 'skipped';
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              try {
+                this.io.to(pid).emit('edgerunnerSnapbackStatus', {
+                  status: finalStatus,
+                  reason: snapbackLog.note || null,
+                  startSquare: snapbackLog.after.start ? snapbackLog.after.start : null,
+                  finalSquare: snapbackLog.after.final ? snapbackLog.after.final : null,
+                  path,
+                });
+              } catch (e) {}
+            }
+          }
+        }
+        gameState.activeEffects.edgerunnerOverdrive = null;
+        gameState.edgerunnerSnapbackPending = Date.now() + 5000; // keep visuals for 5s after snapback
+
+        // Defensive: after manual snapback, reload FEN to resync chess.js and avoid history errors
+        if (manualSnapback) {
+          try {
+            const fen = chess.fen();
+            chess.load(fen);
+          } catch (e) {
+            if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Defensive] FEN reload after snapback failed', e);
+          }
+        } else if (typeof chess.history === 'function') {
+          try { chess.history(); } catch (e) { if (typeof logger?.warn === 'function') logger.warn('[Edgerunner Defensive] chess.history() failed', e); }
+        }
+      }
     }
 
     // No extra move — now decrement turn-based effects and check for game end
