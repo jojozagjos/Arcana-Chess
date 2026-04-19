@@ -13,6 +13,7 @@ class SoundManager {
     this.currentMusicKey = null;
     this.currentMusicAudio = null;
     this.musicCrossfadeCancel = null;
+    this.sfxLoops = {}; // { loopId: { audio: HTMLAudioElement, gain: number } }
     this.userGestureRequired = true; // assume browsers may block autoplay; set to false to force immediate attempts
     this._pendingPlayAfterGesture = null;
   }
@@ -223,7 +224,66 @@ class SoundManager {
     this.enabled = !!enabled;
     if (!this.enabled) {
       try { this.stopMusic({ fadeMs: 300 }); } catch (e) {}
+      try {
+        Object.keys(this.sfxLoops).forEach((loopId) => this.stopSfxLoop(loopId, { fadeMs: 150 }));
+      } catch (e) {}
     }
+  }
+
+  playSfxLoop(loopId, path, options = {}) {
+    if (!this.enabled || !loopId || !path) return null;
+    const gain = typeof options.volume === 'number' ? Math.max(0, Math.min(2, options.volume)) : 1;
+
+    const existing = this.sfxLoops[loopId]?.audio;
+    if (existing) {
+      try {
+        existing.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * gain));
+        const p = existing.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) {}
+      this.sfxLoops[loopId].gain = gain;
+      return existing;
+    }
+
+    const audio = new Audio(path);
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * gain));
+    this.sfxLoops[loopId] = { audio, gain };
+    const p = audio.play();
+    if (p && p.catch) {
+      p.catch(() => {});
+    }
+    return audio;
+  }
+
+  stopSfxLoop(loopId, options = {}) {
+    const entry = this.sfxLoops[loopId];
+    if (!entry?.audio) return;
+    const audio = entry.audio;
+    const fadeMs = typeof options.fadeMs === 'number' ? Math.max(0, options.fadeMs) : 120;
+    const startVol = audio.volume;
+
+    if (fadeMs === 0) {
+      try { audio.pause(); } catch (e) {}
+      try { audio.currentTime = 0; } catch (e) {}
+      delete this.sfxLoops[loopId];
+      return;
+    }
+
+    const startedAt = performance.now();
+    const step = () => {
+      const t = Math.min(1, (performance.now() - startedAt) / fadeMs);
+      try { audio.volume = startVol * (1 - t); } catch (e) {}
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        try { audio.pause(); } catch (e) {}
+        try { audio.currentTime = 0; } catch (e) {}
+        delete this.sfxLoops[loopId];
+      }
+    };
+    requestAnimationFrame(step);
   }
 
   isMusicReady(key) {
@@ -238,6 +298,9 @@ class SoundManager {
     if (/^(https?:)?\//.test(trimmed)) return trimmed;
     if (trimmed.startsWith('arcana:')) {
       return `/sounds/arcana/${trimmed.slice('arcana:'.length)}.mp3`;
+    }
+    if (trimmed.startsWith('music:')) {
+      return `/sounds/music/${trimmed.slice('music:'.length)}.mp3`;
     }
     if (trimmed.startsWith('ui:')) {
       return `/sounds/ui/${trimmed.slice('ui:'.length)}.mp3`;
@@ -327,6 +390,10 @@ class SoundManager {
     if (this.currentMusicAudio) {
       this.currentMusicAudio.volume = this.masterVolume * this.musicVolume;
     }
+    Object.values(this.sfxLoops).forEach((entry) => {
+      if (!entry?.audio) return;
+      entry.audio.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * (entry.gain || 1)));
+    });
   }
 
   setSfxVolume(vol) {
@@ -334,6 +401,10 @@ class SoundManager {
     Object.values(this.sounds).forEach(sound => {
       if (!sound || typeof sound !== 'object' || typeof sound.play !== 'function') return;
       sound.volume = this.masterVolume * this.sfxVolume;
+    });
+    Object.values(this.sfxLoops).forEach((entry) => {
+      if (!entry?.audio) return;
+      entry.audio.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * (entry.gain || 1)));
     });
   }
 

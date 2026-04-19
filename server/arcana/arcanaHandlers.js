@@ -147,7 +147,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
       
       // For cutscene cards, include safe target/trajectory fields so both players can
       // run camera choreography without exposing private tactical data.
-      const forceCutsceneCards = new Set(['mind_control', 'breaking_point', 'edgerunner_overdrive']);
+      const forceCutsceneCards = new Set(['mind_control', 'breaking_point']);
       const isCutsceneCard = Boolean(def?.visual?.cutscene) || forceCutsceneCards.has(effectiveArcanaId);
       let redactedParams = null;
       if (isCutsceneCard && params) {
@@ -155,6 +155,9 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
         redactedParams = {
           square: params.targetSquare || params.square || null,
           targetSquare: params.targetSquare || null,
+          preArcanaFen: typeof params.preArcanaFen === 'string' ? params.preArcanaFen : null,
+          undone: Array.isArray(params.undone) ? params.undone : null,
+          rewoundCount: Number.isFinite(params.rewoundCount) ? params.rewoundCount : null,
           kingTo: params.kingTo || null,
           rebornSquare: params.rebornSquare || null,
           revivedSquares: Array.isArray(params.revivedSquares) ? params.revivedSquares : null,
@@ -766,18 +769,11 @@ function applyPromotionRitual({ chess, gameState, moverColor, params }) {
   if (targetSquare) {
     const pawn = chess.get(targetSquare);
     if (pawn && pawn.type === 'p' && pawn.color === moverColor) {
-      chess.remove(targetSquare);
-      chess.put({ type: 'q', color: moverColor }, targetSquare);
-      
-      // Grant 2 consecutive moves with monochrome "Za Warudo" time stop effect
       if (!gameState.activeEffects) gameState.activeEffects = {};
-      if (!gameState.activeEffects.promotionRitual) {
-        gameState.activeEffects.promotionRitual = {};
-      }
-      gameState.activeEffects.promotionRitual[moverColor] = {
-        active: true,
-        movesRemaining: 2,
-        monochrome: true, // Board displays in monochrome during this effect
+      // Defer promotion and effect activation until reveal/cutscene completes.
+      gameState.activeEffects.pendingPromotionRitual = {
+        targetSquare,
+        moverColor,
       };
       
       return { 
@@ -950,35 +946,12 @@ function scoreMapFragmentMove(move) {
 
 function getTopMapFragmentMoves(chess, moverColor, limit = 3) {
   const opponentColor = moverColor === 'w' ? 'b' : 'w';
-  const opponentMoves = getMovesForColor(chess, opponentColor);
-  if (!Array.isArray(opponentMoves) || opponentMoves.length === 0) return [];
+  const opponentMoves = getMovesForColor(chess, opponentColor) || [];
 
-  const ranked = opponentMoves.map((move) => ({
-    from: move.from,
-    to: move.to,
-    piece: move.piece,
-    captured: move.captured || null,
-    promotion: move.promotion || null,
-    san: move.san || null,
-    score: scoreMapFragmentMove(move),
-  }));
-
-  ranked.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (a.to !== b.to) return a.to.localeCompare(b.to);
-    return `${a.from}${a.to}`.localeCompare(`${b.from}${b.to}`);
-  });
-
-  const uniqueByTarget = [];
-  const seenTargets = new Set();
-  for (const move of ranked) {
-    if (seenTargets.has(move.to)) continue;
-    seenTargets.add(move.to);
-    uniqueByTarget.push(move);
-    if (uniqueByTarget.length >= limit) break;
-  }
-
-  return uniqueByTarget;
+  // Score moves using existing scoring helper
+  const scored = opponentMoves.map((m) => ({ move: m, score: scoreMapFragmentMove(m) }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map(s => s.move);
 }
 
 function applyVision({ chess, gameState, moverColor, socketId }) {
@@ -1119,7 +1092,7 @@ function applyQuietThought({ chess, gameState, moverColor }) {
   return { params: { kingSquare, threats: [...attackerSquares], turnsRemaining: 3 } };
 }
 
-function applyMapFragments({ chess, moverColor }) {
+function applyMapFragments({ chess, moverColor, gameState }) {
   const topMoves = getTopMapFragmentMoves(chess, moverColor, 3);
   const predictedSquares = topMoves.map((move) => move.to);
   return {
@@ -1550,6 +1523,7 @@ function applyBreakingPoint({ chess, moverColor, params }) {
   const file = epicenter.charCodeAt(0) - 97;
   const rank = parseInt(epicenter[1], 10);
   const impacted = [];
+  const casualties = [];
 
   const directions = [
     { df: -1, dr: -1 }, { df: 0, dr: -1 }, { df: 1, dr: -1 },
@@ -1568,20 +1542,39 @@ function applyBreakingPoint({ chess, moverColor, params }) {
 
     const dstFile = srcFile + dir.df;
     const dstRank = srcRank + dir.dr;
-    if (dstFile < 0 || dstFile > 7 || dstRank < 1 || dstRank > 8) continue;
+    if (dstFile < 0 || dstFile > 7 || dstRank < 1 || dstRank > 8) {
+      impacted.push({ from: srcSquare, to: srcSquare, piece: piece.type, died: false });
+      continue;
+    }
 
     const dstSquare = `${String.fromCharCode(97 + dstFile)}${dstRank}`;
-    if (chess.get(dstSquare)) continue;
-    if (piece.type === 'p' && (dstRank === 1 || dstRank === 8)) continue;
+    if (chess.get(dstSquare)) {
+      impacted.push({ from: srcSquare, to: srcSquare, piece: piece.type, died: false });
+      continue;
+    }
+    if (piece.type === 'p' && (dstRank === 1 || dstRank === 8)) {
+      impacted.push({ from: srcSquare, to: srcSquare, piece: piece.type, died: false });
+      continue;
+    }
+
+    // 50% chance this piece is killed by the shockwave when a valid push path exists.
+    const diesFromShockwave = Math.random() < 0.5;
+    if (diesFromShockwave) {
+      chess.remove(srcSquare);
+      impacted.push({ from: srcSquare, to: null, piece: piece.type, died: true });
+      casualties.push({ square: srcSquare, piece: piece.type, color: piece.color });
+      continue;
+    }
 
     chess.remove(srcSquare);
     const putOk = chess.put(piece, dstSquare);
     if (!putOk) {
       chess.put(piece, srcSquare);
+      impacted.push({ from: srcSquare, to: srcSquare, piece: piece.type, died: false });
       continue;
     }
 
-    impacted.push({ from: srcSquare, to: dstSquare, piece: piece.type });
+    impacted.push({ from: srcSquare, to: dstSquare, piece: piece.type, died: false });
   }
 
   chess.remove(epicenter);
@@ -1594,11 +1587,12 @@ function applyBreakingPoint({ chess, moverColor, params }) {
       pieceType: shatteredPieceType,
       pieceColor: shatteredPieceColor,
       impacted,
+      casualties,
     },
   };
 }
 
-function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
+function applyEdgerunnerOverdrive({ chess, gameState, moverColor, params }) {
   const startSquare = params?.targetSquare;
   if (!startSquare) return null;
 
@@ -1607,73 +1601,33 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
     return null;
   }
 
-  const maxMoves = 5;
-  const dashPath = [];
-  let movesUsed = 0;
-  let captureCount = 0;
-  let currentSquare = startSquare;
+  // Manual-sequence mode: player controls the overdriven piece.
+  // It starts with 1 move, gains +1 move on each capture, capped at 5 total moves.
+  gameState.activeEffects = gameState.activeEffects || {};
+  gameState.activeEffects.edgerunnerOverdrive = {
+    active: true,
+    color: moverColor,
+    startSquare,
+    currentSquare: startSquare,
+    movesRemaining: 1,
+    movesUsed: 0,
+    maxMoves: 5,
+    captureCount: 0,
+    pieceType: startPiece.type,
+  };
 
-  // First move can be any legal move; every continuation must be a capture.
-  while (movesUsed < maxMoves) {
-    const burstMove = pickBestOverdriveMove(chess, currentSquare, moverColor, movesUsed > 0);
-    if (!burstMove) {
-      if (movesUsed === 0) return null;
-      break;
-    }
-
-    const burstResult = chess.move({ from: currentSquare, to: burstMove.to, promotion: 'q' });
-    if (!burstResult) {
-      if (movesUsed === 0) return null;
-      break;
-    }
-
-    dashPath.push(burstResult.to);
-    movesUsed += 1;
-
-    if (burstResult.captured) {
-      captureCount += 1;
-    }
-
-    currentSquare = burstResult.to;
-
-    if (!burstResult.captured) {
-      break;
-    }
-  }
-
-  if (!dashPath.length) return null;
-
-  const burstSquare = currentSquare;
-  if (burstSquare !== startSquare) {
-    const snapbackPiece = chess.get(burstSquare);
-    if (!snapbackPiece || snapbackPiece.color !== moverColor) {
-      return null;
-    }
-    chess.remove(burstSquare);
-    const snapbackOk = chess.put({ type: snapbackPiece.type, color: snapbackPiece.color }, startSquare);
-    if (!snapbackOk) {
-      chess.put({ type: snapbackPiece.type, color: snapbackPiece.color }, burstSquare);
-      return null;
-    }
-  }
-
-  const visualDashPath = burstSquare === startSquare ? [...dashPath] : [...dashPath, startSquare];
-
-  const [firstTo, secondTo, thirdTo] = dashPath;
   return {
     params: {
       square: startSquare,
       targetSquare: startSquare,
       pieceType: startPiece.type,
       pieceColor: startPiece.color,
-      firstTo: firstTo || null,
-      secondTo: secondTo || null,
-      thirdTo: thirdTo || null,
-      dashPath: visualDashPath,
-      burstSquare,
-      maxMoves,
-      movesUsed,
-      captureCount,
+      startSquare,
+      currentSquare: startSquare,
+      movesRemaining: 1,
+      maxMoves: 5,
+      movesUsed: 0,
+      captureCount: 0,
     },
   };
 }
@@ -1864,7 +1818,7 @@ function astralRebirthEffect(gameState, moverColor) {
   while (revivedSquares.length < 2 && captured.length > 0) {
     const ranked = captured
       .map((entry, idx) => ({ entry, idx }))
-      .filter(({ entry }) => entry && entry.type)
+      .filter(({ entry }) => entry && entry.type && entry.type !== 'k')
       .sort((a, b) => (pieceValue[b.entry.type] || 0) - (pieceValue[a.entry.type] || 0));
 
     if (ranked.length === 0) break;
@@ -1872,26 +1826,21 @@ function astralRebirthEffect(gameState, moverColor) {
     const selected = ranked[0];
     const toRevive = selected.entry;
     const pieceType = toRevive.type;
-    
-    // Try back rank first
+
+    // Pawns are never placed on back rank (would create invalid/softlock-prone states).
+    const ranksToTry = pieceType === 'p' ? [secondRank] : [backRank, secondRank];
+
     let placedSquare = null;
-    for (let file = 0; file < 8; file++) {
-      const square = 'abcdefgh'[file] + backRank;
-      if (!chess.get(square)) {
-        chess.put({ type: pieceType, color: moverColor }, square);
-        placedSquare = square;
-        break;
-      }
-    }
-    
-    // If back rank is full, try second rank
-    if (!placedSquare) {
+    for (const rank of ranksToTry) {
+      if (placedSquare) break;
       for (let file = 0; file < 8; file++) {
-        const square = 'abcdefgh'[file] + secondRank;
+        const square = 'abcdefgh'[file] + rank;
         if (!chess.get(square)) {
-          chess.put({ type: pieceType, color: moverColor }, square);
-          placedSquare = square;
-          break;
+          const placed = chess.put({ type: pieceType, color: moverColor }, square);
+          if (placed) {
+            placedSquare = square;
+            break;
+          }
         }
       }
     }
@@ -1916,6 +1865,60 @@ function undoMoves(gameState, count) {
   const chess = gameState.chess;
   const undone = [];
   const history = gameState.moveHistory || [];
+
+  const getFenPieceAtSquare = (fen, square) => {
+    if (!fen || typeof fen !== 'string' || !square || square.length !== 2) return null;
+    const parts = fen.split(' ');
+    const placement = parts[0];
+    if (!placement) return null;
+    const rows = placement.split('/');
+    if (rows.length !== 8) return null;
+
+    const file = square.charCodeAt(0) - 97;
+    const rank = parseInt(square[1], 10);
+    if (file < 0 || file > 7 || rank < 1 || rank > 8) return null;
+
+    const row = rows[8 - rank];
+    let col = 0;
+    for (const ch of row) {
+      if (/[1-8]/.test(ch)) {
+        col += parseInt(ch, 10);
+        continue;
+      }
+      if (col === file) {
+        return {
+          type: ch.toLowerCase(),
+          color: ch === ch.toLowerCase() ? 'b' : 'w',
+        };
+      }
+      col += 1;
+    }
+    return null;
+  };
+
+  const recomputePawnFirstMoveConsumed = () => {
+    const consumed = { w: {}, b: {} };
+    const files = 'abcdefgh';
+    const starts = [];
+    for (const file of files) {
+      starts.push({ square: `${file}2`, color: 'w' });
+      starts.push({ square: `${file}7`, color: 'b' });
+    }
+
+    const historyEntries = Array.isArray(gameState.moveHistory) ? gameState.moveHistory : [];
+    for (const start of starts) {
+      for (const entry of historyEntries) {
+        const fen = typeof entry === 'string' ? entry : entry?.fen;
+        const piece = getFenPieceAtSquare(fen, start.square);
+        if (!piece || piece.type !== 'p' || piece.color !== start.color) {
+          consumed[start.color][start.square] = true;
+          break;
+        }
+      }
+    }
+
+    gameState.pawnFirstMoveConsumed = consumed;
+  };
   
   if (history.length === 0) {
     // Fallback to chess.undo() if no FEN history available
@@ -1958,6 +1961,10 @@ function undoMoves(gameState, count) {
       if (snap.lastMove !== undefined) gameState.lastMove = JSON.parse(JSON.stringify(snap.lastMove));
       if (snap.lastMoveByColor !== undefined) gameState.lastMoveByColor = JSON.parse(JSON.stringify(snap.lastMoveByColor));
     }
+
+    // Always recompute from rewound history so pawn first-move rights are
+    // consistent across mixed snapshot/raw-FEN history entries.
+    recomputePawnFirstMoveConsumed();
 
     // Trim moveHistory to the restored point
     gameState.moveHistory = history.slice(0, targetIdx);

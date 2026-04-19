@@ -102,46 +102,51 @@ export async function performAIMoveLogic(gameState, ctx) {
       }
 
       const bestCardScore = scoredCards[0]?.score ?? -Infinity;
-      const tacticalWindow = scoredCards.filter((entry) => (bestCardScore - entry.score) <= (settings.topMoveWindow * 0.25));
-      const selectionPool = tacticalWindow.slice(0, Math.max(1, settings.explorationPoolSize || 1));
-      const cardIndex = selectionPool.length > 1 && Math.random() < settings.explorationChance
-        ? Math.floor(Math.random() * selectionPool.length)
-        : 0;
-      const cardToUse = selectionPool[cardIndex]?.card;
-      if (!cardToUse) {
+      const minUseScore = 24;
+      if (!Number.isFinite(bestCardScore) || bestCardScore < minUseScore) {
         gameState.aiUsedCardThisTurn = false;
-      }
-
-      const usageResult = cardToUse ? await tryAIUseArcana(gameState, aiSocketId, cardToUse, moverColor) : { success: false };
-
-      if (usageResult.success) {
-        gameState.aiUsedCardThisTurn = true;
-
-        const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
-        if (humanId) {
-          io.to(humanId).emit('arcanaUsed', {
-            playerId: aiSocketId,
-            arcana: cardToUse,
-          });
-          const personalised = serialiseGameStateForViewer(gameState, humanId);
-          io.to(humanId).emit('gameUpdated', personalised);
+      } else {
+        const tacticalWindow = scoredCards.filter((entry) => (bestCardScore - entry.score) <= (settings.topMoveWindow * 0.25));
+        const selectionPool = tacticalWindow.slice(0, Math.max(1, settings.explorationPoolSize || 1));
+        const cardIndex = selectionPool.length > 1 && Math.random() < settings.explorationChance
+          ? Math.floor(Math.random() * selectionPool.length)
+          : 0;
+        const cardToUse = selectionPool[cardIndex]?.card;
+        if (!cardToUse) {
+          gameState.aiUsedCardThisTurn = false;
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const usageResult = cardToUse ? await tryAIUseArcana(gameState, aiSocketId, cardToUse, moverColor) : { success: false };
 
-        if (usageResult.endsTurn) {
-          swapTurn(chess, gameState);
-          if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
-          gameState.plyCount += 1;
-          decrementEffects(gameState);
-          gameState.aiUsedCardThisTurn = false;
+        if (usageResult.success) {
+          gameState.aiUsedCardThisTurn = true;
 
           const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
           if (humanId) {
+            io.to(humanId).emit('arcanaUsed', {
+              playerId: aiSocketId,
+              arcana: cardToUse,
+            });
             const personalised = serialiseGameStateForViewer(gameState, humanId);
             io.to(humanId).emit('gameUpdated', personalised);
           }
-          return;
+
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
+          if (usageResult.endsTurn) {
+            swapTurn(chess, gameState);
+            if (typeof gameState.plyCount !== 'number') gameState.plyCount = 0;
+            gameState.plyCount += 1;
+            decrementEffects(gameState);
+            gameState.aiUsedCardThisTurn = false;
+
+            const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
+            if (humanId) {
+              const personalised = serialiseGameStateForViewer(gameState, humanId);
+              io.to(humanId).emit('gameUpdated', personalised);
+            }
+            return;
+          }
         }
       }
     }
@@ -335,7 +340,7 @@ export async function tryAIUseArcana(gameState, aiSocketId, card, moverColor, ct
 
   const turnEndingCards = [
     'execution', 'astral_rebirth', 'necromancy',
-    'time_travel', 'chaos_theory', 'mind_control', 'breaking_point', 'edgerunner_overdrive',
+    'time_travel', 'chaos_theory', 'mind_control', 'breaking_point',
     'royal_swap', 'promotion_ritual', 'cursed_square', 'sanctuary',
   ];
 

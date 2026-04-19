@@ -229,6 +229,35 @@ export function createAiCore({ safeLoadFen }) {
     if (card.id === 'promotion_ritual') score += 18;
     if (card.id === 'peek_card' || card.id === 'map_fragments' || card.id === 'quiet_thought') score += candidateCardsCount < 2 ? 8 : 3;
 
+    if (card.id === 'divine_intervention') {
+      if (profile.checks > 0) score += 90;
+      else if (profile.maxThreat >= AI_PIECE_VALUES.r) score += 34;
+      else score -= 10;
+    }
+
+    if (card.id === 'edgerunner_overdrive') {
+      const myMoves = getMovesForColor(chess, moverColor) || [];
+      const captureMoves = myMoves.filter((m) => !!m.captured && m.captured !== 'k');
+      if (captureMoves.length === 0) score -= 24;
+      else score += Math.min(36, captureMoves.length * 6);
+    }
+
+    if (card.id === 'promotion_ritual') {
+      const board = chess.board();
+      let bestAdvance = -Infinity;
+      for (let rank = 0; rank < 8; rank += 1) {
+        for (let file = 0; file < 8; file += 1) {
+          const piece = board[rank][file];
+          if (!piece || piece.type !== 'p' || piece.color !== moverColor) continue;
+          const squareRank = 8 - rank;
+          const advance = moverColor === 'w' ? squareRank - 2 : 7 - squareRank;
+          if (advance > bestAdvance) bestAdvance = advance;
+        }
+      }
+      if (bestAdvance < 2) score -= 16;
+      else score += Math.min(22, bestAdvance * 3);
+    }
+
     if (profile.checks > 0 && defensiveCards.has(card.id)) score += 28;
     if (profile.threatenedMaterial > 0 && defensiveCards.has(card.id)) score += Math.min(24, profile.threatenedMaterial / 35);
     if (boardScore < -80 && tacticalCards.has(card.id)) score += 12;

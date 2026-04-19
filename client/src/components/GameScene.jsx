@@ -161,8 +161,7 @@ function getControlledPieceEntry(gameState, square, controllerColor) {
 
 export function GameScene({ gameState, initialReplayPayload, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const MAX_STUDIO_RUNTIME_MS = 14000;
-  const CUTSCENE_BOARD_LOCK_CARDS = new Set(['execution', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive', 'time_travel']);
-  const DELAYED_REVEAL_ACK_CARDS = new Set(['breaking_point', 'edgerunner_overdrive', 'time_travel']);
+  const CUTSCENE_BOARD_LOCK_CARDS = new Set(['execution', 'promotion_ritual', 'breaking_point', 'time_travel', 'astral_rebirth', 'necromancy']);
   const [showMenu, setShowMenu] = useState(false);
   // Panels are always visible in the in-game menu (no collapse)
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -227,6 +226,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const contextRestoreTimerRef = useRef(null);
   const contextRecoveryWatchdogRef = useRef(null);
   const replayFenHistoryRef = useRef([]);
+  const previousMusicBeforeOverdriveRef = useRef(null);
   const prevReplayIndexRef = useRef(0);
   const studioRuntimeQueueRef = useRef([]);
   const studioCameraRuntimeActive = Boolean(
@@ -360,6 +360,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const reviveSequenceTokenRef = useRef(0);
   const timeTravelSequenceTokenRef = useRef(0);
   const pendingRevealAckRef = useRef(null);
+  const pendingRevealIntentRef = useRef(null);
   const firedRuntimeVfxRef = useRef(new Map());
   const cardAnimationLockRef = useRef(false);
   const isCardAnimationPlayingRef = useRef(false);
@@ -769,16 +770,69 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
   // In-game music: start on mount (cleanup handled by App.jsx routing)
   useEffect(() => {
+    try {
+      soundManager.stopMusic({ fadeMs: 0 });
+      soundManager.stopSfxLoop('edgerunner_overdrive_theme', { fadeMs: 0 });
+    } catch (e) {}
     const timer = setTimeout(() => {
       soundManager.playMusic('music:ingame');
     }, 250);
     return () => {
       clearTimeout(timer);
       try {
+        soundManager.stopSfxLoop('edgerunner_overdrive_theme', { fadeMs: 80 });
+        soundManager.stopSfxLoop('time_freeze_clock_tick', { fadeMs: 80 });
         soundManager.stopMusic({ fadeMs: 200 });
       } catch (e) {}
     };
   }, []);
+
+  useEffect(() => {
+    const isOverdriveActive = Boolean(gameState?.activeEffects?.edgerunnerOverdrive?.active);
+    if (isOverdriveActive) {
+      if (!previousMusicBeforeOverdriveRef.current) {
+        previousMusicBeforeOverdriveRef.current = soundManager.currentMusicKey || 'music:ingame';
+      }
+      soundManager.stopMusic({ fadeMs: 180 });
+      const overdriveCard = getCutsceneCard('edgerunner_overdrive');
+      const configuredTheme = overdriveCard?.meta?.audioConfig?.overdriveThemeSoundId;
+      const overdriveTheme = configuredTheme || '/sounds/music/I_Really_Want_to_Stay in_This_Game.mp3';
+      soundManager.playSfxLoop('edgerunner_overdrive_theme', overdriveTheme, { volume: 1 });
+      return;
+    }
+    soundManager.stopSfxLoop('edgerunner_overdrive_theme', { fadeMs: 180 });
+    const resumeKey = previousMusicBeforeOverdriveRef.current || 'music:ingame';
+    previousMusicBeforeOverdriveRef.current = null;
+    soundManager.playMusic(resumeKey, { crossfadeMs: 420 });
+  }, [gameState?.activeEffects?.edgerunnerOverdrive?.active]);
+
+  useEffect(() => {
+    const hasFrozenSide = Boolean(gameState?.activeEffects?.timeFrozen?.w || gameState?.activeEffects?.timeFrozen?.b);
+    const lock = gameState?.activeEffects?.timeFreezeArcanaLock || { w: false, b: false };
+    const turnChar = gameState?.turn || null;
+    const hasFreezeLockWindow = Boolean(
+      (lock.w && turnChar === 'b')
+      || (lock.b && turnChar === 'w')
+    );
+    const freezeWindowActive = hasFrozenSide || hasFreezeLockWindow;
+    const shouldHoldForCardAnimation = Boolean(cardReveal || isCardAnimationPlaying || cardAnimationLockRef.current);
+    if (freezeWindowActive && !shouldHoldForCardAnimation) {
+      const freezeCard = getCutsceneCard('time_freeze');
+      const configuredTick = freezeCard?.meta?.audioConfig?.freezeTickSoundId;
+      const tickSoundId = configuredTick || '/sounds/arcana/clock_ticking.mp3';
+      soundManager.playSfxLoop('time_freeze_clock_tick', tickSoundId, { volume: 1 });
+      return;
+    }
+    soundManager.stopSfxLoop('time_freeze_clock_tick', { fadeMs: 150 });
+  }, [
+    gameState?.activeEffects?.timeFrozen?.w,
+    gameState?.activeEffects?.timeFrozen?.b,
+    gameState?.activeEffects?.timeFreezeArcanaLock?.w,
+    gameState?.activeEffects?.timeFreezeArcanaLock?.b,
+    gameState?.turn,
+    cardReveal,
+    isCardAnimationPlaying,
+  ]);
 
   useEffect(() => {
     if (hasVision && chess) {
@@ -966,6 +1020,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     opponentColorChar,
     quietThoughtTurnsLeft,
   ]);
+
+  const overdriveActiveSquare = gameState?.activeEffects?.edgerunnerOverdrive?.active
+    ? gameState?.activeEffects?.edgerunnerOverdrive?.currentSquare
+    : null;
+  const overdriveIsActive = Boolean(gameState?.activeEffects?.edgerunnerOverdrive?.active);
+  const boardHighlightedSquares = useMemo(() => {
+    if (!overdriveActiveSquare) return highlightedSquares;
+    return Array.from(new Set([...(highlightedSquares || []), overdriveActiveSquare]));
+  }, [highlightedSquares, overdriveActiveSquare]);
+  const boardHighlightColor = overdriveActiveSquare ? '#44ff88' : highlightColor;
 
   // Time control countdown - update client-side display in real-time
   useEffect(() => {
@@ -1232,6 +1296,18 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         setBoardVisualLockedForCutscene(false);
         const latestFen = latestFenRef.current;
         if (latestFen) setRenderFen(latestFen);
+        // Emit reveal completion at the very end of cutscene runtime.
+        if (pendingRevealAckRef.current) {
+          const pendingPlayerId = pendingRevealAckRef.current;
+          const emitAckAtEnd = setTimeout(() => {
+            if (pendingRevealAckRef.current !== pendingPlayerId) return;
+            pendingRevealAckRef.current = null;
+            try {
+              socket.emit('arcanaRevealComplete', { playerId: pendingPlayerId });
+            } catch (e) {}
+          }, 180);
+          timeoutsRef.current.push(emitAckAtEnd);
+        }
       }
       setIsCardAnimationPlaying(false);
     }, visualClearTimeout);
@@ -1318,7 +1394,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         fogClearTimeoutRef.current = null;
       }
     };
-  }, [gameState?.activeEffects, gameState?.id]);
+  }, [gameState && gameState.activeEffects, gameState && gameState.id]);
 
   // Load arcana visual effects module on demand when visuals or persistent effects are present
   useEffect(() => {
@@ -1337,21 +1413,6 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   useEffect(() => {
     isCardAnimationPlayingRef.current = isCardAnimationPlaying;
   }, [isCardAnimationPlaying]);
-
-  useEffect(() => {
-    if (!pendingRevealAckRef.current) return;
-    if (isCardAnimationPlaying || boardVisualLockedForCutscene || activeVisualArcana) return;
-
-    const pendingPlayerId = pendingRevealAckRef.current;
-    pendingRevealAckRef.current = null;
-
-    try {
-      socket.emit('arcanaRevealComplete', { playerId: pendingPlayerId });
-    } catch (e) {}
-
-    cardAnimationLockRef.current = false;
-    setIsCardAnimationPlaying(false);
-  }, [activeVisualArcana, boardVisualLockedForCutscene, isCardAnimationPlaying]);
 
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
@@ -1413,6 +1474,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       const rawArcanaId = payload?.arcanaId || '';
       const arcanaId = rawArcanaId === 'arcane_cycle' ? 'filtered_cycle' : rawArcanaId;
+      const playbackArcanaId = arcanaId === 'necromancy' ? 'astral_rebirth' : arcanaId;
       const params = payload?.params;
       const owner = payload?.owner;
       const triggerKey = `${arcanaId || ''}:${params?.targetSquare || params?.square || ''}`;
@@ -1420,20 +1482,40 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
       const isCutsceneCard = Boolean(payload?.visual?.cutscene);
       // Also check if there's a Studio card override with actual animation data (objects or camera tracks)
-      const studioCardDef = getCutsceneCard(arcanaId);
+      const studioCardDef = getCutsceneCard(playbackArcanaId);
       const hasStudioAnimation = studioCardDef?.meta?.source === 'arcana-studio' && (
         (studioCardDef.tracks?.objects || []).some((t) => (t?.keys || []).length > 0)
         || (studioCardDef.tracks?.camera || []).some((t) => (t?.keys || []).length > 0)
+        || (studioCardDef.tracks?.events || []).some((t) => (t?.keys || []).length > 0)
+        || (studioCardDef.tracks?.sounds || []).some((t) => (t?.keys || []).length > 0)
       );
       // Divine Intervention is passive and should not play activation cutscenes.
-      const shouldPlayAnimation = arcanaId !== 'divine_intervention' && (isCutsceneCard || hasStudioAnimation);
+      const shouldPlayAnimation = arcanaId !== 'divine_intervention'
+        && arcanaId !== 'edgerunner_overdrive'
+        && (isCutsceneCard || hasStudioAnimation);
       const cutsceneStartDelayMs = Math.max(0, Number(params?.cutsceneStartDelayMs || 0));
       const shouldQueueForCardAnimation = shouldPlayAnimation && (isCardAnimationPlayingRef.current || cardAnimationLockRef.current);
+
+      if (shouldPlayAnimation && CUTSCENE_BOARD_LOCK_CARDS.has(arcanaId)) {
+        const preArcanaFen = typeof params?.preArcanaFen === 'string' ? params.preArcanaFen : '';
+        if (preArcanaFen) {
+          setRenderFen(preArcanaFen);
+        }
+        setBoardVisualLockedForCutscene(true);
+        // Promote dismiss intent as soon as the cutscene-triggering event is observed,
+        // including when playback itself is queued behind card reveal animations.
+        if (pendingRevealIntentRef.current && pendingRevealIntentRef.current === payload?.owner) {
+          pendingRevealAckRef.current = pendingRevealIntentRef.current;
+          pendingRevealIntentRef.current = null;
+        } else if (!pendingRevealAckRef.current && payload?.owner === socket.id) {
+          pendingRevealAckRef.current = payload.owner;
+        }
+      }
 
       if (shouldQueueForCardAnimation) {
         pendingLastArcanaRef.current.push({
           ...payload,
-          arcanaId,
+          arcanaId: playbackArcanaId,
           params: {
             ...(params || {}),
             fen: latestFenRef.current || gameState?.fen,
@@ -1443,18 +1525,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         return;
       }
 
-      if (shouldPlayAnimation && CUTSCENE_BOARD_LOCK_CARDS.has(arcanaId)) {
-        const preArcanaFen = typeof params?.preArcanaFen === 'string' ? params.preArcanaFen : '';
-        if (preArcanaFen) {
-          setRenderFen(preArcanaFen);
-        }
-        setBoardVisualLockedForCutscene(true);
-      }
-
       if (shouldPlayAnimation) {
         lastProcessedArcanaAtRef.current = payload.at || Date.now();
         const runPlayback = () => {
-          playStudioArcanaRuntime({ ...payload, params: { ...(params || {}), fen: latestFenRef.current || gameState?.fen } });
+          playStudioArcanaRuntime({ ...payload, arcanaId: playbackArcanaId, params: { ...(params || {}), fen: latestFenRef.current || gameState?.fen } });
         };
         if (cutsceneStartDelayMs > 0) {
           const delayed = setTimeout(runPlayback, cutsceneStartDelayMs);
@@ -1517,11 +1591,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           }
         }
 
+        const latestFen = typeof latestFenRef.current === 'string' ? latestFenRef.current.trim() : '';
+        if (frames.length === 1 && latestFen && latestFen !== frames[0]) {
+          frames.push(latestFen);
+        }
+
         if (frames.length === 0) return;
 
         const sequenceToken = ++timeTravelSequenceTokenRef.current;
         const startDelayMs = Math.max(0, Number(baseDelayMs || 0));
-        const stepDelayMs = 520;
+        const stepDelayMs = 3000;
 
         setBoardVisualLockedForCutscene(true);
         setIsCardAnimationPlaying(true);
@@ -1552,9 +1631,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           setBoardVisualLockedForCutscene(false);
           setActiveVisualArcana((prev) => (prev?.arcanaId === 'time_travel' ? null : prev));
           setIsCardAnimationPlaying(false);
-          const latestFen = latestFenRef.current;
-          if (latestFen) setRenderFen(latestFen);
-        }, startDelayMs + frames.length * stepDelayMs + 220);
+          if (latestFenRef.current) setRenderFen(latestFenRef.current);
+
+          if (pendingRevealAckRef.current) {
+            const pendingPlayerId = pendingRevealAckRef.current;
+            pendingRevealAckRef.current = null;
+            try {
+              socket.emit('arcanaRevealComplete', { playerId: pendingPlayerId });
+            } catch (e) {}
+          }
+        }, startDelayMs + frames.length * stepDelayMs + 900);
         timeoutsRef.current.push(finishTimeout);
       };
 
@@ -1569,7 +1655,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             : Array.isArray(params?.revived)
               ? params.revived
               : [];
-          queueSequentialReviveReveal('necromancy', revivedSquares, params?.cutsceneStartDelayMs || 0);
+          queueSequentialReviveReveal('astral_rebirth', revivedSquares, params?.cutsceneStartDelayMs || 0);
           break;
         }
         case 'astral_rebirth': {
@@ -1596,7 +1682,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           queueSequentialTimeTravelRewind(
             params?.preArcanaFen || latestFenRef.current || gameState?.fen || null,
             Array.isArray(params?.undone) ? params.undone : [],
-            params?.cutsceneStartDelayMs || 0,
+            0,
           );
           break;
         }
@@ -1820,6 +1906,19 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       const message = `Divine Intervention triggered for ${savedColor}: check prevented${data?.pawnSquare ? `, pawn spawned at ${data.pawnSquare}` : ''}.`;
       appendCombatLog({ type: 'effect', text: message });
       setPendingMoveError(message);
+      setActiveVisualArcana({
+        arcanaId: 'divine_intervention',
+        params: {
+          square: data?.pawnSquare || null,
+          pawnSquare: data?.pawnSquare || null,
+          kingFrom: data?.kingFrom || null,
+          kingTo: data?.kingTo || null,
+        },
+      });
+      const clearVfx = setTimeout(() => {
+        setActiveVisualArcana((prev) => (prev?.arcanaId === 'divine_intervention' ? null : prev));
+      }, 1800);
+      timeoutsRef.current.push(clearVfx);
       const timeout = setTimeout(() => setPendingMoveError(''), 3200);
       timeoutsRef.current.push(timeout);
     };
@@ -2201,9 +2300,19 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   );
 
   const cinematicMotionBySquare = useMemo(() => {
-    if (!activeVisualArcana?.arcanaId) return new Map();
-    const params = activeVisualArcana.params || {};
     const squares = new Map();
+    const activeOverdrive = gameState?.activeEffects?.edgerunnerOverdrive;
+    if (activeOverdrive?.active && activeOverdrive.currentSquare) {
+      squares.set(activeOverdrive.currentSquare, {
+        active: true,
+        profile: 'overdrive',
+        intensity: 0.24,
+        phase: (activeOverdrive.currentSquare.charCodeAt(0) * 13 + parseInt(activeOverdrive.currentSquare[1] || '1', 10) * 17) % 31,
+      });
+    }
+
+    if (!activeVisualArcana?.arcanaId) return squares;
+    const params = activeVisualArcana.params || {};
     const addSquare = (sq, profile, intensity = 0.18) => {
       if (!sq || typeof sq !== 'string') return;
       if (!squares.has(sq)) {
@@ -2221,18 +2330,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       if (Array.isArray(params.dashPath)) {
         params.dashPath.forEach((sq, i) => addSquare(sq, 'overdrive', Math.max(0.14, 0.2 - i * 0.02)));
       }
-    } else if (activeVisualArcana.arcanaId === 'breaking_point') {
-      addSquare(params.targetSquare || params.square || params.shatteredSquare, 'fracture', 0.22);
-      if (Array.isArray(params.displaced)) {
-        params.displaced.forEach((d) => {
-          addSquare(d?.from, 'fracture', 0.14);
-          addSquare(d?.to, 'fracture', 0.16);
-        });
-      }
     }
 
     return squares;
-  }, [activeVisualArcana]);
+  }, [activeVisualArcana, gameState?.activeEffects?.edgerunnerOverdrive]);
 
   // Helper: parse FEN into pieces array (no uid yet)
   const parseFenPieces = (fen) => {
@@ -2277,9 +2378,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (!nextRenderFen) return;
     if (isReplayMode) return;
     if (isCardAnimationPlaying) return;
+
+    // Keep board state visually frozen while a cutscene lock is active.
+    // This prevents mid-cutscene pops from server updates (for example Execution).
     if (boardVisualLockedForCutscene) return;
+
     setRenderFen(nextRenderFen);
-  }, [gameState?.displayFen, gameState?.fen, isCardAnimationPlaying, isReplayMode, boardVisualLockedForCutscene]);
+  }, [gameState?.displayFen, gameState?.fen, isCardAnimationPlaying, isReplayMode, activeVisualArcana?.arcanaId]);
 
   useEffect(() => {
     if (!isReplayMode) return;
@@ -2291,7 +2396,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   }, [isReplayMode, replayFrames, replayIndex]);
 
   useEffect(() => {
-    if (!isReplayMode || replayFrames.length === 0) return;
+    if (!isReplayMode || replayFrames.length === 0) return undefined;
 
     const prevIndex = prevReplayIndexRef.current;
     const nextIndex = replayIndex;
@@ -2691,8 +2796,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           chess={chess}
           myColor={myColor}
           visionMoves={visionMoves}
-          highlightedSquares={highlightedSquares}
-          highlightColor={highlightColor}
+          highlightedSquares={boardHighlightedSquares}
+          highlightColor={boardHighlightColor}
           highlightedArcana={highlightedArcana}
         />
         <group>
@@ -2700,6 +2805,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
             if (pendingReviveSquareSet.has(p.square)) return null;
             const studioMotion = studioPieceMotions[p.square] || null;
             const controlledByMe = mindControlledEntry?.square === p.square;
+            const overdrivenPiece = overdriveActiveSquare === p.square;
             return (
               <ChessPiece
                 key={p.uid}
@@ -2708,7 +2814,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                 targetPosition={p.targetPosition}
                 square={p.square}
                 isMirrorDuplicate={mirrorImageSquares.has(p.square)}
-                accentColor={controlledByMe ? '#b48ead' : null}
+                accentColor={controlledByMe ? '#b48ead' : (overdrivenPiece ? '#5eff98' : null)}
                 cutsceneMotion={studioMotion || cinematicMotionBySquare.get(p.square) || null}
                 onClickSquare={(sq) => {
                   const fileIndex = 'abcdefgh'.indexOf(sq[0]);
@@ -2868,7 +2974,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         />
       )}
 
-      {!isReplayMode && (
+      {!isReplayMode && (!boardVisualLockedForCutscene || !!cardReveal) && (
         <ArcanaSidebar
           myArcana={myArcana}
           usedArcanaIds={usedArcanaIds}
@@ -3431,6 +3537,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
         <div style={styles.timeFreezeMonochromeOverlay} />
       )}
 
+      {overdriveIsActive && (
+        <div style={styles.edgerunnerMonochromeOverlay} />
+      )}
+
       {cardReveal && !showMenu && !isReplayMode && (
         <CardRevealAnimation
           arcana={cardReveal.arcana}
@@ -3440,24 +3550,26 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           stayUntilClick={cardReveal.stayUntilClick}
           isHidden={cardReveal.isHidden}
           hideDurationMs={cardReveal.hideDurationMs}
-          onDismiss={() => {
-            const shouldDelayRevealAck = DELAYED_REVEAL_ACK_CARDS.has(cardReveal?.arcana?.id);
-            // Inform server that the reveal animation finished so reveal-dependent
-            // effects (AI moves, VFX sequencing) can proceed server-side.
-            if (shouldDelayRevealAck) {
-              pendingRevealAckRef.current = cardReveal.playerId;
-            } else {
-              try {
-                socket.emit('arcanaRevealComplete', { playerId: cardReveal.playerId });
-              } catch (e) {}
-            }
-            setCardReveal(null);
-            // Unlock interactions after draw/use animation ends, unless a cutscene is still running.
-            if (!shouldDelayRevealAck) {
-              cardAnimationLockRef.current = false;
-              setIsCardAnimationPlaying(false);
-            }
-          }}
+              onDismiss={() => {
+                const shouldDelayRevealAck = CUTSCENE_BOARD_LOCK_CARDS.has(cardReveal?.arcana?.id);
+                // If this card requires a delayed reveal ACK, record intent here
+                // but don't emit the ACK yet — wait until the cutscene actually
+                // starts so we don't accidentally ACK before visuals begin.
+                if (shouldDelayRevealAck) {
+                  pendingRevealIntentRef.current = cardReveal.playerId;
+                } else {
+                  try {
+                    socket.emit('arcanaRevealComplete', { playerId: cardReveal.playerId });
+                  } catch (e) {}
+                }
+                setCardReveal(null);
+                // Always release the card animation lock so any queued arcanaTriggered
+                // events can begin playing their cutscenes. The actual reveal ACK will
+                // be promoted from `pendingRevealIntentRef` to `pendingRevealAckRef`
+                // when the corresponding cutscene begins.
+                cardAnimationLockRef.current = false;
+                setIsCardAnimationPlaying(false);
+              }}
         />
       )}
 
@@ -4812,8 +4924,8 @@ const styles = {
     gap: 12,
   },
   menuSettingLabel: {
-    fontSize: 'clamp(0.85rem, 1.8vw, 0.95rem)',
-    color: '#d6ecf6',
+    marginRight: 12,
+    color: '#d8dee9',
   },
   menuSelect: {
     padding: '8px 12px',
@@ -4946,8 +5058,16 @@ const styles = {
     inset: 0,
     pointerEvents: 'none',
     zIndex: 11,
-    backdropFilter: 'grayscale(1) contrast(1.05) saturate(0.35)',
-    background: 'rgba(210, 222, 238, 0.08)',
+    backdropFilter: 'grayscale(1) contrast(1.06) saturate(0.2)',
+    background: 'rgba(214, 220, 230, 0.1)',
+    mixBlendMode: 'screen',
+  },
+  edgerunnerMonochromeOverlay: {
+    position: 'absolute',
+    inset: 0,
+    pointerEvents: 'none',
+    zIndex: 11,
+    background: 'linear-gradient(180deg, rgba(60, 255, 130, 0.16), rgba(10, 72, 35, 0.24))',
     mixBlendMode: 'screen',
   },
   arcanaBottomPanel: {

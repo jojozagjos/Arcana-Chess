@@ -5,6 +5,10 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
   const color = accentColor || (isWhite ? '#eceff4' : '#2e3440');
   const emissive = accentColor ? '#7b4ea3' : (isWhite ? '#d8dee9' : '#1a1d28');
   const groupRef = useRef();
+  const trailSlotsRef = useRef([]);
+  const trailDataRef = useRef(Array.from({ length: 5 }, () => ({ x: 0, y: 0, z: 0, life: 0 })));
+  const previousFramePosRef = useRef([0, 0, 0]);
+  const lastTrailTickRef = useRef(0);
   // Ensure we have a valid position array to avoid slice() errors when data is missing
   const safeTarget = Array.isArray(targetPosition) && targetPosition.length === 3 ? targetPosition : [0, 0, 0];
   const currentPos = useRef(safeTarget.slice());
@@ -47,12 +51,7 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
             Math.max(0.001, Number(scale[2]) || 1),
           );
         } else if (profile === 'overdrive') {
-          y += Math.sin(t * 20 + phase) * intensity * 0.22 + intensity * 0.16;
-          x += Math.cos(t * 16 + phase) * intensity * 0.05;
-          z += Math.sin(t * 14 + phase) * intensity * 0.05;
-          groupRef.current.rotation.x = Math.sin(t * 24 + phase) * 0.06;
-          groupRef.current.rotation.z = Math.cos(t * 20 + phase) * 0.05;
-          groupRef.current.rotation.y = Math.sin(t * 18 + phase) * 0.04;
+          groupRef.current.rotation.set(0, 0, 0);
         } else if (profile === 'fracture') {
           y += Math.abs(Math.sin(t * 14 + phase)) * intensity * 0.12;
           x += Math.sin(t * 30 + phase) * intensity * 0.07;
@@ -71,6 +70,50 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
       }
 
       groupRef.current.position.set(x, y, z);
+
+      const isOverdriveTrail = Boolean(cutsceneMotion?.active && cutsceneMotion?.profile === 'overdrive');
+      const previous = previousFramePosRef.current;
+      const dx = x - previous[0];
+      const dy = y - previous[1];
+      const dz = z - previous[2];
+      const moved = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      previousFramePosRef.current = [x, y, z];
+
+      const trailData = trailDataRef.current;
+      const now = state.clock.elapsedTime;
+      const delta = lastTrailTickRef.current > 0 ? Math.min(0.05, Math.max(0, now - lastTrailTickRef.current)) : 0.016;
+      lastTrailTickRef.current = now;
+      for (let i = 0; i < trailData.length; i += 1) {
+        trailData[i].life = Math.max(0, trailData[i].life - delta * 2.6);
+      }
+
+      if (isOverdriveTrail && moved > 0.032) {
+        let slotIndex = 0;
+        let weakestLife = trailData[0].life;
+        for (let i = 1; i < trailData.length; i += 1) {
+          if (trailData[i].life < weakestLife) {
+            weakestLife = trailData[i].life;
+            slotIndex = i;
+          }
+        }
+        trailData[slotIndex] = { x: previous[0], y: previous[1] + 0.02, z: previous[2], life: 1 };
+      }
+
+      for (let i = 0; i < trailData.length; i += 1) {
+        const ghost = trailSlotsRef.current[i];
+        const entry = trailData[i];
+        if (!ghost || !entry) continue;
+        const active = entry.life > 0.01;
+        ghost.visible = active;
+        if (!active) continue;
+        ghost.position.set(entry.x - x, entry.y - y, entry.z - z);
+        ghost.traverse((node) => {
+          if (!node?.isMesh || !node.material) return;
+          node.material.transparent = true;
+          node.material.depthWrite = false;
+          node.material.opacity = Math.min(0.36, entry.life * 0.36);
+        });
+      }
     }
   });
 
@@ -91,6 +134,21 @@ export function ChessPiece({ type, isWhite, targetPosition, square, isMirrorDupl
       {type === 'b' && <BishopGeometry color={color} emissive={emissive} />}
       {type === 'q' && <QueenGeometry color={color} emissive={emissive} />}
       {type === 'k' && <KingGeometry color={color} emissive={emissive} />}
+
+      {trailDataRef.current.map((_, index) => (
+        <group
+          key={`trail-${index}`}
+          ref={(node) => { trailSlotsRef.current[index] = node; }}
+          visible={false}
+        >
+          {type === 'p' && <PawnGeometry color="#5ff59b" emissive="#24d86f" />}
+          {type === 'r' && <RookGeometry color="#5ff59b" emissive="#24d86f" />}
+          {type === 'n' && <KnightGeometry color="#5ff59b" emissive="#24d86f" isWhite={isWhite} />}
+          {type === 'b' && <BishopGeometry color="#5ff59b" emissive="#24d86f" />}
+          {type === 'q' && <QueenGeometry color="#5ff59b" emissive="#24d86f" />}
+          {type === 'k' && <KingGeometry color="#5ff59b" emissive="#24d86f" />}
+        </group>
+      ))}
 
       {isMirrorDuplicate && (
         <group position={[0, 1.02, 0]}>

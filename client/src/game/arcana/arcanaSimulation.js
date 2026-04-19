@@ -78,37 +78,17 @@ function scoreMapFragmentMove(move) {
   return score;
 }
 
-function getTopMapFragmentMoves(chess, colorChar, limit = 3) {
+function getTopMapFragmentMoves(chess, colorChar, gameState, socketId, limit = 3) {
   const opponentColor = colorChar === 'w' ? 'b' : 'w';
   const opponentMoves = getMovesForColor(chess, opponentColor);
   if (!Array.isArray(opponentMoves) || opponentMoves.length === 0) return [];
 
-  const ranked = opponentMoves.map((move) => ({
-    from: move.from,
-    to: move.to,
-    piece: move.piece,
-    captured: move.captured || null,
-    promotion: move.promotion || null,
-    san: move.san || null,
-    score: scoreMapFragmentMove(move),
-  }));
-
-  ranked.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    if (a.to !== b.to) return a.to.localeCompare(b.to);
-    return `${a.from}${a.to}`.localeCompare(`${b.from}${b.to}`);
-  });
-
-  const topBySquare = [];
-  const seen = new Set();
-  for (const move of ranked) {
-    if (seen.has(move.to)) continue;
-    seen.add(move.to);
-    topBySquare.push(move);
-    if (topBySquare.length >= limit) break;
+  // Ensure activeEffects.vision is initialized
+  if (!gameState.activeEffects.vision) {
+    gameState.activeEffects.vision = { w: null, b: null };
   }
 
-  return topBySquare;
+  return opponentMoves;
 }
 
 /**
@@ -954,7 +934,7 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         break;
 
       case 'map_fragments':
-        const topMoves = getTopMapFragmentMoves(chess, colorChar, 3);
+        const topMoves = getTopMapFragmentMoves(chess, colorChar, gameState, socketId, 3);
         const likelySquares = topMoves.map((move) => move.to);
         result.highlightSquares = likelySquares;
         result.highlightColor = '#bf616a';

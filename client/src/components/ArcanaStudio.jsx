@@ -32,6 +32,46 @@ const DEFAULT_WORLD_ANCHOR = [0, 0.075, 0];
 const EMPTY_VFX_OBJECT = {};
 const EASINGS = ['linear', 'instant', 'easeInQuad', 'easeOutQuad', 'easeInOutQuad', 'easeInCubic', 'easeOutCubic', 'easeInOutCubic', 'customBezier'];
 const TRACK_TYPES = ['camera', 'object', 'sound'];
+const STUDIO_CARD_AUDIO_DEFAULTS = {
+  time_freeze: {
+    freezeTickSoundId: '/sounds/arcana/clock_ticking.mp3',
+  },
+  edgerunner_overdrive: {
+    overdriveThemeSoundId: '/sounds/music/I_Really_Want_to_Stay in_This_Game.mp3',
+  },
+};
+const STUDIO_CARD_AUDIO_FIELDS = {
+  time_freeze: [
+    {
+      key: 'freezeTickSoundId',
+      label: 'Time Freeze Clock Loop',
+      historyLabel: 'Updated freeze clock loop',
+    },
+  ],
+  edgerunner_overdrive: [
+    {
+      key: 'overdriveThemeSoundId',
+      label: 'Edgerunner Theme Loop',
+      historyLabel: 'Updated overdrive loop',
+    },
+  ],
+};
+const STUDIO_SOUND_SUGGESTIONS = [
+  'arcana:clock_ticking',
+  'arcana:time_freeze',
+  'arcana:time_freeze_freeze',
+  'arcana:time_freeze_ambient',
+  'arcana:time_freeze_unfreeze',
+  'arcana:edgerunner_overdrive',
+  'arcana:edgerunner_overdrive_activation',
+  'arcana:edgerunner_overdrive_rush',
+  'arcana:edgerunner_overdrive_hitstop',
+  'arcana:edgerunner_overdrive_release',
+  'music:menu',
+  'music:tutorial',
+  'music:ingame',
+  '/sounds/music/I_Really_Want_to_Stay in_This_Game.mp3',
+];
 const LEGACY_CUTSCENE_CONFIGS = getAllCutsceneConfigs();
 const GAME_ARCANA_DEFINITIONS = listArcanaDefinitions();
 const RARITY_ORDER = {
@@ -400,6 +440,10 @@ function makeCardFromGameCard(gameCard, isCutscene = false, forceId = null) {
     rarity: gameCard.rarity || 'common',
     category: gameCard.category || 'utility',
     soundId: cardSoundId || null,
+    audioConfig: {
+      ...(STUDIO_CARD_AUDIO_DEFAULTS[id] || {}),
+      ...(next.meta?.audioConfig || {}),
+    },
   };
 
   if (cardSoundId && (!next.tracks?.sounds || next.tracks.sounds.length === 0)) {
@@ -680,6 +724,10 @@ function sanitizeCardForStudio(rawCard, fallbackId = 'new_card') {
       rarity: definition?.rarity || migrated.meta?.rarity || 'common',
       category: definition?.category || migrated.meta?.category || 'utility',
       soundId: definitionSoundId || migrated.meta?.soundId || null,
+      audioConfig: {
+        ...(STUDIO_CARD_AUDIO_DEFAULTS[id] || {}),
+        ...(migrated.meta?.audioConfig || {}),
+      },
     },
   };
 }
@@ -1437,6 +1485,10 @@ export function ArcanaStudio({ onBack }) {
   const screenOverlays = useMemo(
     () => getScreenOverlaySamples(selectedCard, playheadMs),
     [playheadMs, selectedCard],
+  );
+  const selectedCardAudioFields = useMemo(
+    () => STUDIO_CARD_AUDIO_FIELDS[selectedId] || [],
+    [selectedId],
   );
   const selectedCardDescription = useMemo(() => getCardDescription(selectedCard) || 'No description', [selectedCard]);
   const selectedLegacyVfx = useMemo(() => {
@@ -3114,6 +3166,37 @@ export function ArcanaStudio({ onBack }) {
             {!selectedTrack ? (
               <>
                 <p>Select a layer or moment to shape spell behavior in detail.</p>
+                {selectedCardAudioFields.length > 0 ? (
+                  <div style={{
+                    border: '1px solid rgba(126, 170, 230, 0.28)',
+                    borderRadius: 10,
+                    padding: '0.65rem',
+                    marginBottom: '0.7rem',
+                    background: 'rgba(9, 18, 30, 0.55)',
+                  }}>
+                    <div style={{ fontWeight: 700, marginBottom: '0.45rem' }}>Card Audio (Studio)</div>
+                    {selectedCardAudioFields.map((field) => (
+                      <label key={field.key}>
+                        {field.label}
+                        <input
+                          list="arcana-studio-sound-ids"
+                          value={selectedCard?.meta?.audioConfig?.[field.key] || ''}
+                          onChange={(event) => updateSelectedCard((card) => ({
+                            ...card,
+                            meta: {
+                              ...(card.meta || {}),
+                              audioConfig: {
+                                ...(card.meta?.audioConfig || {}),
+                                [field.key]: normalizeStudioSoundId(event.target.value),
+                              },
+                            },
+                          }), field.historyLabel)}
+                        />
+                      </label>
+                    ))}
+                    <div className="graph-caption">Card-level audio options appear only for cards that use runtime loops. Timeline audio remains separate.</div>
+                  </div>
+                ) : null}
                 <label>
                   Description
                   <div className="description-readonly">{selectedCardDescription}</div>
@@ -3374,9 +3457,22 @@ export function ArcanaStudio({ onBack }) {
                       <>
                         <label className="sound-id-field">
                           Sound ID
-                          <input value={selectedKey.soundId || ''} onChange={(event) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { soundId: normalizeStudioSoundId(event.target.value) })} />
+                          <input
+                            list="arcana-studio-sound-ids"
+                            value={selectedKey.soundId || ''}
+                            onChange={(event) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { soundId: normalizeStudioSoundId(event.target.value) })}
+                          />
                         </label>
-                        <div className="graph-caption">Tip: use arcana:execution, music:menu, move, capture, or /sounds/... path.</div>
+                        <datalist id="arcana-studio-sound-ids">
+                          {[...new Set([
+                            ...STUDIO_SOUND_SUGGESTIONS,
+                            ...Object.keys(soundManager?.sounds || {}),
+                            ...Object.keys(soundManager?.musicTracks || {}),
+                          ])].map((soundId) => (
+                            <option key={soundId} value={soundId} />
+                          ))}
+                        </datalist>
+                        <div className="graph-caption">Tip: use arcana:* for SFX, music:* for ambient songs, or any /sounds/... path.</div>
                         <label>
                           Volume
                           <StudioNumberInput step="0.05" value={selectedKey.volume ?? 1} fallback={1} onChange={(nextValue) => updateKeyField('sound', selectedTrack.id, selectedKey.id, { volume: Number(nextValue) || 1 })} />

@@ -808,6 +808,24 @@ test('Time Travel rewinds two full moves when enough history exists', () => {
   assertEqual(gameState.chess.fen(), openingFen, 'Board should rewind two full moves to the opening position');
 });
 
+test('Time Travel rebuilds pawn first-move rights from raw FEN history', () => {
+  const gameState = createMockGameState();
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'time_travel', name: 'Time Travel' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const openingFen = gameState.chess.fen();
+  gameState.moveHistory = [openingFen];
+  gameState.pawnFirstMoveConsumed = { w: { a2: true }, b: {} };
+  gameState.chess.move('a4');
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'time_travel', params: {} }], null, null);
+
+  assertEqual(applied.length, 1, 'Time Travel should apply with available history');
+  assertEqual(gameState.chess.fen(), openingFen, 'Board should rewind back before the pawn move');
+  assertEqual(Boolean(gameState.pawnFirstMoveConsumed?.w?.a2), false, 'a2 should regain first-move status after rewind');
+});
+
 test('Promotion Ritual rejects non-pawn target', () => {
   const gameState = createMockGameState();
   const socketId = 'player1';
@@ -830,7 +848,8 @@ test('Promotion Ritual promotes a valid pawn target', () => {
   const promoted = gameState.chess.get('e7');
 
   assertEqual(applied.length, 1, 'Promotion Ritual should apply on valid pawn target');
-  assert(promoted && promoted.type === 'q' && promoted.color === 'w', 'Pawn should be promoted to a white queen');
+  assert(promoted && promoted.type === 'p' && promoted.color === 'w', 'Pawn should remain until reveal finalization');
+  assertEqual(gameState.activeEffects?.pendingPromotionRitual?.targetSquare, 'e7', 'Promotion Ritual should queue deferred mutation for finalizeReveal');
 });
 
 test('Breaking Point does not displace pawns onto back rank', () => {

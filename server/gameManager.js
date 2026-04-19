@@ -21,6 +21,8 @@ const logger = {
 
 // Game timing constants (milliseconds)
 const REVEAL_ACK_TIMEOUT_MS = 5000;
+const REVEAL_ACK_TIMEOUT_CUTSCENE_MS = 20000;
+const AI_POST_CUTSCENE_DELAY_MS = 3000;
 const ACTION_TTL_MS = 10000;
 const CURSED_REMOVAL_ANIMATION_MS = 220;
 
@@ -593,10 +595,12 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       mindControlExtraMove: null,
       promotionRitual: { w: null, b: null },
       pendingExecution: null,
+      pendingPromotionRitual: null,
       enPassantMaster: { w: false, b: false }, // enhanced en passant
       temporalEcho: null,  // { pattern, color } for repeating last move
       chainLightning: { w: false, b: false }, // next capture destroys adjacent enemies
       castleBroken: { w: 0, b: 0 },           // prevents castling (turn counter, 0 = inactive)
+      edgerunnerOverdrive: null,
     },
     moveHistory: [],  // for time_travel
     rematchVotes: {},  // socketId -> boolean (true = voted, false = left/declined)
@@ -776,6 +780,7 @@ export class GameManager {
     gameState.pendingReveal = null;
 
     const chess = gameState.chess;
+    let deferredBoardMutationApplied = false;
 
     // Resolve deferred Execution board mutation after reveal/cutscene completion.
     const pendingExecution = gameState.activeEffects?.pendingExecution;
@@ -783,9 +788,43 @@ export class GameManager {
       const target = chess.get(pendingExecution.targetSquare);
       if (target && target.type !== 'k') {
         chess.remove(pendingExecution.targetSquare);
+        deferredBoardMutationApplied = true;
       }
       if (gameState.activeEffects) {
         gameState.activeEffects.pendingExecution = null;
+      }
+    }
+
+    // Resolve deferred Promotion Ritual board mutation after reveal/cutscene completion.
+    const pendingPromotion = gameState.activeEffects?.pendingPromotionRitual;
+    if (pendingPromotion?.targetSquare && pendingPromotion?.moverColor) {
+      const targetSquare = pendingPromotion.targetSquare;
+      const moverColor = pendingPromotion.moverColor;
+      const pawn = chess.get(targetSquare);
+      if (pawn && pawn.type === 'p' && pawn.color === moverColor) {
+        chess.remove(targetSquare);
+        chess.put({ type: 'q', color: moverColor }, targetSquare);
+        deferredBoardMutationApplied = true;
+      }
+      gameState.activeEffects.promotionRitual = gameState.activeEffects.promotionRitual || {};
+      gameState.activeEffects.promotionRitual[moverColor] = {
+        active: true,
+        movesRemaining: 2,
+        monochrome: true,
+      };
+      if (gameState.activeEffects) {
+        gameState.activeEffects.pendingPromotionRitual = null;
+      }
+    }
+
+    // Non-turn-ending reveals can still mutate board state (Execution/Promotion Ritual).
+    // Push an immediate update so clients do not wait for a later move to see changes.
+    if (!pending?.turnShouldEnd && deferredBoardMutationApplied) {
+      for (const pid of gameState.playerIds) {
+        if (!pid.startsWith('AI-')) {
+          const personalised = this.serialiseGameStateForViewer(gameState, pid);
+          this.io.to(pid).emit('gameUpdated', personalised);
+        }
       }
     }
 
@@ -814,6 +853,9 @@ export class GameManager {
 
     // If this is an AI game and it's now AI's turn, make the AI move
     if (gameState.aiDifficulty && gameState.status === 'ongoing') {
+      if (pending?.cutscene) {
+        await new Promise((resolve) => setTimeout(resolve, AI_POST_CUTSCENE_DELAY_MS));
+      }
       const activeChar = chess.turn();
       const humanId = gameState.playerIds.find((id) => !id.startsWith('AI-'));
       // Determine if the AI should move now (find any AI id matching activeChar)
@@ -1317,6 +1359,11 @@ export class GameManager {
         const cardDef = ARCANA_DEFINITIONS.find(card => card.id === use.arcanaId);
         return cardDef && cardDef.endsTurn === true;
       });
+
+      const includesCutsceneCard = arcanaUsed.some(use => {
+        const cardDef = ARCANA_DEFINITIONS.find(card => card.id === use.arcanaId);
+        return Boolean(cardDef?.visual?.cutscene);
+      });
       
       if (shouldEndTurn) {
         // Clear arcana used flag when turn-ending card is used
@@ -1331,17 +1378,35 @@ export class GameManager {
         if (gameState.pendingReveal.timeoutId) clearTimeout(gameState.pendingReveal.timeoutId);
         gameState.pendingReveal.playerId = socket.id;
         gameState.pendingReveal.turnShouldEnd = true;
+        gameState.pendingReveal.cutscene = includesCutsceneCard;
+        const revealTimeoutMs = includesCutsceneCard ? REVEAL_ACK_TIMEOUT_CUTSCENE_MS : REVEAL_ACK_TIMEOUT_MS;
         gameState.pendingReveal.timeoutId = setTimeout(async () => {
           try {
             await this._finalizeReveal(gameState);
           } catch (e) {
             logger.error('Error finalizing reveal (useArcana timeout):', e);
           }
-        }, REVEAL_ACK_TIMEOUT_MS);
+        }, revealTimeoutMs);
 
         // We already emitted `arcanaUsed` and `gameUpdated` above; return to caller.
         return { ok: true, appliedArcana, turnEnded: true };
       }
+
+      // Even when the card does not end turn, finalize reveal-dependent actions
+      // (deferred board mutations and any sequencing) only after reveal completion.
+      if (!gameState.pendingReveal) gameState.pendingReveal = {};
+      if (gameState.pendingReveal.timeoutId) clearTimeout(gameState.pendingReveal.timeoutId);
+      gameState.pendingReveal.playerId = socket.id;
+      gameState.pendingReveal.turnShouldEnd = false;
+      gameState.pendingReveal.cutscene = includesCutsceneCard;
+      const revealTimeoutMs = includesCutsceneCard ? REVEAL_ACK_TIMEOUT_CUTSCENE_MS : REVEAL_ACK_TIMEOUT_MS;
+      gameState.pendingReveal.timeoutId = setTimeout(async () => {
+        try {
+          await this._finalizeReveal(gameState);
+        } catch (e) {
+          logger.error('Error finalizing reveal (useArcana non-turn-ending timeout):', e);
+        }
+      }, revealTimeoutMs);
 
       return { ok: true, appliedArcana };
     }
@@ -1488,6 +1553,16 @@ export class GameManager {
       throw new Error('Illegal move');
     }
 
+    const overdriveState = gameState.activeEffects?.edgerunnerOverdrive;
+    if (overdriveState?.active && overdriveState.color === moverColor) {
+      if (candidate.from !== overdriveState.currentSquare) {
+        throw new Error('Edgerunner Overdrive: move the overdriven piece.');
+      }
+      if (candidate.captured === 'k') {
+        throw new Error('Edgerunner Overdrive cannot capture the king.');
+      }
+    }
+
     if (candidate.piece === 'p') {
       const fromRank = parseInt(candidate.from[1], 10);
       const toRank = parseInt(candidate.to[1], 10);
@@ -1601,14 +1676,6 @@ export class GameManager {
       const targetPiece = chess.get(candidate.to);
       if (targetPiece && targetPiece.type === 'k') {
         throw new Error('Divine Intervention protects the king!');
-      }
-      // Also check if move would put divine king in check
-      const tempChess = new Chess(sanitizeEdgeRankPawnsInFen(chess.fen()));
-      tempChess.move(candidate);
-      if (tempChess.inCheck()) {
-        // After move, it's opponent's turn. If they're in check, their king is threatened.
-        // opponentColor has Divine Intervention active, so block this move.
-        throw new Error('Divine Intervention prevents check on the king!');
       }
     }
 
@@ -2127,6 +2194,23 @@ export class GameManager {
       gameState.activeEffects.mindControlExtraMove = null;
     }
 
+    let hasEdgerunnerOverdrive = false;
+    const edgerunnerState = gameState.activeEffects?.edgerunnerOverdrive;
+    if (edgerunnerState?.active && edgerunnerState.color === moverColor && !result.promotion) {
+      const maxMoves = Math.max(1, Number(edgerunnerState.maxMoves || 5));
+      const movesUsed = Math.max(0, Number(edgerunnerState.movesUsed || 0)) + 1;
+      const baseRemaining = Math.max(0, Number(edgerunnerState.movesRemaining || 0) - 1);
+      const bonus = result.captured ? 1 : 0;
+      const cappedRemaining = Math.min(baseRemaining + bonus, Math.max(0, maxMoves - movesUsed));
+
+      edgerunnerState.movesUsed = movesUsed;
+      edgerunnerState.movesRemaining = cappedRemaining;
+      edgerunnerState.currentSquare = result.to;
+      edgerunnerState.captureCount = Math.max(0, Number(edgerunnerState.captureCount || 0)) + (result.captured ? 1 : 0);
+
+      hasEdgerunnerOverdrive = cappedRemaining > 0;
+    }
+
     // Double Strike and Berserker state tracking
     const dsEffect = gameState.activeEffects.doubleStrike?.[moverColor];
     const brEffect = gameState.activeEffects.berserkerRage?.[moverColor];
@@ -2177,7 +2261,7 @@ export class GameManager {
     const gameIsOver = chess.isCheckmate() || chess.isStalemate() || chess.isDraw();
 
     // If player has extra move available, don't decrement effects or switch turns
-    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage || hasPromotionRitual || hasMindControlExtraMove) && !gameIsOver) {
+    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage || hasPromotionRitual || hasMindControlExtraMove || hasEdgerunnerOverdrive) && !gameIsOver) {
       // Mark that they used their extra move opportunity
       if (hasQueensGambit) {
         gameState.activeEffects.queensGambitUsed[moverColor] = true;
@@ -2248,12 +2332,63 @@ export class GameManager {
                 ? 'doubleStrike'
                 : (hasBerserkerRage
                   ? 'berserkerRage'
-                  : (hasPromotionRitual ? 'promotionRitual' : 'mindControl'))),
+                  : (hasPromotionRitual
+                    ? 'promotionRitual'
+                    : (hasMindControlExtraMove ? 'mindControl' : 'edgerunnerOverdrive')))),
             square: result.to,
           });
         }
       }
       return { gameState: this.serialiseGameState(gameState), appliedArcana: [], extraMove: true };
+    }
+
+    // End of overdrive sequence: snap the piece back to its starting square.
+    if (edgerunnerState?.active && edgerunnerState.color === moverColor) {
+      const currentSquare = edgerunnerState.currentSquare;
+      const startSquare = edgerunnerState.startSquare;
+      const safeBackRankPawnType = (sq, type) => {
+        if (type !== 'p' || !sq || typeof sq !== 'string') return type;
+        const rank = parseInt(sq[1], 10);
+        if (rank === 1 || rank === 8) return 'n';
+        return type;
+      };
+      if (currentSquare && startSquare && currentSquare !== startSquare) {
+        const overdrivePiece = chess.get(currentSquare);
+        if (overdrivePiece && overdrivePiece.color === moverColor && !chess.get(startSquare)) {
+          const fenBeforeSnapback = chess.fen();
+          const removedPiece = chess.remove(currentSquare);
+          if (!removedPiece) {
+            safeLoadFen(chess, fenBeforeSnapback);
+          }
+          const pieceToRestore = removedPiece
+            ? { ...removedPiece, type: safeBackRankPawnType(startSquare, removedPiece.type) }
+            : null;
+          const restored = pieceToRestore ? chess.put(pieceToRestore, startSquare) : false;
+          if (!restored) {
+            safeLoadFen(chess, fenBeforeSnapback);
+            if (!chess.get(currentSquare) && removedPiece) {
+              chess.put({ ...removedPiece, type: safeBackRankPawnType(currentSquare, removedPiece.type) }, currentSquare);
+            }
+          }
+        } else if (!chess.get(startSquare) && edgerunnerState.pieceType) {
+          // Fail-safe: if the tracked piece vanished due to edge-case mutation,
+          // restore it to the original square so Overdrive never deletes a piece.
+          const restoreType = safeBackRankPawnType(startSquare, edgerunnerState.pieceType);
+          const restored = chess.put({ type: restoreType, color: moverColor }, startSquare);
+          if (!restored && currentSquare) {
+            const fallbackPiece = chess.get(currentSquare);
+            if (fallbackPiece && fallbackPiece.color === moverColor) {
+              const fenBeforeFallback = chess.fen();
+              chess.remove(currentSquare);
+              const fallbackType = safeBackRankPawnType(startSquare, fallbackPiece.type);
+              if (!chess.put({ ...fallbackPiece, type: fallbackType }, startSquare)) {
+                safeLoadFen(chess, fenBeforeFallback);
+              }
+            }
+          }
+        }
+      }
+      gameState.activeEffects.edgerunnerOverdrive = null;
     }
 
     // No extra move — now decrement turn-based effects and check for game end
@@ -2311,59 +2446,163 @@ export class GameManager {
 
       const attackerColor = checkedColor === 'w' ? 'b' : 'w';
       const attackers = getMovesForColor(chess, attackerColor).filter((move) => move.to === kingSquare && move.from);
-      const lineAttacker = attackers.find((move) => {
-        const fromFile = move.from.charCodeAt(0) - 97;
-        const fromRank = parseInt(move.from[1], 10);
-        const kingFile = kingSquare.charCodeAt(0) - 97;
+      if (!attackers.length) return false;
+
+      const attemptKingJumpRescue = () => {
+        const legalKingMoves = getMovesForColor(chess, checkedColor)
+          .filter((move) => move.from === kingSquare)
+          .filter((move) => move.piece === 'k')
+          .filter((move) => move.to && move.to.length === 2);
+
+        if (!legalKingMoves.length) return false;
+
         const kingRank = parseInt(kingSquare[1], 10);
-        const fileDelta = Math.sign(kingFile - fromFile);
-        const rankDelta = Math.sign(kingRank - fromRank);
+        const prefersBackward = (move) => {
+          const toRank = parseInt(move.to[1], 10);
+          return checkedColor === 'w' ? toRank < kingRank : toRank > kingRank;
+        };
+
+        const prioritizedMoves = [
+          ...legalKingMoves.filter(prefersBackward),
+          ...legalKingMoves.filter((move) => !prefersBackward(move)),
+        ];
+
+        for (const move of prioritizedMoves) {
+          const fenBefore = chess.fen();
+          const kingTo = move.to;
+          const occupant = chess.get(kingTo);
+          if (occupant && occupant.color === checkedColor) continue;
+          if (occupant && occupant.type === 'k') continue;
+
+          chess.remove(kingSquare);
+          if (occupant) chess.remove(kingTo);
+          const placedKing = chess.put({ type: 'k', color: checkedColor }, kingTo);
+          if (!placedKing) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          const spawnRank = parseInt(kingSquare[1], 10);
+          const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
+            || (checkedColor === 'b' && spawnRank === 1);
+          const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
+          const spawnPlaced = chess.put({ type: blockerType, color: checkedColor }, kingSquare);
+          if (!spawnPlaced) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          const stillInCheck = typeof chess.isCheck === 'function'
+            ? chess.isCheck()
+            : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
+          if (stillInCheck) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('divineIntervention', {
+                savedPlayer: checkedColor,
+                pawnSquare: kingSquare,
+                spawnedPiece: blockerType,
+                kingFrom: kingSquare,
+                kingTo,
+              });
+            }
+          }
+          return true;
+        }
+
+        return false;
+      };
+
+      if (attemptKingJumpRescue()) return true;
+
+      const getLineBlockSquares = (attackerSquare, kingSq) => {
+        const fromFile = attackerSquare.charCodeAt(0) - 97;
+        const fromRank = parseInt(attackerSquare[1], 10);
+        const kingFile = kingSq.charCodeAt(0) - 97;
+        const kingRank = parseInt(kingSq[1], 10);
         const isSameFile = fromFile === kingFile;
         const isSameRank = fromRank === kingRank;
         const isDiagonal = Math.abs(kingFile - fromFile) === Math.abs(kingRank - fromRank);
-        return isSameFile || isSameRank || isDiagonal;
-      });
-      if (!lineAttacker) return false;
+        if (!isSameFile && !isSameRank && !isDiagonal) return [];
 
-      const fromFile = lineAttacker.from.charCodeAt(0) - 97;
-      const fromRank = parseInt(lineAttacker.from[1], 10);
-      const kingFile = kingSquare.charCodeAt(0) - 97;
-      const kingRank = parseInt(kingSquare[1], 10);
-      const fileStep = Math.sign(kingFile - fromFile);
-      const rankStep = Math.sign(kingRank - fromRank);
-      if (fileStep === 0 && rankStep === 0) return false;
+        const fileStep = Math.sign(kingFile - fromFile);
+        const rankStep = Math.sign(kingRank - fromRank);
+        if (fileStep === 0 && rankStep === 0) return [];
 
-      const candidateSquares = [];
-      let file = fromFile + fileStep;
-      let rank = fromRank + rankStep;
-      while (file !== kingFile || rank !== kingRank) {
-        candidateSquares.push(`${String.fromCharCode(97 + file)}${rank}`);
-        file += fileStep;
-        rank += rankStep;
-      }
+        const squares = [];
+        let file = fromFile + fileStep;
+        let rank = fromRank + rankStep;
+        while (file !== kingFile || rank !== kingRank) {
+          squares.push(`${String.fromCharCode(97 + file)}${rank}`);
+          file += fileStep;
+          rank += rankStep;
+        }
+        return squares;
+      };
 
-      const spawnSquare = candidateSquares.find((square) => !chess.get(square));
-      if (!spawnSquare) return false;
+      const attemptDivineSpawn = (spawnSquare, { captureAttacker = false } = {}) => {
+        if (!spawnSquare) return false;
 
-      const spawnRank = parseInt(spawnSquare[1], 10);
-      const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
-        || (checkedColor === 'b' && spawnRank === 1);
-      const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
+        const fenBefore = chess.fen();
+        const spawnRank = parseInt(spawnSquare[1], 10);
+        const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
+          || (checkedColor === 'b' && spawnRank === 1);
+        const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
 
-      gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
-      chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
+        if (captureAttacker) {
+          const existing = chess.get(spawnSquare);
+          if (!existing || existing.color !== attackerColor || existing.type === 'k') return false;
+          chess.remove(spawnSquare);
+        } else if (chess.get(spawnSquare)) {
+          return false;
+        }
 
-      for (const pid of gameState.playerIds) {
-        if (!pid.startsWith('AI-')) {
-          this.io.to(pid).emit('divineIntervention', {
-            savedPlayer: checkedColor,
-            pawnSquare: spawnSquare,
-            spawnedPiece: blockerType,
-          });
+        const placed = chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
+        if (!placed) {
+          safeLoadFen(chess, fenBefore);
+          return false;
+        }
+
+        const stillInCheck = typeof chess.isCheck === 'function'
+          ? chess.isCheck()
+          : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
+
+        if (stillInCheck) {
+          safeLoadFen(chess, fenBefore);
+          return false;
+        }
+
+        gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            this.io.to(pid).emit('divineIntervention', {
+              savedPlayer: checkedColor,
+              pawnSquare: spawnSquare,
+              spawnedPiece: blockerType,
+            });
+          }
+        }
+        return true;
+      };
+
+      for (const attacker of attackers) {
+        const blockSquares = getLineBlockSquares(attacker.from, kingSquare);
+        for (const square of blockSquares) {
+          if (attemptDivineSpawn(square, { captureAttacker: false })) return true;
         }
       }
 
-      return true;
+      // Fallback for non-line checks (knight/pawn/king): capture the checking piece by spawning.
+      for (const attacker of attackers) {
+        if (attemptDivineSpawn(attacker.from, { captureAttacker: true })) return true;
+      }
+
+      return false;
     };
 
     const initialInCheck = chess.isCheck();
@@ -2571,6 +2810,7 @@ export class GameManager {
         temporalEcho: null,
         chainLightning: { w: false, b: false },
         castleBroken: { w: 0, b: 0 },
+        edgerunnerOverdrive: null,
         doubleStrikeActive: null,
         berserkerRageActive: null,
         pendingExecution: null,
@@ -2693,6 +2933,7 @@ export class GameManager {
     effects.knightOfStorms = { w: null, b: null };
     effects.berserkerRage = { w: null, b: null };
     effects.chainLightning = { w: false, b: false };
+    effects.edgerunnerOverdrive = null;
     if (!effects.promotionRitual) effects.promotionRitual = { w: null, b: null };
     
     // Decrement castle breaker turns (lasts 3 turns)

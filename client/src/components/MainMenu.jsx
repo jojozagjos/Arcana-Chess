@@ -152,16 +152,16 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
-                  <span>v1.4.1  Runtime Sync + Visual Reliability</span>
-                  <span className="update-log-date">Apr 18, 2026</span>
+                  <span>v1.4.2  Arcana Critical Fixes</span>
+                  <span className="update-log-date">Apr 19, 2026</span>
                 </div>
                 <ul className="update-log-list">
-                  <li>Time Freeze visuals now apply monochrome only when freeze is active or when your local residue lock is active.</li>
-                  <li>Necromancy and Astral Rebirth playback is now more consistent across players for shared board visuals.</li>
-                  <li>Arcana Studio runtime session IDs now include event-aware entropy to prevent repeated-play collisions.</li>
-                  <li>Studio camera scrubbing logic is no longer FPS-sensitive during forward playback.</li>
-                  <li>Divine Intervention now rolls back safely if the spawned pawn cannot resolve check.</li>
-                  <li>Right-click interaction blocking and bishop shield rendering reliability were tightened for cleaner gameplay feedback.</li>
+                  <li>Divine Intervention now resolves on actual check pressure, including improved rescue behavior and clearer trigger feedback.</li>
+                  <li>Divine Intervention card text was updated to match one-time emergency save behavior.</li>
+                  <li>Time Travel rewind now steps board states during playback at 3 second intervals instead of snapping after cutscene completion.</li>
+                  <li>Edgerunner Overdrive now uses a green monochrome screen effect while active.</li>
+                  <li>Edgerunner Overdrive now plays I Really Want to Stay in This Game during active overdrive.</li>
+                  <li>Edgerunner movement VFX now uses anime-style trailing afterimages while the overdriven piece moves.</li>
                 </ul>
               </div>
 
@@ -170,7 +170,7 @@ export function MainMenu({
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
               <span className="update-log-pill-dot" />
-              <span>v1.4.1</span>
+              <span>v1.4.2</span>
               <span className="update-log-pill-label">What's new</span>
             </button>
           )}

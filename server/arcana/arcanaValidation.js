@@ -42,8 +42,11 @@ export function validateArcanaMove(chess, move, activeEffects, moverColor) {
 
   // Pawn Rush: Pawn can move 2 squares even if already moved
   if (activeEffects.pawnRush && activeEffects.pawnRush[moverColor] && piece.type === 'p') {
-    const validMove = validatePawnRush(chess, fromSquare, toSquare, moverColor);
-    if (validMove) return validMove;
+    const startingRank = moverColor === 'w' ? '2' : '7';
+    if (fromSquare[1] === startingRank) {
+      const validMove = validatePawnRush(chess, fromSquare, toSquare, moverColor);
+      if (validMove) return validMove;
+    }
   }
 
   // Sharpshooter: Bishop can capture through blockers on diagonal
