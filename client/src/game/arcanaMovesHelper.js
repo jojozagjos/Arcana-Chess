@@ -72,13 +72,8 @@ export function getArcanaEnhancedMoves(chess, square, gameState, myColor) {
     return standardMoves;
   }
 
-  const effects = gameState.activeEffects;
-  const overdriveEntry = effects?.edgerunnerOverdrive;
-  if (overdriveEntry?.active && overdriveEntry.color === myColorCode && overdriveEntry.square !== square) {
-    return [];
-  }
-
   let customMoves = [...standardMoves];
+  const effects = gameState.activeEffects;
 
   if (controlledEntry && piece.color !== myColorCode) {
     const tempChess = cloneChessFromFen(chess);

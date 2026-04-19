@@ -1199,13 +1199,72 @@ export function simulateArcanaEffect(chess, arcanaId, params = {}, colorChar = '
         if (params.targetSquare) {
           const target = chess.get(params.targetSquare);
           if (target && target.color === colorChar && target.type !== 'k') {
+            const maxMoves = 5;
+            const dashPath = [];
+            let movesUsed = 0;
+            let remainingMoves = 1;
+            let captureCount = 0;
+            let currentSquare = params.targetSquare;
+
+            while (remainingMoves > 0 && movesUsed < maxMoves) {
+              const burstMove = pickBestOverdriveMove(chess, currentSquare, colorChar, false);
+              if (!burstMove) {
+                if (movesUsed === 0) {
+                  result.message = 'Edgerunner Overdrive: Target has no legal burst move';
+                  break;
+                }
+                break;
+              }
+
+              const burstResult = chess.move({ from: currentSquare, to: burstMove.to, promotion: 'q' });
+              if (!burstResult) {
+                if (movesUsed === 0) {
+                  result.message = 'Edgerunner Overdrive: Failed to execute burst move';
+                }
+                break;
+              }
+
+              dashPath.push(burstResult.to);
+              movesUsed += 1;
+              remainingMoves -= 1;
+              if (burstResult.captured) {
+                captureCount += 1;
+                remainingMoves = Math.min(remainingMoves + 1, maxMoves - movesUsed);
+              }
+              currentSquare = burstResult.to;
+            }
+
+            if (!dashPath.length) {
+              break;
+            }
+
+            const burstSquare = currentSquare;
+            if (burstSquare !== params.targetSquare) {
+              const snapbackPiece = chess.get(burstSquare);
+              if (!snapbackPiece || snapbackPiece.color !== colorChar) {
+                result.message = 'Edgerunner Overdrive: Failed snapback';
+                break;
+              }
+              chess.remove(burstSquare);
+              const snapbackOk = chess.put(snapbackPiece, params.targetSquare);
+              if (!snapbackOk) {
+                chess.put(snapbackPiece, burstSquare);
+                result.message = 'Edgerunner Overdrive: Failed snapback';
+                break;
+              }
+            }
+
+            const visualDashPath = burstSquare === params.targetSquare
+              ? [...dashPath]
+              : [...dashPath, params.targetSquare];
+
             result.success = true;
-            result.message = `Edgerunner Overdrive: ${target.type} is overdriven`;
+            result.message = `Edgerunner Overdrive: ${target.type} made ${movesUsed} move${movesUsed === 1 ? '' : 's'}, captured ${captureCount}, and snapped back`;
             result.visualEffect = 'edgerunner_overdrive';
             result.soundEffect = 'arcana:edgerunner_overdrive';
             result.pieceType = target.type;
             result.pieceColor = target.color;
-            result.highlightSquares = [params.targetSquare];
+            result.highlightSquares = [params.targetSquare, ...visualDashPath];
             result.highlightColor = '#44ff88';
           } else {
             result.message = 'Edgerunner Overdrive: Must target your own non-king piece';

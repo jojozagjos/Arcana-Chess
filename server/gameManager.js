@@ -576,8 +576,6 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       focusFire: { w: false, b: false },  // next capture draws extra card
       queensGambit: { w: 0, b: 0 }, // extra moves remaining
       queensGambitUsed: { w: false, b: false }, // track if extra move was used this turn
-      mindControlExtraTurn: { w: false, b: false }, // grant one immediate extra move after controlled move
-      promotionRitual: { w: null, b: null }, // { active, movesRemaining, monochrome }
       divineIntervention: { w: false, b: false },
       mirrorImages: [],   // [{ square, type, color, turnsLeft }]
       spectralMarch: { w: false, b: false },  // rook passes through friendly
@@ -590,15 +588,12 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       mindControlExtraMove: null,
       promotionRitual: { w: null, b: null },
       pendingExecution: null,
-      pendingBreakingPoint: null,
-      edgerunnerOverdrive: null,
       enPassantMaster: { w: false, b: false }, // enhanced en passant
       temporalEcho: null,  // { pattern, color } for repeating last move
       chainLightning: { w: false, b: false }, // next capture destroys adjacent enemies
       castleBroken: { w: 0, b: 0 },           // prevents castling (turn counter, 0 = inactive)
     },
     moveHistory: [],  // for time_travel
-    pendingArcanaResolutions: [], // queued board mutations to resolve after reveal/cutscene
     rematchVotes: {},  // socketId -> boolean (true = voted, false = left/declined)
   };
 }
@@ -700,7 +695,7 @@ export class GameManager {
     for (let i = 0; i < 3; i++) {
       if (gameState.status !== STATUS_ONGOING) break;
       if (chess.turn() !== aiTurnChar) break;
-      await this._settleAITurn(gameState);
+      await this.performAIMove(gameState);
       advanced = true;
     }
 
@@ -776,11 +771,6 @@ export class GameManager {
     gameState.pendingReveal = null;
 
     const chess = gameState.chess;
-    const appliedDeferredMutations = this._applyPendingArcanaResolutions(gameState);
-
-    if (appliedDeferredMutations) {
-      this.broadcastGameUpdate(gameState);
-    }
 
     // Resolve deferred Execution board mutation after reveal/cutscene completion.
     const pendingExecution = gameState.activeEffects?.pendingExecution;
@@ -791,31 +781,6 @@ export class GameManager {
       }
       if (gameState.activeEffects) {
         gameState.activeEffects.pendingExecution = null;
-      }
-    }
-
-    const pendingBreakingPoint = gameState.activeEffects?.pendingBreakingPoint;
-    if (pendingBreakingPoint?.targetSquare) {
-      const target = chess.get(pendingBreakingPoint.targetSquare);
-      if (target && target.type !== 'k') {
-        chess.remove(pendingBreakingPoint.targetSquare);
-      }
-
-      for (const displacement of Array.isArray(pendingBreakingPoint.displaced) ? pendingBreakingPoint.displaced : []) {
-        if (!displacement?.from || !displacement?.to) continue;
-        const displacedPiece = chess.get(displacement.from);
-        if (!displacedPiece || displacedPiece.type === 'k') continue;
-        if (displacedPiece.color === pendingBreakingPoint.moverColor) continue;
-        chess.remove(displacement.from);
-        if (!chess.get(displacement.to)) {
-          chess.put(displacedPiece, displacement.to);
-        } else {
-          chess.put(displacedPiece, displacement.from);
-        }
-      }
-
-      if (gameState.activeEffects) {
-        gameState.activeEffects.pendingBreakingPoint = null;
       }
     }
 
@@ -860,52 +825,6 @@ export class GameManager {
         }
       }
     }
-  }
-
-  _applyPendingArcanaResolutions(gameState) {
-    const pendingResolutions = Array.isArray(gameState.pendingArcanaResolutions)
-      ? gameState.pendingArcanaResolutions
-      : [];
-
-    if (!pendingResolutions.length) return false;
-
-    const chess = gameState.chess;
-    let boardChanged = false;
-
-    for (const resolution of pendingResolutions) {
-      if (!resolution || typeof resolution !== 'object') continue;
-
-      if (resolution.type === 'execution') {
-        const targetPiece = resolution.targetSquare ? chess.get(resolution.targetSquare) : null;
-        if (targetPiece && targetPiece.type !== 'k') {
-          chess.remove(resolution.targetSquare);
-          boardChanged = true;
-        }
-        continue;
-      }
-
-      if (resolution.type === 'breaking_point') {
-        const epicenterPiece = resolution.epicenter ? chess.get(resolution.epicenter) : null;
-        if (epicenterPiece && epicenterPiece.type !== 'k') {
-          chess.remove(resolution.epicenter);
-          boardChanged = true;
-        }
-
-        const displaced = Array.isArray(resolution.displaced) ? resolution.displaced : [];
-        for (const shift of displaced) {
-          if (!shift?.from || !shift?.to) continue;
-          if (chess.get(shift.to)) continue;
-          const moving = chess.get(shift.from);
-          if (!moving || moving.type === 'k') continue;
-          chess.remove(shift.from);
-          chess.put(moving, shift.to);
-          boardChanged = true;
-        }
-      }
-    }
-
-    gameState.pendingArcanaResolutions = [];
-    return boardChanged;
   }
 
   startMultiplayerGame(socket, payload) {
@@ -1364,16 +1283,6 @@ export class GameManager {
         throw new Error('Arcana not available or already used');
       }
 
-      const deferredResolutions = appliedArcana
-        .map((entry) => entry?.params?.pendingResolution)
-        .filter(Boolean);
-      if (deferredResolutions.length > 0) {
-        if (!Array.isArray(gameState.pendingArcanaResolutions)) {
-          gameState.pendingArcanaResolutions = [];
-        }
-        gameState.pendingArcanaResolutions.push(...deferredResolutions);
-      }
-
       // Check if arcana effects removed a king
       const arcanaKingCheck = checkForKingRemoval(chess);
       if (arcanaKingCheck.kingRemoved) {
@@ -1403,11 +1312,10 @@ export class GameManager {
         const cardDef = ARCANA_DEFINITIONS.find(card => card.id === use.arcanaId);
         return cardDef && cardDef.endsTurn === true;
       });
-      const needsRevealFinalize = appliedArcana.some((entry) => entry?.params?.deferBoardMutation);
       
-      if (shouldEndTurn || needsRevealFinalize) {
+      if (shouldEndTurn) {
         // Clear arcana used flag when turn-ending card is used
-        if (shouldEndTurn && gameState.arcanaUsedThisTurn) {
+        if (gameState.arcanaUsedThisTurn) {
           delete gameState.arcanaUsedThisTurn[socket.id];
         }
 
@@ -1417,7 +1325,7 @@ export class GameManager {
         if (!gameState.pendingReveal) gameState.pendingReveal = {};
         if (gameState.pendingReveal.timeoutId) clearTimeout(gameState.pendingReveal.timeoutId);
         gameState.pendingReveal.playerId = socket.id;
-        gameState.pendingReveal.turnShouldEnd = shouldEndTurn;
+        gameState.pendingReveal.turnShouldEnd = true;
         gameState.pendingReveal.timeoutId = setTimeout(async () => {
           try {
             await this._finalizeReveal(gameState);
@@ -1427,7 +1335,7 @@ export class GameManager {
         }, REVEAL_ACK_TIMEOUT_MS);
 
         // We already emitted `arcanaUsed` and `gameUpdated` above; return to caller.
-        return { ok: true, appliedArcana, turnEnded: shouldEndTurn };
+        return { ok: true, appliedArcana, turnEnded: true };
       }
 
       return { ok: true, appliedArcana };
@@ -1488,11 +1396,6 @@ export class GameManager {
     }) || null;
     if (mindControlledEntry && move?.from !== mindControlledEntry.square) {
       throw new Error('Mind Control: you must move the controlled piece first');
-    }
-
-    const overdriveEntry = gameState.activeEffects?.edgerunnerOverdrive;
-    if (overdriveEntry?.active && overdriveEntry.color === moverColor && move?.from !== overdriveEntry.square) {
-      throw new Error('Edgerunner Overdrive: you must move the overdriven piece first');
     }
 
     // Work with verbose moves so we can inspect captures and types
@@ -1929,21 +1832,7 @@ export class GameManager {
           };
         }
         gameState.activeEffects.mindControlled = gameState.activeEffects.mindControlled.filter((c) => c !== controlledEntry);
-        gameState.activeEffects.mindControlExtraTurn = gameState.activeEffects.mindControlExtraTurn || { w: false, b: false };
-        gameState.activeEffects.mindControlExtraTurn[moverColor] = true;
       }
-    }
-
-    const overdriveState = gameState.activeEffects?.edgerunnerOverdrive;
-    const overdriveMoved = Boolean(
-      overdriveState?.active
-      && overdriveState.color === moverColor
-      && overdriveState.square === result.from
-    );
-    if (overdriveMoved) {
-      overdriveState.square = result.to;
-      overdriveState.captured = !!result.captured;
-      overdriveState.movesUsed = (overdriveState.movesUsed || 0) + 1;
     }
 
     // Mirror Image: If a mirror image was captured, just remove it from tracking (no penalty)
@@ -2211,17 +2100,9 @@ export class GameManager {
     const hasQueensGambit = gameState.activeEffects.queensGambit[moverColor] > 0 && 
                  !gameState.activeEffects.queensGambitUsed[moverColor] &&
                  result.piece === 'q'; // Queen must be the piece that moved
-    let hasMindControlExtraMove = Boolean(gameState.activeEffects?.mindControlExtraTurn?.[moverColor]);
-    const mindControlExtraMove = gameState.activeEffects?.mindControlExtraMove;
-    if (mindControlExtraMove?.color === moverColor && mindControlExtraMove.pending) {
-      hasMindControlExtraMove = true;
-      gameState.activeEffects.mindControlExtraMove = null;
-    }
 
-    // Promotion Ritual grants 2 immediate board moves after the promotion resolves.
-    // Consume one charge per board move and keep the turn while charges remain.
     let hasPromotionRitual = false;
-    const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor] || null;
+    const promotionRitualState = gameState.activeEffects?.promotionRitual?.[moverColor];
     if (promotionRitualState?.active) {
       promotionRitualState.movesRemaining = Math.max(0, (promotionRitualState.movesRemaining || 0) - 1);
       if (promotionRitualState.movesRemaining > 0) {
@@ -2230,7 +2111,13 @@ export class GameManager {
         gameState.activeEffects.promotionRitual[moverColor] = null;
       }
     }
-    const hasPromotionRitualExtraMove = hasPromotionRitual;
+
+    let hasMindControlExtraMove = false;
+    const mindControlExtraMove = gameState.activeEffects?.mindControlExtraMove;
+    if (mindControlExtraMove?.color === moverColor && mindControlExtraMove.pending) {
+      hasMindControlExtraMove = true;
+      gameState.activeEffects.mindControlExtraMove = null;
+    }
 
     // Double Strike and Berserker state tracking
     const dsEffect = gameState.activeEffects.doubleStrike?.[moverColor];
@@ -2278,13 +2165,11 @@ export class GameManager {
     // Check if Berserker Rage is active and not yet used second capture
     const hasBerserkerRage = brEffect?.active && !brEffect.usedSecondKill && gameState.activeEffects.berserkerRageActive?.color === moverColor && !result.promotion;
 
-    const hasEdgerunnerOverdrive = overdriveMoved && !!result.captured && !result.promotion;
-
     // Only grant extra move if the game is not over (checkmate/stalemate)
     const gameIsOver = chess.isCheckmate() || chess.isStalemate() || chess.isDraw();
 
     // If player has extra move available, don't decrement effects or switch turns
-  if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage || hasPromotionRitual || hasPromotionRitualExtraMove || hasMindControlExtraMove || hasEdgerunnerOverdrive) && !gameIsOver) {
+    if ((hasQueensGambit || hasDoubleStrike || hasBerserkerRage || hasPromotionRitual || hasMindControlExtraMove) && !gameIsOver) {
       // Mark that they used their extra move opportunity
       if (hasQueensGambit) {
         gameState.activeEffects.queensGambitUsed[moverColor] = true;
@@ -2330,13 +2215,6 @@ export class GameManager {
           }
         }
       }
-      if (hasEdgerunnerOverdrive && overdriveState) {
-        overdriveState.extraTurns = (overdriveState.extraTurns || 0) + 1;
-      }
-      if (hasMindControlExtraMove && gameState.activeEffects?.mindControlExtraTurn) {
-        // Consume the one-time mind-control bonus turn immediately.
-        gameState.activeEffects.mindControlExtraTurn[moverColor] = false;
-      }
       
       // chess.move() already swapped the active color in the FEN. We need to
       // swap it BACK so the same player can make their extra move. Without this,
@@ -2362,28 +2240,13 @@ export class GameManager {
                 ? 'doubleStrike'
                 : (hasBerserkerRage
                   ? 'berserkerRage'
-                  : ((hasPromotionRitual || hasPromotionRitualExtraMove)
-                    ? 'promotionRitual'
-                    : (hasMindControlExtraMove ? 'mindControl' : 'edgerunnerOverdrive')))),
+                  : (hasPromotionRitual ? 'promotionRitual' : 'mindControl'))),
             square: result.to,
           });
         }
       }
       return { gameState: this.serialiseGameState(gameState), appliedArcana: [], extraMove: true };
     }
-
-      if (overdriveMoved && overdriveState?.originSquare && overdriveState.square && overdriveState.square !== overdriveState.originSquare) {
-        const snapPiece = chess.get(overdriveState.square);
-        if (snapPiece && snapPiece.color === moverColor) {
-          chess.remove(overdriveState.square);
-          chess.put(snapPiece, overdriveState.originSquare);
-          result.to = overdriveState.originSquare;
-          if (gameState.lastMove) {
-            gameState.lastMove.to = overdriveState.originSquare;
-          }
-        }
-        gameState.activeEffects.edgerunnerOverdrive = null;
-      }
 
     // No extra move — now decrement turn-based effects and check for game end
     this.decrementEffects(gameState);
@@ -2474,32 +2337,13 @@ export class GameManager {
       const spawnSquare = candidateSquares.find((square) => !chess.get(square));
       if (!spawnSquare) return false;
 
-      const beforeFen = chess.fen();
       const spawnRank = parseInt(spawnSquare[1], 10);
       const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
         || (checkedColor === 'b' && spawnRank === 1);
       const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
 
-      try {
-        chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
-      } catch (err) {
-        try {
-          safeLoadFen(chess, beforeFen);
-        } catch (_) {}
-        return false;
-      }
-
-      const stillInCheckAfterSpawn = typeof chess.isCheck === 'function'
-        ? chess.isCheck()
-        : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
-      if (stillInCheckAfterSpawn) {
-        try {
-          safeLoadFen(chess, beforeFen);
-        } catch (_) {}
-        return false;
-      }
-
       gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
+      chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
 
       for (const pid of gameState.playerIds) {
         if (!pid.startsWith('AI-')) {
@@ -2701,8 +2545,6 @@ export class GameManager {
         poisonTouch: { w: false, b: false },
         queensGambit: { w: 0, b: 0 },
         queensGambitUsed: { w: false, b: false },
-        mindControlExtraTurn: { w: false, b: false },
-        promotionRitual: { w: null, b: null },
         focusFire: { w: false, b: false },
         divineIntervention: { w: false, b: false },
         mirrorImages: [],
@@ -2860,22 +2702,6 @@ export class GameManager {
     // Clear Queen's Gambit used flags when counter reaches 0
     if (effects.queensGambit.w === 0) effects.queensGambitUsed.w = false;
     if (effects.queensGambit.b === 0) effects.queensGambitUsed.b = false;
-
-    effects.mindControlExtraTurn = effects.mindControlExtraTurn || { w: false, b: false };
-    effects.mindControlExtraTurn.w = false;
-    effects.mindControlExtraTurn.b = false;
-
-    // Promotion Ritual should not persist beyond the owner's turn sequence.
-    effects.promotionRitual = effects.promotionRitual || { w: null, b: null };
-    for (const c of ['w', 'b']) {
-      const ritual = effects.promotionRitual[c];
-      if (!ritual) continue;
-      const exhausted = !ritual.active || !Number.isFinite(ritual.movesRemaining) || ritual.movesRemaining <= 0;
-      const ownerTurnPassed = currentTurn !== c;
-      if (exhausted || ownerTurnPassed) {
-        effects.promotionRitual[c] = null;
-      }
-    }
     
     // Expire shields: a shield set by color C should persist through the opponent's
     // turn (so C's piece is protected) and clear once it's C's turn again.

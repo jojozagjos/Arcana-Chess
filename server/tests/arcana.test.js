@@ -842,9 +842,7 @@ test('Breaking Point does not displace pawns onto back rank', () => {
   const applied = applyArcana(socketId, gameState, [{ arcanaId: 'breaking_point', params: { targetSquare: 'd6' } }], null, null);
 
   assertEqual(applied.length, 1, 'Breaking Point should apply on a valid enemy target');
-  assert(gameState.chess.get('d6'), 'Epicenter target should remain until reveal finalization');
-  const pending = gameState.activeEffects?.pendingBreakingPoint;
-  assert(pending && pending.targetSquare === 'd6', 'Breaking Point should stage deferred resolution data');
+  assert(!gameState.chess.get('d6'), 'Epicenter target should be removed');
 
   const pawnAtD7 = gameState.chess.get('d7');
   assert(pawnAtD7 && pawnAtD7.type === 'p' && pawnAtD7.color === 'b', 'Adjacent pawn should remain in place when displacement would land on back rank');

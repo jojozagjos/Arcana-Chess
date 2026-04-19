@@ -24,7 +24,7 @@ function safeDispose(obj) {
 
 // ArcanaVisualHost mounts visual components exported from arcanaVisuals.jsx
 // It expects `effectsModule` to be an object of visual components (loaded dynamically).
-export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState, pawnShields, showFog, suppressShieldEffects = false, viewerColorCode }) {
+export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState, pawnShields, showFog, viewerColorCode }) {
   const Effects = effectsModule || {};
 
   if (!Effects) return null;
@@ -50,10 +50,6 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
   // Render persistent effects based on gameState.activeEffects
   const active = gameState?.activeEffects || {};
   const poisonedSquares = new Set((active.poisonedPieces || []).map((p) => p.square).filter(Boolean));
-  const bishopsBlessedSquares = new Set([
-    ...(Array.isArray(active?.bishopsBlessing?.w) ? active.bishopsBlessing.w : []),
-    ...(Array.isArray(active?.bishopsBlessing?.b) ? active.bishopsBlessing.b : []),
-  ].filter(Boolean));
 
   // Local instances to allow fade-out after the effect finishes
   const [instances, setInstances] = useState([]);
@@ -151,22 +147,15 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       ))}
 
       {/* Pawn shields (display for both colors if present) */}
-      {!suppressShieldEffects && pawnShields?.w && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.w.square) ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
-      {!suppressShieldEffects && pawnShields?.b && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.b.square) ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
+      {pawnShields?.w && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.w.square) ? <Effects.ShieldGlowEffect square={pawnShields.w.square} /> : null}
+      {pawnShields?.b && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.b.square) ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
       
-      {/* Iron Fortress shields - show only for currently active fortress color */}
-      {!suppressShieldEffects && Effects.ShieldGlowEffect && active.ironFortress?.w && active.ironFortressShields?.w?.map((sq, i) => (
+      {/* Iron Fortress shields - visible to both players while active */}
+      {Effects.ShieldGlowEffect && active.ironFortress?.w && active.ironFortressShields?.w?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-w-${i}`} square={sq} />
       ))}
-      {!suppressShieldEffects && Effects.ShieldGlowEffect && active.ironFortress?.b && active.ironFortressShields?.b?.map((sq, i) => (
+      {Effects.ShieldGlowEffect && active.ironFortress?.b && active.ironFortressShields?.b?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-b-${i}`} square={sq} />
-      ))}
-
-      {/* Bishop's Blessing shields - protect all currently blessed diagonal allies */}
-      {!suppressShieldEffects && Effects.ShieldGlowEffect && Array.from(bishopsBlessedSquares).map((sq, i) => (
-        !poisonedSquares.has(sq)
-          ? <Effects.ShieldGlowEffect key={`bishop-blessing-${sq}-${i}`} square={sq} />
-          : null
       ))}
     </group>
   );
