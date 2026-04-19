@@ -454,20 +454,24 @@ function getPiecesDiagonalFromBishop(chess, bishopSquare, color) {
 function syncBishopsBlessing(chess, gameState) {
   const effects = gameState?.activeEffects;
   if (!effects?.bishopsBlessing) return;
+  effects.bishopsBlessingSource = effects.bishopsBlessingSource || { w: null, b: null };
 
   for (const color of ['w', 'b']) {
     if (!Array.isArray(effects.bishopsBlessing[color])) continue;
-    const protectedSquares = [];
-    const board = chess.board();
-    for (let r = 0; r < 8; r++) {
-      for (let f = 0; f < 8; f++) {
-        const piece = board[r][f];
-        if (!piece || piece.type !== 'b' || piece.color !== color) continue;
-        const bishopSquare = String.fromCharCode(97 + f) + (8 - r);
-        protectedSquares.push(...getPiecesDiagonalFromBishop(chess, bishopSquare, color));
-      }
+    const sourceSquare = effects.bishopsBlessingSource[color];
+    if (!sourceSquare) {
+      effects.bishopsBlessing[color] = [];
+      continue;
     }
-    effects.bishopsBlessing[color] = [...new Set(protectedSquares)];
+
+    const sourcePiece = chess.get(sourceSquare);
+    if (!sourcePiece || sourcePiece.type !== 'b' || sourcePiece.color !== color) {
+      effects.bishopsBlessing[color] = [];
+      effects.bishopsBlessingSource[color] = null;
+      continue;
+    }
+
+    effects.bishopsBlessing[color] = getPiecesDiagonalFromBishop(chess, sourceSquare, color);
   }
 }
 
@@ -561,6 +565,7 @@ function createInitialGameState({ mode = 'Ascendant', playerIds, aiDifficulty, p
       ironFortress: { w: false, b: false },
       ironFortressShields: { w: [], b: [] },
       bishopsBlessing: { w: [], b: [] }, // [protected squares on diagonals]
+      bishopsBlessingSource: { w: null, b: null }, // source bishop square per color
       timeFrozen: { w: false, b: false },
       timeFreezeArcanaLock: { w: false, b: false },
       cursedSquares: [],  // [{ square, turns, setter }]
@@ -1550,7 +1555,7 @@ export class GameManager {
     }
 
     // Iron Fortress: prevent ALL pawn captures
-    if (gameState.activeEffects.ironFortress[opponentColor] && candidate.captured) {
+    if (gameState.activeEffects.ironFortress[opponentColor] === true && candidate.captured) {
       // For en passant, the captured pawn is not at candidate.to
       const capturedSquare = this.getCapturedSquare(candidate);
       const targetPiece = chess.get(capturedSquare);
@@ -1572,18 +1577,16 @@ export class GameManager {
     // sitting on a diagonal from any allied bishop.
     let blessedSquares = gameState.activeEffects.bishopsBlessing[opponentColor];
     if (Array.isArray(blessedSquares)) {
-      const dynamicBlessed = [];
-      const board = chess.board();
-      for (let r = 0; r < 8; r++) {
-        for (let f = 0; f < 8; f++) {
-          const piece = board[r][f];
-          if (!piece || piece.type !== 'b' || piece.color !== opponentColor) continue;
-          const bishopSquare = String.fromCharCode(97 + f) + (8 - r);
-          const squares = getPiecesDiagonalFromBishop(chess, bishopSquare, opponentColor);
-          dynamicBlessed.push(...squares);
+      const sourceSquare = gameState.activeEffects?.bishopsBlessingSource?.[opponentColor];
+      const sourcePiece = sourceSquare ? chess.get(sourceSquare) : null;
+      if (sourcePiece && sourcePiece.type === 'b' && sourcePiece.color === opponentColor) {
+        blessedSquares = getPiecesDiagonalFromBishop(chess, sourceSquare, opponentColor);
+      } else {
+        blessedSquares = [];
+        if (gameState.activeEffects?.bishopsBlessingSource) {
+          gameState.activeEffects.bishopsBlessingSource[opponentColor] = null;
         }
       }
-      blessedSquares = [...new Set(dynamicBlessed)];
       gameState.activeEffects.bishopsBlessing[opponentColor] = blessedSquares;
     }
 
@@ -1731,6 +1734,11 @@ export class GameManager {
       // In both cases, protection follows the piece to its new square
       myShield.square = result.to;
     }
+
+    // If the blessed bishop moved, move the blessing source with it.
+    if (result.piece === 'b' && gameState.activeEffects?.bishopsBlessingSource?.[moverColor] === result.from) {
+      gameState.activeEffects.bishopsBlessingSource[moverColor] = result.to;
+    }
     // For pawn_guard: if the guarding pawn itself is captured, the shield is broken
     if (myShield && myShield.shieldType === 'behind' && myShield.pawnSquare) {
       // If the guarding pawn moved this turn, update its tracked square and
@@ -1779,7 +1787,7 @@ export class GameManager {
       gameState.activeEffects.ironFortressShields = { w: [], b: [] };
     }
     for (const color of ['w', 'b']) {
-      if (!gameState.activeEffects.ironFortress?.[color]) {
+      if (gameState.activeEffects.ironFortress?.[color] !== true) {
         gameState.activeEffects.ironFortressShields[color] = [];
         continue;
       }
@@ -2534,7 +2542,8 @@ export class GameManager {
       gameState.activeEffects = {
         ironFortress: { w: false, b: false },
         ironFortressShields: { w: [], b: [] },
-        bishopsBlessing: { w: null, b: null },
+        bishopsBlessing: { w: [], b: [] },
+        bishopsBlessingSource: { w: null, b: null },
         timeFrozen: { w: false, b: false },
         timeFreezeArcanaLock: { w: false, b: false },
         cursedSquares: [],
@@ -2571,6 +2580,9 @@ export class GameManager {
     // Ensure ironFortressShields exists
     if (!gameState.activeEffects.ironFortressShields) {
       gameState.activeEffects.ironFortressShields = { w: [], b: [] };
+    }
+    if (!gameState.activeEffects.bishopsBlessingSource) {
+      gameState.activeEffects.bishopsBlessingSource = { w: null, b: null };
     }
     
     const effects = gameState.activeEffects;
@@ -2631,7 +2643,10 @@ export class GameManager {
 
     // Iron Fortress: keep active through opponent's turn, clear when owner regains turn
     for (const c of ['w', 'b']) {
-      if (effects.ironFortress[c] && currentTurn === c) {
+      if (effects.ironFortress[c] !== true && effects.ironFortress[c] !== false) {
+        effects.ironFortress[c] = false;
+      }
+      if (effects.ironFortress[c] === true && currentTurn === c) {
         effects.ironFortress[c] = false;
         // Also clear the shield visuals
         if (effects.ironFortressShields) {
@@ -2643,7 +2658,8 @@ export class GameManager {
     // Bishop's Blessing: same pattern - persists through opponent's turn
     for (const c of ['w', 'b']) {
       if (effects.bishopsBlessing[c] && currentTurn === c) {
-        effects.bishopsBlessing[c] = null;
+        effects.bishopsBlessing[c] = [];
+        effects.bishopsBlessingSource[c] = null;
       }
     }
 

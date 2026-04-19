@@ -15,7 +15,7 @@ function createMockGameState(fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR 
     activeEffects: {
       ironFortress: { w: false, b: false },
       ironFortressShields: { w: [], b: [] },
-      bishopsBlessing: { w: null, b: null },
+      bishopsBlessing: { w: [], b: [] },
       timeFrozen: { w: false, b: false },
       cursedSquares: [],
       sanctuaries: [],
@@ -847,6 +847,32 @@ test('Breaking Point does not displace pawns onto back rank', () => {
   const pawnAtD7 = gameState.chess.get('d7');
   assert(pawnAtD7 && pawnAtD7.type === 'p' && pawnAtD7.color === 'b', 'Adjacent pawn should remain in place when displacement would land on back rank');
   assert(!gameState.chess.get('d8'), 'No pawn should be displaced onto back rank');
+});
+
+test('Bishops Blessing shields diagonals from the blessed bishop', () => {
+  const gameState = createMockGameState('4k3/8/8/8/5P2/8/8/2B1K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'bishops_blessing', name: "Bishop's Blessing" }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'bishops_blessing', params: { targetSquare: 'c1' } }], null, null);
+
+  assertEqual(applied.length, 1, 'Bishops Blessing should apply to a friendly bishop');
+  assert(Array.isArray(gameState.activeEffects.bishopsBlessing.w), 'Blessed squares should be tracked as an array');
+  assert(gameState.activeEffects.bishopsBlessing.w.includes('f4'), 'Friendly piece on the bishop diagonal should be protected');
+});
+
+test('Edgerunner Overdrive returns to start when no capture is available', () => {
+  const gameState = createMockGameState('4k3/8/8/8/8/8/8/1N2K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'edgerunner_overdrive', name: 'Edgerunner Overdrive' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'edgerunner_overdrive', params: { targetSquare: 'b1' } }], null, null);
+
+  assertEqual(applied.length, 1, 'Edgerunner Overdrive should apply to a valid own piece');
+  assertEqual(gameState.chess.get('b1')?.type, 'n', 'Piece should return to its starting square when no capture chain exists');
+  assertEqual(gameState.chess.get('b1')?.color, 'w', 'Returned piece should keep its original color');
 });
 
 test('Chaos Theory returns from/to mapping in shuffle payload', () => {

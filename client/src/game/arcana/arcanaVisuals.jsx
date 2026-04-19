@@ -1,6 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { ChessPiece } from '../../components/ChessPiece.jsx';
 import { squareToPosition } from './sharedHelpers.jsx';
 
 // Import GPU particle system (only used components)
@@ -59,7 +60,7 @@ function useFinishFade(onComplete, fadeMs = 400) {
 // SHIELD GLOW EFFECT - Magical protective barrier
 // ============================================================================
 
-export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
+export function ShieldGlowEffect({ square, fadeOpacity = 1, color = '#4fc3f7' }) {
   if (!square) return null;
   
   const [x, , z] = squareToPosition(square);
@@ -87,11 +88,15 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
       const pulse = Math.sin(t * 4) * 0.08 + 1;
       innerRef.current.scale.set(pulse, 1, pulse);
       innerRef.current.material.opacity = (0.3 + Math.sin(t * 3) * 0.1) * fadeOpacity;
+      innerRef.current.material.color = new THREE.Color(color);
+      innerRef.current.material.emissive = new THREE.Color(color);
     }
 
     if (outerRef.current) {
       outerRef.current.rotation.y = -t * 0.3;
       outerRef.current.material.opacity = (0.15 + Math.sin(t * 2) * 0.05) * fadeOpacity;
+      outerRef.current.material.color = new THREE.Color(color);
+      outerRef.current.material.emissive = new THREE.Color(color);
     }
 
     if (runesRef.current) {
@@ -99,6 +104,8 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
         const offset = (i / 6) * Math.PI * 2;
         rune.position.y = 0.5 + Math.sin(t * 2 + offset) * 0.1;
         rune.material.opacity = (0.6 + Math.sin(t * 3 + offset) * 0.3) * fadeOpacity;
+        rune.material.color = new THREE.Color(color);
+        rune.material.emissive = new THREE.Color(color);
       });
     }
   });
@@ -109,9 +116,9 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
       <mesh ref={innerRef} position={[0, 0.5, 0]}>
         <cylinderGeometry args={[0.45, 0.45, 1, 32, 1, true]} />
         <meshStandardMaterial
-          emissive="#4fc3f7"
+          emissive={color}
           emissiveIntensity={2.5}
-          color="#81d4fa"
+          color={color}
           transparent
           depthWrite={false}
           opacity={0.35 * fadeOpacity}
@@ -123,9 +130,9 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
       <mesh ref={outerRef} position={[0, 0.5, 0]}>
         <cylinderGeometry args={[0.55, 0.55, 0.9, 6, 1, true]} />
         <meshStandardMaterial
-          emissive="#29b6f6"
+          emissive={color}
           emissiveIntensity={1.5}
-          color="#4fc3f7"
+          color={color}
           transparent
           depthWrite={false}
           opacity={0.2 * fadeOpacity}
@@ -139,9 +146,9 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
           <mesh key={i} position={pos}>
             <octahedronGeometry args={[0.08, 0]} />
             <meshStandardMaterial
-              emissive="#e1f5fe"
+              emissive={color}
               emissiveIntensity={3}
-              color="#e1f5fe"
+              color={color}
               transparent
               depthWrite={false}
               opacity={0.8 * fadeOpacity}
@@ -154,9 +161,9 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
       <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.4, 0.55, 32]} />
         <meshStandardMaterial
-          emissive="#4fc3f7"
+          emissive={color}
           emissiveIntensity={2}
-          color="#4fc3f7"
+          color={color}
           transparent
           depthWrite={false}
           opacity={0.4 * fadeOpacity}
@@ -166,6 +173,146 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1 }) {
       
       {/* GPU particle sparkles - replaces manual Sparkle components */}
       <ParticleShield color="#4fc3f7" radius={0.4} count={40} />
+    </group>
+  );
+}
+
+function interpolatePathPoints(points, progress) {
+  if (!Array.isArray(points) || points.length === 0) return [0, 0.15, 0];
+  if (points.length === 1) return points[0];
+
+  const clamped = Math.max(0, Math.min(1, progress));
+  const segmentCount = points.length - 1;
+  const scaled = clamped * segmentCount;
+  const segmentIndex = Math.min(segmentCount - 1, Math.floor(scaled));
+  const localT = scaled - segmentIndex;
+  const from = points[segmentIndex];
+  const to = points[segmentIndex + 1];
+
+  return [
+    (from[0] || 0) + ((to[0] || 0) - (from[0] || 0)) * localT,
+    (from[1] || 0) + ((to[1] || 0) - (from[1] || 0)) * localT,
+    (from[2] || 0) + ((to[2] || 0) - (from[2] || 0)) * localT,
+  ];
+}
+
+export function BreakingPointEffect({ square, targetSquare, impacted = [], onComplete }) {
+  const epicenter = targetSquare || square;
+  if (!epicenter) return null;
+
+  const [x, , z] = squareToPosition(epicenter);
+  const [progress, setProgress] = useState(0);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 650);
+
+  const impactSquares = useMemo(() => {
+    const list = Array.isArray(impacted) ? impacted : [];
+    return list.map((entry) => entry?.to || entry?.square || entry).filter(Boolean);
+  }, [impacted]);
+
+  useFrame((state, delta) => {
+    setProgress((prev) => {
+      const next = prev + delta * 0.9;
+      if (next >= 1 && !finishing) triggerFinish();
+      return Math.min(next, 1);
+    });
+  });
+
+  if (completed) return null;
+
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[8.6, 8.6]} />
+        <meshStandardMaterial emissive="#ff3355" emissiveIntensity={1.8} color="#ff4d6d" transparent depthWrite={false} opacity={(0.18 + progress * 0.16) * (1 - finishT)} />
+      </mesh>
+
+      <mesh position={[0, 0.25, 0]} rotation={[0, progress * Math.PI * 2, 0]}>
+        <torusGeometry args={[0.26 + progress * 0.5, 0.05, 12, 36]} />
+        <meshStandardMaterial emissive="#ff3355" emissiveIntensity={5} color="#ff9aa8" transparent depthWrite={false} opacity={(0.9 - progress * 0.5) * (1 - finishT)} />
+      </mesh>
+
+      <ParticleBurst position={[0, 0.22, 0]} count={64} color="#ff4d6d" size={0.08} speed={5.3} lifetime={0.55} />
+      <ParticleRing position={[0, 0.14, 0]} count={48} color="#ff9aa8" size={0.05} expandSpeed={4.2} lifetime={0.7} />
+
+      <mesh position={[0, 0.58, 0]}>
+        <sphereGeometry args={[0.15 + progress * 0.12, 16, 16]} />
+        <meshStandardMaterial emissive="#ff1744" emissiveIntensity={4} color="#ff8da1" transparent depthWrite={false} opacity={(0.8 - progress * 0.35) * (1 - finishT)} />
+      </mesh>
+
+      {impactSquares.map((sq, i) => {
+        const [ix, , iz] = squareToPosition(sq);
+        const offset = i * 0.12;
+        return (
+          <group key={`${sq}-${i}`} position={[ix - x, 0, iz - z]}>
+            <mesh position={[0, 0.08 + offset * 0.1, 0]}>
+              <ringGeometry args={[0.12 + progress * 0.08, 0.18 + progress * 0.12, 24]} />
+              <meshStandardMaterial emissive="#ff3355" emissiveIntensity={3} color="#ff6b81" transparent depthWrite={false} opacity={(0.7 - progress * 0.25) * (1 - finishT)} />
+            </mesh>
+          </group>
+        );
+      })}
+
+      <mesh position={[0, 0.95, 0]} rotation={[0, progress * 3.5, 0]}>
+        <octahedronGeometry args={[0.12 + progress * 0.04, 0]} />
+        <meshStandardMaterial emissive="#ffffff" emissiveIntensity={2} color="#ffd1d9" transparent depthWrite={false} opacity={(0.75 - progress * 0.4) * (1 - finishT)} />
+      </mesh>
+    </group>
+  );
+}
+
+export function EdgerunnerOverdriveEffect({ square, pieceType, pieceColor, dashPath = [], onComplete }) {
+  if (!square) return null;
+
+  const [progress, setProgress] = useState(0);
+  const { finishing, finishT, completed, triggerFinish } = useFinishFade(onComplete, 700);
+  const localPath = useMemo(() => {
+    const nodes = [square, ...(Array.isArray(dashPath) ? dashPath : [])].filter(Boolean);
+    return nodes.length ? nodes : [square];
+  }, [dashPath, square]);
+  const pathPositions = useMemo(() => localPath.map((sq) => {
+    const [px, , pz] = squareToPosition(sq);
+    return [px, 0.15, pz];
+  }), [localPath]);
+  const isWhite = String(pieceColor || '').toLowerCase() === 'w' || String(pieceColor || '').toLowerCase() === 'white';
+  const ghostPiece = useMemo(() => ({ type: pieceType || 'p', isWhite, targetPosition: pathPositions[0] || [0, 0.15, 0] }), [isWhite, pathPositions, pieceType]);
+
+  useFrame((state, delta) => {
+    setProgress((prev) => {
+      const next = prev + delta * 0.44;
+      if (next >= 1 && !finishing) triggerFinish();
+      return Math.min(next, 1);
+    });
+  });
+
+  if (completed) return null;
+
+  const movingPosition = interpolatePathPoints(pathPositions, Math.min(0.999, progress));
+
+  return (
+    <group>
+      <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[9.4, 9.4]} />
+        <meshStandardMaterial emissive="#00ff66" emissiveIntensity={1.8} color="#30ff71" transparent depthWrite={false} opacity={(0.16 + Math.sin(progress * Math.PI * 2) * 0.04) * (1 - finishT)} />
+      </mesh>
+
+      <ParticleBurst position={[0, 0.22, 0]} count={72} color="#31ff7e" size={0.075} speed={4.2} lifetime={0.56} />
+      <ParticleRing position={[0, 0.14, 0]} count={72} color="#00ffd2" size={0.046} expandSpeed={3.8} lifetime={0.62} />
+
+      {pathPositions.slice(1).map((pos, idx) => (
+        <mesh key={`trail-${idx}`} position={pos}>
+          <sphereGeometry args={[0.09 * (1 - idx * 0.08), 12, 12]} />
+          <meshStandardMaterial emissive="#00ff66" emissiveIntensity={2.4} color="#7dffad" transparent depthWrite={false} opacity={(0.5 - idx * 0.04) * (1 - progress * 0.4) * (1 - finishT)} />
+        </mesh>
+      ))}
+
+      <group position={movingPosition}>
+        <ChessPiece
+          {...ghostPiece}
+          accentColor="#38ff7a"
+          targetPosition={[0, 0.15, 0]}
+          cutsceneMotion={{ active: true, profile: 'overdrive', intensity: 0.22, phase: 2.4 }}
+        />
+      </group>
     </group>
   );
 }
@@ -1089,7 +1236,7 @@ function CutsceneBeatPulse({
   );
 }
 
-export function BreakingPointEffect({ square, shatteredSquare, displaced = [], beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
+function LegacyBreakingPointEffect({ square, shatteredSquare, displaced = [], beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
   const epicenter = shatteredSquare || square;
   if (!epicenter) return null;
 
@@ -1327,7 +1474,7 @@ function BreakingPointTrail({ from, to, fadeOpacity = 1 }) {
   );
 }
 
-export function EdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [], beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
+function LegacyEdgerunnerOverdriveEffect({ square, targetSquare, dashPath = [], beatTimingsMs = [], syncDurationMs = 0, fadeOpacity = 1 }) {
   const anchorSquare = square || targetSquare;
   if (!anchorSquare) return null;
 

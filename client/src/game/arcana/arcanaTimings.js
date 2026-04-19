@@ -25,9 +25,9 @@ export function getArcanaEffectDuration(arcanaId) {
     chain_lightning: 1400,
     cursed_square: 1800,
     mind_control: 2000,
-    time_travel: 2200,
-    breaking_point: 3400,
-    edgerunner_overdrive: 2200,
+    time_travel: 3800,
+    breaking_point: 3800,
+    edgerunner_overdrive: 5200,
     
     // Long effects (2s+)
     fog_of_war: 5500,

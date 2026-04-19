@@ -321,6 +321,7 @@ class SoundManager {
     this.masterVolume = Math.max(0, Math.min(1, vol));
     // Update preloaded audio element base volumes to reflect master * sfx
     Object.values(this.sounds).forEach(sound => {
+      if (!sound || typeof sound !== 'object' || typeof sound.play !== 'function') return;
       sound.volume = this.masterVolume * this.sfxVolume;
     });
     if (this.currentMusicAudio) {
@@ -331,6 +332,7 @@ class SoundManager {
   setSfxVolume(vol) {
     this.sfxVolume = Math.max(0, Math.min(1, vol));
     Object.values(this.sounds).forEach(sound => {
+      if (!sound || typeof sound !== 'object' || typeof sound.play !== 'function') return;
       sound.volume = this.masterVolume * this.sfxVolume;
     });
   }

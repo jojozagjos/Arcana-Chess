@@ -161,7 +161,8 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
           pieceType: params.pieceType || null,
           pieceColor: params.pieceColor || null,
           dashPath: Array.isArray(params.dashPath) ? params.dashPath : null,
-          displaced: Array.isArray(params.displaced) ? params.displaced : null,
+          impacted: Array.isArray(params.impacted) ? params.impacted : null,
+          displaced: Array.isArray(params.impacted) ? params.impacted : null,
           firstTo: params.firstTo || null,
           secondTo: params.secondTo || null,
           thirdTo: params.thirdTo || null,
@@ -437,6 +438,7 @@ function applyIronFortress({ chess, gameState, moverColor }) {
 }
 
 function applyBishopsBlessing({ chess, gameState, moverColor, moveResult, params }) {
+  gameState.activeEffects.bishopsBlessingSource = gameState.activeEffects.bishopsBlessingSource || { w: null, b: null };
   const targetSquare = params?.targetSquare;
   if (targetSquare) {
     const targetPiece = chess.get(targetSquare);
@@ -444,13 +446,17 @@ function applyBishopsBlessing({ chess, gameState, moverColor, moveResult, params
       // Find all friendly pieces on this bishop's diagonals
       const protectedSquares = getPiecesDiagonalFromBishop(chess, targetSquare, moverColor);
       gameState.activeEffects.bishopsBlessing[moverColor] = protectedSquares;
+      gameState.activeEffects.bishopsBlessingSource[moverColor] = targetSquare;
       return { params: { square: targetSquare, color: moverColor, protectedSquares } };
     }
   } else if (moverColor && moveResult?.piece === 'b') {
-    // If a bishop just moved, update Bishop's Blessing protection if active
-    const protectedSquares = getPiecesDiagonalFromBishop(chess, moveResult.to, moverColor);
-    gameState.activeEffects.bishopsBlessing[moverColor] = protectedSquares;
-    return { params: { square: moveResult.to, color: moverColor, protectedSquares } };
+    // If the currently blessed bishop moved, update source and protection.
+    if (gameState.activeEffects.bishopsBlessingSource[moverColor] === moveResult.from) {
+      const protectedSquares = getPiecesDiagonalFromBishop(chess, moveResult.to, moverColor);
+      gameState.activeEffects.bishopsBlessing[moverColor] = protectedSquares;
+      gameState.activeEffects.bishopsBlessingSource[moverColor] = moveResult.to;
+      return { params: { square: moveResult.to, color: moverColor, protectedSquares } };
+    }
   }
   return null;
 }
@@ -1468,19 +1474,21 @@ function remapSquareTrackedEffectsAfterShuffle(gameState, chess, shuffled) {
 
   // Bishop's Blessing tracks dynamic diagonal protection; recompute from live board.
   if (activeEffects.bishopsBlessing) {
+    activeEffects.bishopsBlessingSource = activeEffects.bishopsBlessingSource || { w: null, b: null };
     for (const color of ['w', 'b']) {
       if (!Array.isArray(activeEffects.bishopsBlessing[color])) continue;
-      const protectedSquares = [];
-      const board = chess.board();
-      for (let r = 0; r < 8; r++) {
-        for (let f = 0; f < 8; f++) {
-          const piece = board[r][f];
-          if (!piece || piece.type !== 'b' || piece.color !== color) continue;
-          const bishopSquare = String.fromCharCode(97 + f) + (8 - r);
-          protectedSquares.push(...getPiecesDiagonalFromBishop(chess, bishopSquare, color));
-        }
+      const sourceSquare = activeEffects.bishopsBlessingSource[color];
+      if (!sourceSquare) {
+        activeEffects.bishopsBlessing[color] = [];
+        continue;
       }
-      activeEffects.bishopsBlessing[color] = [...new Set(protectedSquares)];
+      const sourcePiece = chess.get(sourceSquare);
+      if (!sourcePiece || sourcePiece.type !== 'b' || sourcePiece.color !== color) {
+        activeEffects.bishopsBlessing[color] = [];
+        activeEffects.bishopsBlessingSource[color] = null;
+        continue;
+      }
+      activeEffects.bishopsBlessing[color] = getPiecesDiagonalFromBishop(chess, sourceSquare, color);
     }
   }
 }
@@ -1539,44 +1547,44 @@ function applyBreakingPoint({ chess, moverColor, params }) {
   }
   const shatteredPieceType = targetPiece.type;
   const shatteredPieceColor = targetPiece.color;
-
-  // 1) Shatter the primary target.
-  chess.remove(epicenter);
-
-  // 2) Shockwave: try to displace adjacent enemy non-king pieces one square away.
-  const displaced = [];
   const file = epicenter.charCodeAt(0) - 97;
   const rank = parseInt(epicenter[1], 10);
+  const impacted = [];
 
-  for (let df = -1; df <= 1; df++) {
-    for (let dr = -1; dr <= 1; dr++) {
-      if (df === 0 && dr === 0) continue;
+  const directions = [
+    { df: -1, dr: -1 }, { df: 0, dr: -1 }, { df: 1, dr: -1 },
+    { df: -1, dr: 0 },                     { df: 1, dr: 0 },
+    { df: -1, dr: 1 },  { df: 0, dr: 1 },  { df: 1, dr: 1 },
+  ];
 
-      const srcFile = file + df;
-      const srcRank = rank + dr;
-      if (srcFile < 0 || srcFile > 7 || srcRank < 1 || srcRank > 8) continue;
+  for (const dir of directions) {
+    const srcFile = file + dir.df;
+    const srcRank = rank + dir.dr;
+    if (srcFile < 0 || srcFile > 7 || srcRank < 1 || srcRank > 8) continue;
 
-      const srcSquare = `${String.fromCharCode(97 + srcFile)}${srcRank}`;
-      const piece = chess.get(srcSquare);
-      if (!piece || piece.color === moverColor || piece.type === 'k') continue;
+    const srcSquare = `${String.fromCharCode(97 + srcFile)}${srcRank}`;
+    const piece = chess.get(srcSquare);
+    if (!piece || piece.color === moverColor || piece.type === 'k') continue;
 
-      const dstFile = srcFile + df;
-      const dstRank = srcRank + dr;
-      if (dstFile < 0 || dstFile > 7 || dstRank < 1 || dstRank > 8) continue;
+    const dstFile = srcFile + dir.df;
+    const dstRank = srcRank + dir.dr;
+    if (dstFile < 0 || dstFile > 7 || dstRank < 1 || dstRank > 8) continue;
 
-      const dstSquare = `${String.fromCharCode(97 + dstFile)}${dstRank}`;
-      if (chess.get(dstSquare)) continue;
-      if (piece.type === 'p' && (dstRank === 1 || dstRank === 8)) continue;
+    const dstSquare = `${String.fromCharCode(97 + dstFile)}${dstRank}`;
+    if (chess.get(dstSquare)) continue;
+    if (piece.type === 'p' && (dstRank === 1 || dstRank === 8)) continue;
 
-      chess.remove(srcSquare);
-      const putOk = chess.put(piece, dstSquare);
-      if (!putOk) {
-        chess.put(piece, srcSquare);
-        continue;
-      }
-      displaced.push({ from: srcSquare, to: dstSquare, piece: piece.type });
+    chess.remove(srcSquare);
+    const putOk = chess.put(piece, dstSquare);
+    if (!putOk) {
+      chess.put(piece, srcSquare);
+      continue;
     }
+
+    impacted.push({ from: srcSquare, to: dstSquare, piece: piece.type });
   }
+
+  chess.remove(epicenter);
 
   return {
     params: {
@@ -1585,7 +1593,7 @@ function applyBreakingPoint({ chess, moverColor, params }) {
       shatteredSquare: epicenter,
       pieceType: shatteredPieceType,
       pieceColor: shatteredPieceColor,
-      displaced,
+      impacted,
     },
   };
 }
@@ -1602,13 +1610,12 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
   const maxMoves = 5;
   const dashPath = [];
   let movesUsed = 0;
-  let remainingMoves = 1;
   let captureCount = 0;
   let currentSquare = startSquare;
 
-  // Start with 1 move; each capture grants +1 move, up to maxMoves total.
-  while (remainingMoves > 0 && movesUsed < maxMoves) {
-    const burstMove = pickBestOverdriveMove(chess, currentSquare, moverColor, false);
+  // First move can be any legal move; every continuation must be a capture.
+  while (movesUsed < maxMoves) {
+    const burstMove = pickBestOverdriveMove(chess, currentSquare, moverColor, movesUsed > 0);
     if (!burstMove) {
       if (movesUsed === 0) return null;
       break;
@@ -1622,14 +1629,16 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
 
     dashPath.push(burstResult.to);
     movesUsed += 1;
-    remainingMoves -= 1;
 
     if (burstResult.captured) {
       captureCount += 1;
-      remainingMoves = Math.min(remainingMoves + 1, maxMoves - movesUsed);
     }
 
     currentSquare = burstResult.to;
+
+    if (!burstResult.captured) {
+      break;
+    }
   }
 
   if (!dashPath.length) return null;
@@ -1641,9 +1650,9 @@ function applyEdgerunnerOverdrive({ chess, moverColor, params }) {
       return null;
     }
     chess.remove(burstSquare);
-    const snapbackOk = chess.put(snapbackPiece, startSquare);
+    const snapbackOk = chess.put({ type: snapbackPiece.type, color: snapbackPiece.color }, startSquare);
     if (!snapbackOk) {
-      chess.put(snapbackPiece, burstSquare);
+      chess.put({ type: snapbackPiece.type, color: snapbackPiece.color }, burstSquare);
       return null;
     }
   }
@@ -1677,9 +1686,10 @@ function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = fa
   const legalMoves = moves.filter((m) => m?.captured !== 'k');
   if (!legalMoves.length) return null;
 
-  const candidateMoves = preferCapture
-    ? (legalMoves.filter((m) => !!m.captured).length ? legalMoves.filter((m) => !!m.captured) : legalMoves)
-    : legalMoves;
+  const captureMoves = legalMoves.filter((m) => !!m.captured);
+  if (preferCapture && captureMoves.length === 0) return null;
+
+  const candidateMoves = preferCapture ? captureMoves : legalMoves;
 
   const enemyKingSquare = findKing(chess, moverColor === 'w' ? 'b' : 'w');
   const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };

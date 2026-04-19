@@ -161,7 +161,8 @@ function getControlledPieceEntry(gameState, square, controllerColor) {
 
 export function GameScene({ gameState, initialReplayPayload, settings, ascendedInfo, lastArcanaEvent, gameEndOutcome, onBackToMenu, onSettingsChange }) {
   const MAX_STUDIO_RUNTIME_MS = 14000;
-  const CUTSCENE_BOARD_LOCK_CARDS = new Set(['execution', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive']);
+  const CUTSCENE_BOARD_LOCK_CARDS = new Set(['execution', 'promotion_ritual', 'breaking_point', 'edgerunner_overdrive', 'time_travel']);
+  const DELAYED_REVEAL_ACK_CARDS = new Set(['breaking_point', 'edgerunner_overdrive', 'time_travel']);
   const [showMenu, setShowMenu] = useState(false);
   // Panels are always visible in the in-game menu (no collapse)
   const [selectedSquare, setSelectedSquare] = useState(null);
@@ -175,6 +176,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const [cardReveal, setCardReveal] = useState(null); // { arcana, playerId }
   const [isDrawingCard, setIsDrawingCard] = useState(false);
   const [isCardAnimationPlaying, setIsCardAnimationPlaying] = useState(false); // Block card actions during animation
+  const [boardVisualLockedForCutscene, setBoardVisualLockedForCutscene] = useState(false);
   const [promotionDialog, setPromotionDialog] = useState(null); // { from, to } when promotion is pending
   const [rematchVote, setRematchVote] = useState(null); // 'voted' when player votes for rematch
   const [rematchVoteCount, setRematchVoteCount] = useState(0); // Number of players who voted for rematch
@@ -357,6 +359,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const lastSocketArcanaRef = useRef({ key: null, at: 0 });
   const reviveSequenceTokenRef = useRef(0);
   const timeTravelSequenceTokenRef = useRef(0);
+  const pendingRevealAckRef = useRef(null);
   const firedRuntimeVfxRef = useRef(new Map());
   const cardAnimationLockRef = useRef(false);
   const isCardAnimationPlayingRef = useRef(false);
@@ -866,10 +869,10 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       cards.push({ id: `${owner}-${id}`, name, duration, owner });
     };
 
-    if (effects.ironFortress?.[myColorCode]) {
+    if (effects.ironFortress?.[myColorCode] === true) {
       add('iron_fortress', 'Iron Fortress', 'Active until your turn starts');
     }
-    if (effects.ironFortress?.[opponentColorChar]) {
+    if (effects.ironFortress?.[opponentColorChar] === true) {
       add('iron_fortress', 'Iron Fortress', 'Opponent pawns are shielded', 'opponent');
     }
 
@@ -1334,6 +1337,21 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   useEffect(() => {
     isCardAnimationPlayingRef.current = isCardAnimationPlaying;
   }, [isCardAnimationPlaying]);
+
+  useEffect(() => {
+    if (!pendingRevealAckRef.current) return;
+    if (isCardAnimationPlaying || boardVisualLockedForCutscene || activeVisualArcana) return;
+
+    const pendingPlayerId = pendingRevealAckRef.current;
+    pendingRevealAckRef.current = null;
+
+    try {
+      socket.emit('arcanaRevealComplete', { playerId: pendingPlayerId });
+    } catch (e) {}
+
+    cardAnimationLockRef.current = false;
+    setIsCardAnimationPlaying(false);
+  }, [activeVisualArcana, boardVisualLockedForCutscene, isCardAnimationPlaying]);
 
   useEffect(() => {
     const handleArcanaDrawn = (data) => {
@@ -2246,7 +2264,6 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   // Counter to ensure unique UIDs for promoted/new pieces
   const uidCounterRef = useRef(0);
   const latestFenRef = useRef(gameState?.displayFen || gameState?.fen || null);
-  const [boardVisualLockedForCutscene, setBoardVisualLockedForCutscene] = useState(false);
 
   // Keep a deferred render FEN so board updates can wait for card-use animation
   const [renderFen, setRenderFen] = useState(() => gameState?.displayFen || gameState?.fen || null);
@@ -3424,15 +3441,22 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           isHidden={cardReveal.isHidden}
           hideDurationMs={cardReveal.hideDurationMs}
           onDismiss={() => {
+            const shouldDelayRevealAck = DELAYED_REVEAL_ACK_CARDS.has(cardReveal?.arcana?.id);
             // Inform server that the reveal animation finished so reveal-dependent
             // effects (AI moves, VFX sequencing) can proceed server-side.
-            try {
-              socket.emit('arcanaRevealComplete', { playerId: cardReveal.playerId });
-            } catch (e) {}
+            if (shouldDelayRevealAck) {
+              pendingRevealAckRef.current = cardReveal.playerId;
+            } else {
+              try {
+                socket.emit('arcanaRevealComplete', { playerId: cardReveal.playerId });
+              } catch (e) {}
+            }
             setCardReveal(null);
-            // Unlock interactions after draw/use animation ends
-            cardAnimationLockRef.current = false;
-            setIsCardAnimationPlaying(false);
+            // Unlock interactions after draw/use animation ends, unless a cutscene is still running.
+            if (!shouldDelayRevealAck) {
+              cardAnimationLockRef.current = false;
+              setIsCardAnimationPlaying(false);
+            }
           }}
         />
       )}

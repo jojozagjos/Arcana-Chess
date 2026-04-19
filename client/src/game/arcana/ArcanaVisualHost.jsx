@@ -136,6 +136,20 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
           : null
       ))}
 
+      {/* Bishop's Blessing diagonal shields */}
+      {active.bishopsBlessing && ['w', 'b'].flatMap((color) => (
+        Array.isArray(active.bishopsBlessing[color])
+          ? active.bishopsBlessing[color].map((sq, i) => (
+              Effects.ShieldGlowEffect ? (
+                <Effects.ShieldGlowEffect
+                  key={`bishop-${color}-${sq || 'unknown'}-${i}`}
+                  square={sq}
+                />
+              ) : null
+            ))
+          : []
+      ))}
+
       {/* Sanctuary indicators */}
       {active.sanctuaries && active.sanctuaries.map((s, i) => (
         Effects.SanctuaryIndicatorEffect ? <Effects.SanctuaryIndicatorEffect key={`sanctuary-${s.square || 'unknown'}-${i}`} square={s.square} /> : null
@@ -151,10 +165,10 @@ export function ArcanaVisualHost({ effectsModule, activeVisualArcana, gameState,
       {pawnShields?.b && Effects.ShieldGlowEffect && !poisonedSquares.has(pawnShields.b.square) ? <Effects.ShieldGlowEffect square={pawnShields.b.square} /> : null}
       
       {/* Iron Fortress shields - visible to both players while active */}
-      {Effects.ShieldGlowEffect && active.ironFortress?.w && active.ironFortressShields?.w?.map((sq, i) => (
+      {Effects.ShieldGlowEffect && active.ironFortress?.w === true && active.ironFortressShields?.w?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-w-${i}`} square={sq} />
       ))}
-      {Effects.ShieldGlowEffect && active.ironFortress?.b && active.ironFortressShields?.b?.map((sq, i) => (
+      {Effects.ShieldGlowEffect && active.ironFortress?.b === true && active.ironFortressShields?.b?.map((sq, i) => (
         <Effects.ShieldGlowEffect key={`fortress-b-${i}`} square={sq} />
       ))}
     </group>
