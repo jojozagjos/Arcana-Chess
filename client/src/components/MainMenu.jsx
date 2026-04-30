@@ -165,7 +165,7 @@ export function MainMenu({
                 </ul>
               </div>
 
-              <div className="update-log-footer">Click ✕ to collapse into a pill.</div>
+              <div className="update-log-footer">Click X to close update log.</div>
             </div>
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>

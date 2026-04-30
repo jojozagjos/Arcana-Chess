@@ -46,7 +46,7 @@ const TUTORIAL_STEPS = [
     id: 0,
     title: 'Welcome to Arcana Chess',
     description:
-      'Arcana Chess combines classic chess with powerful magical cards. This interactive tutorial teaches the core flow with guided practice. Camera controls: desktop uses right-drag to rotate, left-drag to pan, and scroll to zoom. Mobile uses one-finger drag to rotate and two-finger pinch or drag to zoom/pan.',
+      'Arcana Chess combines classic chess with powerful magical cards. This interactive tutorial teaches the core flow with guided practice. Camera controls: desktop uses right-drag to rotate, shift + left-drag to rotate as well, and scroll to zoom. Mobile uses one-finger drag to rotate and two-finger pinch or drag to zoom/pan.',
     instruction: 'Use the camera for a second, then tap Next to begin.',
     setupFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     highlightSquares: [],
@@ -186,7 +186,7 @@ const TUTORIAL_STEPS = [
     requireMove: null,
     showCards: true,
     demoCard: 'shield_pawn',
-    cardTargeting: true,
+    cardTargeting: false,
   },
   {
     id: 12,

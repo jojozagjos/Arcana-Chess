@@ -170,7 +170,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Pot of Greed',
     rarity: 'epic',
     category: 'utility',
-    description: 'Draw 3 additional cards from your deck. ("That\'s what it does")',
+    description: 'Draw 3 additional cards from your deck. ("That\'s what it do")',
     visual: { particles: true, animation: false, cutscene: false },
     endsTurn: true,
   },
