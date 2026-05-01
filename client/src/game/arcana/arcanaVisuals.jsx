@@ -736,17 +736,17 @@ export function FogOfWarEffect({ onComplete }) {
   const groupRef = useRef();
 
   const fadeInDuration = 1.2; // seconds
-  const visibleDuration = 5.5; // seconds, ensures longer full fog presence
+  const visibleDuration = 4.5; // seconds, keep visuals shorter to reduce GPU pressure
   const fadeOutDuration = 1.0; // seconds
 
   // Generate cloud particles - reduced density for readability and perf
   const clouds = useMemo(() => {
-    return [...Array(72)].map(() => ({
-      x: (Math.random() - 0.5) * 12,
-      z: (Math.random() - 0.5) * 12,
-      y: 0.08 + Math.random() * 0.95,
-      scale: 0.42 + Math.random() * 0.52,
-      speed: 0.08 + Math.random() * 0.16,
+    return [...Array(40)].map(() => ({
+      x: (Math.random() - 0.5) * 10,
+      z: (Math.random() - 0.5) * 10,
+      y: 0.08 + Math.random() * 0.82,
+      scale: 0.38 + Math.random() * 0.42,
+      speed: 0.06 + Math.random() * 0.12,
       phase: Math.random() * Math.PI * 2,
     }));
   }, []);
@@ -802,7 +802,7 @@ function FogCloud({ x, z, y, scale, speed, phase, fadeInProgress, fading, finish
 
   return (
     <mesh ref={ref} position={[x, y, z]}>
-      <sphereGeometry args={[scale, 10, 10]} />
+      <sphereGeometry args={[scale, 8, 8]} />
       <meshStandardMaterial
         emissive="#1f2d3d"
         emissiveIntensity={0.8}

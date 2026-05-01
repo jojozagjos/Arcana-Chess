@@ -2116,7 +2116,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     if (legalTargets.includes(square)) {
       // Check if this is a pawn promotion move
       const piece = chess.get(selectedSquare);
-      const isPromotion = piece?.type === 'p' && (square[1] === '1' || square[1] === '8');
+      const overdriveState = gameState?.activeEffects?.edgerunnerOverdrive;
+      const suppressPromotion = Boolean(
+        overdriveState?.active
+        && overdriveState?.currentSquare === selectedSquare
+        && piece?.type === 'p'
+      );
+      const isPromotion = piece?.type === 'p' && (square[1] === '1' || square[1] === '8') && !suppressPromotion;
       
       if (isPromotion) {
         // Show promotion dialog instead of auto-promoting to queen

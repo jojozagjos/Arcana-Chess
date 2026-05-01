@@ -868,6 +868,20 @@ test('Breaking Point does not displace pawns onto back rank', () => {
   assert(!gameState.chess.get('d8'), 'No pawn should be displaced onto back rank');
 });
 
+test('Breaking Point can push adjacent king when space exists', () => {
+  const gameState = createMockGameState('8/3k4/3r4/8/8/8/8/4K3 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'breaking_point', name: 'Breaking Point' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'breaking_point', params: { targetSquare: 'd6' } }], null, null);
+
+  assertEqual(applied.length, 1, 'Breaking Point should apply on a valid enemy target');
+  assert(!gameState.chess.get('d6'), 'Epicenter target should be removed');
+  assert(!gameState.chess.get('d7'), 'Adjacent king should leave the source square when pushed');
+  assert(gameState.chess.get('d8')?.type === 'k', 'King should occupy the pushed destination square');
+});
+
 test('Bishops Blessing shields diagonals from the blessed bishop', () => {
   const gameState = createMockGameState('4k3/8/8/8/5P2/8/8/2B1K3 w - - 0 1');
   const socketId = 'player1';

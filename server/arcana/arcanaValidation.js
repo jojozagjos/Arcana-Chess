@@ -11,7 +11,7 @@
 export function validateArcanaMove(chess, move, activeEffects, moverColor) {
   const fromSquare = move.from;
   const toSquare = move.to;
-  
+
   const piece = chess.get(fromSquare);
   if (!piece || piece.color !== moverColor) {
     return null;
@@ -21,7 +21,7 @@ export function validateArcanaMove(chess, move, activeEffects, moverColor) {
   if (activeEffects.sanctuaries && activeEffects.sanctuaries.length > 0) {
     const targetPiece = chess.get(toSquare);
     if (targetPiece) {
-      const isSanctuary = activeEffects.sanctuaries.some(s => s.square === toSquare);
+      const isSanctuary = activeEffects.sanctuaries.some((s) => s.square === toSquare);
       if (isSanctuary) {
         return null;
       }
@@ -42,11 +42,8 @@ export function validateArcanaMove(chess, move, activeEffects, moverColor) {
 
   // Pawn Rush: Pawn can move 2 squares even if already moved
   if (activeEffects.pawnRush && activeEffects.pawnRush[moverColor] && piece.type === 'p') {
-    const startingRank = moverColor === 'w' ? '2' : '7';
-    if (fromSquare[1] === startingRank) {
-      const validMove = validatePawnRush(chess, fromSquare, toSquare, moverColor);
-      if (validMove) return validMove;
-    }
+    const validMove = validatePawnRush(chess, fromSquare, toSquare, moverColor);
+    if (validMove) return validMove;
   }
 
   // Sharpshooter: Bishop can capture through blockers on diagonal
@@ -67,6 +64,24 @@ export function validateArcanaMove(chess, move, activeEffects, moverColor) {
     if (validMove) return validMove;
   }
 
+  // Edgerunner Overdrive: allow the selected piece to keep moving, including pawns.
+  // Pawns can move to the back rank without forcing promotion so they return
+  // as pawns when the sequence completes.
+  if (activeEffects.edgerunnerOverdrive?.active && activeEffects.edgerunnerOverdrive.color === moverColor) {
+    const overdrive = activeEffects.edgerunnerOverdrive;
+    if (overdrive.currentSquare === fromSquare) {
+      const overdriveMoves = chess.moves({ square: fromSquare, verbose: true }) || [];
+      const exactMove = overdriveMoves.find((m) => m.from === fromSquare && m.to === toSquare);
+      if (exactMove) {
+        return {
+          ...exactMove,
+          promotion: piece.type === 'p' ? undefined : exactMove.promotion,
+          overdriveNoPromotion: piece.type === 'p' && !!exactMove.promotion,
+        };
+      }
+    }
+  }
+
   // En Passant Master: Enhanced en passant
   if (activeEffects.enPassantMaster && activeEffects.enPassantMaster[moverColor] && piece.type === 'p') {
     const validMove = validateEnPassantMaster(chess, fromSquare, toSquare, moverColor);
@@ -84,29 +99,29 @@ function validateSpectralMarch(chess, from, to, color) {
 
   const sameFile = fromFile === toFile;
   const sameRank = fromRank === toRank;
-  
+
   if (!sameFile && !sameRank) return null;
 
   let friendlyCount = 0;
   const fileStep = sameFile ? 0 : (toFile > fromFile ? 1 : -1);
   const rankStep = sameRank ? 0 : (toRank > fromRank ? 1 : -1);
-  
+
   let currentFile = fromFile + fileStep;
   let currentRank = fromRank + rankStep;
-  
+
   while (currentFile !== toFile || currentRank !== toRank) {
     const square = String.fromCharCode(currentFile) + currentRank;
     const piece = chess.get(square);
-    
+
     if (piece) {
       if (piece.color === color) {
-        friendlyCount++;
+        friendlyCount += 1;
         if (friendlyCount > 1) return null;
       } else {
         return null;
       }
     }
-    
+
     currentFile += fileStep;
     currentRank += rankStep;
   }
@@ -114,7 +129,7 @@ function validateSpectralMarch(chess, from, to, color) {
   const destPiece = chess.get(to);
   if (destPiece && destPiece.color === color) return null;
 
-  return { from, to, piece: 'r', captured: destPiece?.type, color: color };
+  return { from, to, piece: 'r', captured: destPiece?.type, color };
 }
 
 function validatePhantomStep(chess, from, to, piece) {
@@ -152,9 +167,6 @@ function validatePawnRush(chess, from, to, color) {
   const direction = color === 'w' ? 1 : -1;
   if (toRank !== fromRank + (2 * direction)) return null;
 
-  const promotionRank = color === 'w' ? 8 : 1;
-  const isPromotion = toRank === promotionRank;
-
   const middleRank = fromRank + direction;
   const middleSquare = String.fromCharCode(fromFile) + middleRank;
   if (chess.get(middleSquare)) return null;
@@ -165,7 +177,6 @@ function validatePawnRush(chess, from, to, color) {
     to,
     piece: 'p',
     color,
-    ...(isPromotion ? { promotion: 'q' } : {}),
   };
 }
 
@@ -198,10 +209,10 @@ function validateKnightOfStorms(chess, from, to, color) {
   // Knight of Storms: can move to any square within 2-square radius (Manhattan distance <= 2)
   // This includes normal knight moves plus adjacent squares and 2 squares in any direction
   if (fileDiff > 2 || rankDiff > 2) return null;
-  if (fileDiff === 0 && rankDiff === 0) return null; // Can't stay in place
+  if (fileDiff === 0 && rankDiff === 0) return null;
 
   const destPiece = chess.get(to);
-  if (destPiece && destPiece.color === color) return null; // Can't capture own pieces
+  if (destPiece && destPiece.color === color) return null;
 
   return { from, to, piece: 'n', captured: destPiece?.type, color };
 }
@@ -211,7 +222,7 @@ function validateTemporalEcho(chess, from, to, piece, pattern) {
   if (!pattern || pattern.fileDelta === undefined || pattern.rankDelta === undefined) {
     return null;
   }
-  
+
   const fromFile = from.charCodeAt(0);
   const fromRank = parseInt(from[1]);
   const toFile = to.charCodeAt(0);
@@ -251,7 +262,6 @@ function validateTemporalEcho(chess, from, to, piece, pattern) {
 
   // If a pawn is repeating a move, prevent it from landing on its own promotion rank
   if (piece.type === 'p') {
-    const toRank = parseInt(to[1]);
     const ownPromotionRank = piece.color === 'w' ? 8 : 1;
     if (toRank === ownPromotionRank) return null;
   }

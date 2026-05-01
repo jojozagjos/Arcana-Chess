@@ -1476,6 +1476,21 @@ export class GameManager {
       return true;
     });
 
+    if (!candidate) {
+      const overdriveState = gameState.activeEffects?.edgerunnerOverdrive;
+      const movingPiece = chess.get(move.from);
+      if (overdriveState?.active && overdriveState.color === moverColor && overdriveState.currentSquare === move.from && movingPiece?.type === 'p') {
+        const overdriveMove = legalMoves.find((m) => m.from === move.from && m.to === move.to);
+        if (overdriveMove) {
+          candidate = {
+            ...overdriveMove,
+            promotion: undefined,
+            overdriveNoPromotion: true,
+          };
+        }
+      }
+    }
+
     // NEW: Check if trying to move a mind-controlled ENEMY piece
     // If not in legalMoves, but piece at 'from' is mind-controlled by current player, 
     // validate the move manually
@@ -1669,15 +1684,10 @@ export class GameManager {
       throw new Error('That piece is blessed by Bishop\'s Blessing and cannot be captured!');
     }
 
-    // Divine Intervention: prevent king from being in check or captured
-    const divineState = gameState.activeEffects.divineIntervention?.[opponentColor];
-    const divineActive = divineState === true || (typeof divineState === 'object' && divineState?.active);
-    if (divineActive) {
-      const targetPiece = chess.get(candidate.to);
-      if (targetPiece && targetPiece.type === 'k') {
-        throw new Error('Divine Intervention protects the king!');
-      }
-    }
+    // Divine Intervention is reactive and handled after the move is applied
+    // (see maybeTriggerDivineIntervention later). Do not preemptively block
+    // candidate moves here; allow the move to complete and let the reactive
+    // handler spawn blockers or rescue the king when necessary.
 
     // Double Strike: second move must be a capture by a DIFFERENT piece.
     if (gameState.activeEffects.doubleStrikeActive?.color === moverColor) {

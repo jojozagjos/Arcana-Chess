@@ -17,7 +17,7 @@ const TARGET_TYPES = Object.freeze({
   cursed_square: 'emptySquare',
   mind_control: 'enemyPiece',
   breaking_point: 'enemyPiece',
-  edgerunner_overdrive: 'pieceNoKingNoPawnWithMoves',
+  edgerunner_overdrive: 'pieceNoKingWithMoves',
 });
 
 const TARGET_LABELS = Object.freeze({

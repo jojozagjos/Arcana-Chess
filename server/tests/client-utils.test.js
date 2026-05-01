@@ -4,6 +4,7 @@
  */
 
 import { Chess } from 'chess.js';
+import { getArcanaEnhancedMoves } from '../../client/src/game/arcanaMovesHelper.js';
 
 let passed = 0, failed = 0;
 const suites = [];
@@ -163,6 +164,9 @@ suite('Arcana Moves - Pawn Rush', () => {
     const chess = new Chess('4k3/8/4p3/8/8/8/4P3/4K3 w - - 0 1');
     const pawn = chess.get('e2');
     assert(pawn && pawn.type === 'p', 'Should have pawn at e2');
+    const gameState = { activeEffects: { pawnRush: { w: true } } };
+    const moves = getArcanaEnhancedMoves(chess, 'e2', gameState, 'white');
+    assert(moves.some((move) => move.to === 'e4'), 'Pawn Rush should offer a two-square move');
   });
 
   test('Pawn Rush respects board boundaries', () => {

@@ -1538,7 +1538,7 @@ function applyBreakingPoint({ chess, moverColor, params }) {
 
     const srcSquare = `${String.fromCharCode(97 + srcFile)}${srcRank}`;
     const piece = chess.get(srcSquare);
-    if (!piece || piece.color === moverColor || piece.type === 'k') continue;
+    if (!piece || piece.color === moverColor) continue;
 
     const dstFile = srcFile + dir.df;
     const dstRank = srcRank + dir.dr;
@@ -1554,6 +1554,18 @@ function applyBreakingPoint({ chess, moverColor, params }) {
     }
     if (piece.type === 'p' && (dstRank === 1 || dstRank === 8)) {
       impacted.push({ from: srcSquare, to: srcSquare, piece: piece.type, died: false });
+      continue;
+    }
+
+    if (piece.type === 'k') {
+      chess.remove(srcSquare);
+      const putOk = chess.put(piece, dstSquare);
+      if (!putOk) {
+        chess.put(piece, srcSquare);
+        impacted.push({ from: srcSquare, to: srcSquare, piece: piece.type, died: false });
+        continue;
+      }
+      impacted.push({ from: srcSquare, to: dstSquare, piece: piece.type, died: false });
       continue;
     }
 
@@ -1597,7 +1609,7 @@ function applyEdgerunnerOverdrive({ chess, gameState, moverColor, params }) {
   if (!startSquare) return null;
 
   const startPiece = chess.get(startSquare);
-  if (!startPiece || startPiece.color !== moverColor || startPiece.type === 'k' || startPiece.type === 'p') {
+  if (!startPiece || startPiece.color !== moverColor || startPiece.type === 'k') {
     return null;
   }
 

@@ -477,6 +477,13 @@ export function createAiCore({ safeLoadFen }) {
         score += piece.color === perspectiveColor ? -30 : 18;
       }
     }
+    
+      if (gameState?.activeEffects?.fogOfWar?.[perspectiveColor]) {
+        score -= 10;
+      }
+      if (gameState?.activeEffects?.fogOfWar?.[opponentColor]) {
+        score += 6;
+      }
 
     const ownMoves = getMovesForColor(chess, perspectiveColor);
     const enemyMoves = getMovesForColor(chess, opponentColor);
@@ -762,7 +769,9 @@ export function createAiCore({ safeLoadFen }) {
     const legalMoves = Array.isArray(rootMoves) && rootMoves.length ? rootMoves : searchChess.moves({ verbose: true });
     if (!legalMoves.length) return null;
 
-    let bestMove = legalMoves[0];
+    const orderedRootMoves = orderAiMoves(legalMoves);
+
+    let bestMove = orderedRootMoves[0] || legalMoves[0];
     let bestScore = -Infinity;
     let aspirationCenter = 0;
     let aspirationWindow = 70;
@@ -772,12 +781,12 @@ export function createAiCore({ safeLoadFen }) {
       try {
         let alpha = depth > 1 ? aspirationCenter - aspirationWindow : -Infinity;
         let beta = depth > 1 ? aspirationCenter + aspirationWindow : Infinity;
-        let result = searchAiMove(searchChess, gameState, perspectiveColor, depth, deadlineMs, config, tt, bestMove, 0, legalMoves, alpha, beta);
+        let result = searchAiMove(searchChess, gameState, perspectiveColor, depth, deadlineMs, config, tt, bestMove, 0, orderedRootMoves, alpha, beta);
 
         if (depth > 1 && (result.score <= alpha || result.score >= beta)) {
           alpha = -Infinity;
           beta = Infinity;
-          result = searchAiMove(searchChess, gameState, perspectiveColor, depth, deadlineMs, config, tt, bestMove, 0, legalMoves, alpha, beta);
+          result = searchAiMove(searchChess, gameState, perspectiveColor, depth, deadlineMs, config, tt, bestMove, 0, orderedRootMoves, alpha, beta);
         }
 
         if (result?.move) {
