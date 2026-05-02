@@ -439,7 +439,7 @@ export const ARCANA_DEFINITIONS = [
     name: 'Edgerunner Overdrive',
     rarity: '???',
     category: 'special',
-    description: 'Target one of your non-king pieces, including pawns. It gets 1 move, and each capture grants 1 extra move (up to 5 total). Pawns keep their pawn form during the sequence and do not promote. After the sequence, the piece returns to its starting square. It cannot capture the king.',
+    description: 'Target one of your non-king pieces. It gets 1 move. After the sequence, the piece returns to its starting square. It cannot capture the king.',
     visual: { particles: true, animation: true, cutscene: false },
     // soundId: 'arcana:edgerunner_overdrive',
     backgroundPath: '/cards/backgrounds/Cyberpunk.png',

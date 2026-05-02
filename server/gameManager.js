@@ -66,6 +66,19 @@ function findPlayerIdByColor(playerColors, color) {
   return Object.entries(playerColors || {}).find(([, c]) => normalizeColorToken(c) === target)?.[0] || null;
 }
 
+function findKingSquare(chess, color) {
+  if (!chess || !color || typeof chess.board !== 'function') return null;
+  const board = chess.board();
+  for (let rank = 0; rank < board.length; rank += 1) {
+    for (let file = 0; file < board[rank].length; file += 1) {
+      const piece = board[rank][file];
+      if (!piece || piece.type !== 'k' || piece.color !== color) continue;
+      return `${String.fromCharCode(97 + file)}${8 - rank}`;
+    }
+  }
+  return null;
+}
+
 function cloneSerializable(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
@@ -2591,12 +2604,11 @@ export class GameManager {
       const divineActive = divineState === true || (typeof divineState === 'object' && divineState?.active);
       if (!divineActive) return false;
 
-      const kingSquare = findKing(chess, checkedColor);
+      const kingSquare = findKingSquare(chess, checkedColor);
       if (!kingSquare) return false;
 
       const attackerColor = checkedColor === 'w' ? 'b' : 'w';
       const attackers = getMovesForColor(chess, attackerColor).filter((move) => move.to === kingSquare && move.from);
-      if (!attackers.length) return false;
 
       const attemptKingJumpRescue = () => {
         const legalKingMoves = getMovesForColor(chess, checkedColor)
@@ -3323,6 +3335,76 @@ export class GameManager {
       }
     };
 
+
+      const attemptKingJumpRescue = () => {
+        const legalKingMoves = getMovesForColor(chess, checkedColor)
+          .filter((move) => move.from === kingSquare)
+          .filter((move) => move.piece === 'k')
+          .filter((move) => move.to && move.to.length === 2);
+
+        if (!legalKingMoves.length) return false;
+
+        const kingRank = parseInt(kingSquare[1], 10);
+        const prefersBackward = (move) => {
+          const toRank = parseInt(move.to[1], 10);
+          return checkedColor === 'w' ? toRank < kingRank : toRank > kingRank;
+        };
+
+        const prioritizedMoves = [
+          ...legalKingMoves.filter(prefersBackward),
+          ...legalKingMoves.filter((move) => !prefersBackward(move)),
+        ];
+
+        for (const move of prioritizedMoves) {
+          const fenBefore = chess.fen();
+          const kingTo = move.to;
+          const occupant = chess.get(kingTo);
+          if (occupant && occupant.color === checkedColor) continue;
+          if (occupant && occupant.type === 'k') continue;
+
+          chess.remove(kingSquare);
+          if (occupant) chess.remove(kingTo);
+          const placedKing = chess.put({ type: 'k', color: checkedColor }, kingTo);
+          if (!placedKing) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          const spawnRank = parseInt(kingSquare[1], 10);
+          const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
+            || (checkedColor === 'b' && spawnRank === 1);
+          const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
+          const spawnPlaced = chess.put({ type: blockerType, color: checkedColor }, kingSquare);
+          if (!spawnPlaced) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          const stillInCheck = typeof chess.isCheck === 'function'
+            ? chess.isCheck()
+            : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
+          if (stillInCheck) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('divineIntervention', {
+                savedPlayer: checkedColor,
+                pawnSquare: kingSquare,
+                spawnedPiece: blockerType,
+                kingFrom: kingSquare,
+                kingTo,
+              });
+            }
+          }
+          return true;
+        }
+
+        return false;
+      };
     remapObjectKey(gameState.arcanaByPlayer);
     remapObjectKey(gameState.usedArcanaIdsByPlayer);
     remapObjectKey(gameState.usedArcanaInstanceIdsByPlayer);

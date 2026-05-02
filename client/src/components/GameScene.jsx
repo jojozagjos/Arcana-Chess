@@ -1491,6 +1491,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       );
       // Divine Intervention is passive and should not play activation cutscenes.
       const shouldPlayAnimation = arcanaId !== 'divine_intervention'
+        && arcanaId !== 'time_travel'
         && arcanaId !== 'edgerunner_overdrive'
         && (isCutsceneCard || hasStudioAnimation);
       const cutsceneStartDelayMs = Math.max(0, Number(params?.cutsceneStartDelayMs || 0));
@@ -2641,7 +2642,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   }, [gameState?.lastMove, gameState?.turn, myColor, playMoveSoundOnce]);
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        filter: showTimeFreezeMonochrome ? 'grayscale(1) contrast(1.08) saturate(0.15)' : 'none',
+      }}
+    >
       {!showMenu && <CutsceneOverlay ref={overlayRef} />}
       <AscensionScreenFx token={ascensionFxToken} />
       {isContextLost && (
@@ -5064,9 +5072,9 @@ const styles = {
     inset: 0,
     pointerEvents: 'none',
     zIndex: 11,
-    backdropFilter: 'grayscale(1) contrast(1.06) saturate(0.2)',
-    background: 'rgba(214, 220, 230, 0.1)',
-    mixBlendMode: 'screen',
+    background: 'rgba(214, 220, 230, 0.12)',
+    opacity: 0.9,
+    mixBlendMode: 'normal',
   },
   edgerunnerMonochromeOverlay: {
     position: 'absolute',
