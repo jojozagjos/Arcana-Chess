@@ -225,6 +225,7 @@ const styles = {
   },
   list: {
     flex: 1,
+    minWidth: 0,
     overflowY: 'auto',
     paddingRight: 8,
     display: 'grid',
@@ -255,6 +256,11 @@ const styles = {
   },
   detail: {
     flex: 1.2,
+    minWidth: 0,
+    // The detail column is taller than the 65vh row on short viewports
+    // (large card + description + rules blurb), so it must scroll itself
+    // instead of spilling out of the panel.
+    overflowY: 'auto',
     padding: 12,
     borderRadius: 12,
     background: 'rgba(10,22,36,0.72)',

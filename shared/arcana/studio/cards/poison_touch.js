@@ -51,7 +51,7 @@ export const STUDIO_CARD_OVERRIDE = {
           {
             "id": "sdk_mf5zl7ev",
             "timeMs": 0,
-            "soundId": "arcana:splash",
+            "soundId": "",
             "volume": 1,
             "loop": false,
             "pitch": 1

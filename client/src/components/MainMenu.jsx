@@ -152,6 +152,26 @@ export function MainMenu({
 
               <div className="update-log-section">
                 <div className="update-log-version">
+                  <span>v1.5.0  Stability &amp; Breaking Point</span>
+                  <span className="update-log-date">Jul 24, 2026</span>
+                </div>
+                <ul className="update-log-list">
+                  <li>Breaking Point now has a full cutscene: the target is flung skyward, the camera swings overhead, and the piece slams back down into an explosion and shockwave.</li>
+                  <li>Peek Card is usable again. Choosing a card from the peek dialog was rejected for the whole reveal animation, which could waste the card.</li>
+                  <li>Divine Intervention now triggers when the AI puts you in check. Previously it only ever fired in human vs human games.</li>
+                  <li>Time Travel no longer stalls the match. It never confirmed its reveal, so the turn was held for a 20 second timeout and every action was refused.</li>
+                  <li>Chaos Theory and Time Travel no longer fail after Royal Swap has been played.</li>
+                  <li>Royal Swap now requires your king to be off its back rank, so the swapped pawn can never be stranded where it has no legal moves.</li>
+                  <li>Metamorphosis can no longer turn a back rank piece into a permanently immobile pawn.</li>
+                  <li>Card sounds no longer arrive a turn late; repeated plays were aborting their own downloads.</li>
+                  <li>AI searches roughly twice as deep in real positions, and no longer shuffles pieces in won positions.</li>
+                  <li>Selected Arcana cards now show a highlight, and targeting prompts name what to pick for every card.</li>
+                  <li>Fixed a GPU texture leak in the particle system that could cause the graphics recovery screen mid-match.</li>
+                </ul>
+              </div>
+
+              <div className="update-log-section">
+                <div className="update-log-version">
                   <span>v1.4.2  Arcana Critical Fixes</span>
                   <span className="update-log-date">Apr 19, 2026</span>
                 </div>
@@ -170,7 +190,7 @@ export function MainMenu({
           ) : (
             <button className="update-log-pill" onClick={() => setShowUpdateLog(true)}>
               <span className="update-log-pill-dot" />
-              <span>v1.4.2</span>
+              <span>v1.5.0</span>
               <span className="update-log-pill-label">What's new</span>
             </button>
           )}

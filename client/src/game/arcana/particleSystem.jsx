@@ -36,6 +36,18 @@ function createSoftParticleTexture() {
   return texture;
 }
 
+// One texture shared by every ParticleSystem instance. Previously each instance
+// built its own CanvasTexture in useMemo; R3F only auto-disposes materials and
+// geometries declared as JSX children, never a texture passed in as a prop, so
+// every effect leaked a GPU texture for the lifetime of the page.
+let sharedSoftParticleTexture = null;
+function getSoftParticleTexture() {
+  if (!sharedSoftParticleTexture) {
+    sharedSoftParticleTexture = createSoftParticleTexture();
+  }
+  return sharedSoftParticleTexture;
+}
+
 /**
  * High-performance instanced particle system
  * @param {Object} props
@@ -55,7 +67,7 @@ export function ParticleSystem({
   const startColor = useMemo(() => new THREE.Color(), []);
   const endColor = useMemo(() => new THREE.Color(), []);
   const rampColorsRef = useRef([]);
-  const spriteTexture = useMemo(() => createSoftParticleTexture(), []);
+  const spriteTexture = useMemo(() => getSoftParticleTexture(), []);
 
   const {
     // Emission

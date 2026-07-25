@@ -4,6 +4,7 @@ import { getGameModeConfig } from '../shared/gameModes.js';
 import { applyArcana } from './arcana/arcanaHandlers.js';
 import { validateArcanaMove } from './arcana/arcanaValidation.js';
 import { pickWeightedArcana, pickCommonArcana, checkForKingRemoval, getAdjacentSquares, makeArcanaInstance } from './arcana/arcanaUtils.js';
+import { safeLoadFen } from './arcana/fenSafety.js';
 import { performAIMoveLogic as runtimePerformAIMoveLogic, tryAIUseArcana as runtimeTryAIUseArcana } from './ai/aiRuntime.js';
 import { createAiCore } from './ai/aiCore.js';
 
@@ -84,173 +85,8 @@ function cloneSerializable(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function sanitizeEdgeRankPawnsInFen(fen) {
-  if (!fen || typeof fen !== 'string') return fen;
-  const parts = fen.split(' ');
-  if (!parts[0]) return fen;
 
-  const ranks = parts[0].split('/');
-  if (ranks.length !== 8) return fen;
 
-  const expandRank = (rank) => {
-    let out = '';
-    for (const ch of rank) {
-      if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
-      else out += ch;
-    }
-    return out;
-  };
-
-  const compressRank = (expanded) => {
-    let out = '';
-    let empty = 0;
-    for (const ch of expanded) {
-      if (ch === '.') {
-        empty += 1;
-      } else {
-        if (empty > 0) {
-          out += String(empty);
-          empty = 0;
-        }
-        out += ch;
-      }
-    }
-    if (empty > 0) out += String(empty);
-    return out;
-  };
-
-  const normalizeEdgeRank = (rank, edge) => {
-    const expanded = expandRank(rank);
-    let changed = false;
-    let next = '';
-    for (const ch of expanded) {
-      // Only sanitize pawns that are on their promotion rank:
-      // white pawn on rank 8 ('P') or black pawn on rank 1 ('p').
-      if (edge === 'top' && ch === 'P') {
-        next += 'Q';
-        changed = true;
-      } else if (edge === 'bottom' && ch === 'p') {
-        next += 'q';
-        changed = true;
-      } else {
-        next += ch;
-      }
-    }
-    return { rank: changed ? compressRank(next) : rank, changed };
-  };
-
-  let anyChanged = false;
-  const top = normalizeEdgeRank(ranks[0], 'top');
-  const bottom = normalizeEdgeRank(ranks[7], 'bottom');
-  if (top.changed) {
-    ranks[0] = top.rank;
-    anyChanged = true;
-  }
-  if (bottom.changed) {
-    ranks[7] = bottom.rank;
-    anyChanged = true;
-  }
-
-  if (!anyChanged) return fen;
-  parts[0] = ranks.join('/');
-  return parts.join(' ');
-}
-
-function getOwnBackRankPawnsFromFen(fen) {
-  if (!fen || typeof fen !== 'string') return [];
-  const parts = fen.split(' ');
-  if (!parts[0]) return [];
-
-  const ranks = parts[0].split('/');
-  if (ranks.length !== 8) return [];
-
-  const expandRank = (rank) => {
-    let out = '';
-    for (const ch of rank) {
-      if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
-      else out += ch;
-    }
-    return out;
-  };
-
-  const squares = [];
-  const topRank = expandRank(ranks[0]); // rank 8
-  const bottomRank = expandRank(ranks[7]); // rank 1
-
-  for (let file = 0; file < 8; file++) {
-    if (topRank[file] === 'p') squares.push(`${'abcdefgh'[file]}8`);
-    if (bottomRank[file] === 'P') squares.push(`${'abcdefgh'[file]}1`);
-  }
-
-  return squares;
-}
-
-function replaceOwnBackRankPawnsInFen(fen, replacement = { white: 'N', black: 'n' }) {
-  if (!fen || typeof fen !== 'string') return fen;
-  const parts = fen.split(' ');
-  if (!parts[0]) return fen;
-
-  const ranks = parts[0].split('/');
-  if (ranks.length !== 8) return fen;
-
-  const expandRank = (rank) => {
-    let out = '';
-    for (const ch of rank) {
-      if (/[1-8]/.test(ch)) out += '.'.repeat(parseInt(ch, 10));
-      else out += ch;
-    }
-    return out;
-  };
-
-  const compressRank = (expanded) => {
-    let out = '';
-    let empty = 0;
-    for (const ch of expanded) {
-      if (ch === '.') {
-        empty += 1;
-      } else {
-        if (empty > 0) {
-          out += String(empty);
-          empty = 0;
-        }
-        out += ch;
-      }
-    }
-    if (empty > 0) out += String(empty);
-    return out;
-  };
-
-  const topExpanded = expandRank(ranks[0]); // rank 8
-  const bottomExpanded = expandRank(ranks[7]); // rank 1
-
-  let nextTop = '';
-  let nextBottom = '';
-  let changed = false;
-
-  for (let i = 0; i < 8; i++) {
-    const topCh = topExpanded[i];
-    const bottomCh = bottomExpanded[i];
-    if (topCh === 'p') {
-      nextTop += replacement.black;
-      changed = true;
-    } else {
-      nextTop += topCh;
-    }
-    if (bottomCh === 'P') {
-      nextBottom += replacement.white;
-      changed = true;
-    } else {
-      nextBottom += bottomCh;
-    }
-  }
-
-  if (!changed) return fen;
-
-  ranks[0] = compressRank(nextTop);
-  ranks[7] = compressRank(nextBottom);
-  parts[0] = ranks.join('/');
-  return parts.join(' ');
-}
 
 function getFenPieceAtSquare(fen, square) {
   if (!fen || typeof fen !== 'string' || !square || square.length !== 2) return null;
@@ -315,28 +151,6 @@ function markPawnStartSquareConsumed(gameState, square, colorChar) {
   gameState.pawnFirstMoveConsumed[colorChar][square] = true;
 }
 
-function safeLoadFen(chess, fen) {
-  const safeFen = sanitizeEdgeRankPawnsInFen(fen);
-  try {
-    chess.load(safeFen);
-    return safeFen;
-  } catch (err) {
-    const ownBackRankPawns = getOwnBackRankPawnsFromFen(safeFen);
-    if (!ownBackRankPawns.length) throw err;
-
-    const surrogateFen = replaceOwnBackRankPawnsInFen(safeFen);
-    chess.load(surrogateFen);
-
-    for (const square of ownBackRankPawns) {
-      const rank = square[1];
-      const color = rank === '1' ? WHITE_CHAR : BLACK_CHAR;
-      chess.remove(square);
-      chess.put({ type: 'p', color }, square);
-    }
-
-    return surrogateFen;
-  }
-}
 
 function normalizeTimeControlMinutes(timeControl) {
   if (timeControl === null || timeControl === undefined || timeControl === 'unlimited') return null;
@@ -1133,12 +947,22 @@ export class GameManager {
     const gameState = this.games.get(gameId);
     if (!gameState) throw new Error('Game not found');
 
+    const { move, arcanaUsed, actionType } = payload || {};
+
+    // Actions that RESOLVE a dialog the just-played card opened. These are a
+    // continuation of the card currently revealing, not a new action, and their
+    // UI renders above the reveal overlay — so gating them behind the reveal ACK
+    // makes the card look broken (Peek Card was unusable for the whole reveal).
+    const RESOLVES_PENDING_CARD = new Set(['peekCardSelect']);
+
     // Prevent extra actions while this player's reveal is still pending.
-    if (gameState.pendingReveal && gameState.pendingReveal.playerId === socket.id) {
+    if (
+      gameState.pendingReveal
+      && gameState.pendingReveal.playerId === socket.id
+      && !RESOLVES_PENDING_CARD.has(actionType)
+    ) {
       throw new Error('Please wait for the card reveal to finish');
     }
-
-    const { move, arcanaUsed, actionType } = payload || {};
 
     if (gameState.status !== STATUS_ONGOING) throw new Error('Game is not active');
 
@@ -2598,178 +2422,10 @@ export class GameManager {
 
     let outcome = null;
     const activeColor = chess.turn();
-    const maybeTriggerDivineIntervention = () => {
-      const checkedColor = activeColor;
-      const divineState = gameState.activeEffects.divineIntervention?.[checkedColor];
-      const divineActive = divineState === true || (typeof divineState === 'object' && divineState?.active);
-      if (!divineActive) return false;
-
-      const kingSquare = findKingSquare(chess, checkedColor);
-      if (!kingSquare) return false;
-
-      const attackerColor = checkedColor === 'w' ? 'b' : 'w';
-      const attackers = getMovesForColor(chess, attackerColor).filter((move) => move.to === kingSquare && move.from);
-
-      const attemptKingJumpRescue = () => {
-        const legalKingMoves = getMovesForColor(chess, checkedColor)
-          .filter((move) => move.from === kingSquare)
-          .filter((move) => move.piece === 'k')
-          .filter((move) => move.to && move.to.length === 2);
-
-        if (!legalKingMoves.length) return false;
-
-        const kingRank = parseInt(kingSquare[1], 10);
-        const prefersBackward = (move) => {
-          const toRank = parseInt(move.to[1], 10);
-          return checkedColor === 'w' ? toRank < kingRank : toRank > kingRank;
-        };
-
-        const prioritizedMoves = [
-          ...legalKingMoves.filter(prefersBackward),
-          ...legalKingMoves.filter((move) => !prefersBackward(move)),
-        ];
-
-        for (const move of prioritizedMoves) {
-          const fenBefore = chess.fen();
-          const kingTo = move.to;
-          const occupant = chess.get(kingTo);
-          if (occupant && occupant.color === checkedColor) continue;
-          if (occupant && occupant.type === 'k') continue;
-
-          chess.remove(kingSquare);
-          if (occupant) chess.remove(kingTo);
-          const placedKing = chess.put({ type: 'k', color: checkedColor }, kingTo);
-          if (!placedKing) {
-            safeLoadFen(chess, fenBefore);
-            continue;
-          }
-
-          const spawnRank = parseInt(kingSquare[1], 10);
-          const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
-            || (checkedColor === 'b' && spawnRank === 1);
-          const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
-          const spawnPlaced = chess.put({ type: blockerType, color: checkedColor }, kingSquare);
-          if (!spawnPlaced) {
-            safeLoadFen(chess, fenBefore);
-            continue;
-          }
-
-          const stillInCheck = typeof chess.isCheck === 'function'
-            ? chess.isCheck()
-            : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
-          if (stillInCheck) {
-            safeLoadFen(chess, fenBefore);
-            continue;
-          }
-
-          gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
-          for (const pid of gameState.playerIds) {
-            if (!pid.startsWith('AI-')) {
-              this.io.to(pid).emit('divineIntervention', {
-                savedPlayer: checkedColor,
-                pawnSquare: kingSquare,
-                spawnedPiece: blockerType,
-                kingFrom: kingSquare,
-                kingTo,
-              });
-            }
-          }
-          return true;
-        }
-
-        return false;
-      };
-
-      if (attemptKingJumpRescue()) return true;
-
-      const getLineBlockSquares = (attackerSquare, kingSq) => {
-        const fromFile = attackerSquare.charCodeAt(0) - 97;
-        const fromRank = parseInt(attackerSquare[1], 10);
-        const kingFile = kingSq.charCodeAt(0) - 97;
-        const kingRank = parseInt(kingSq[1], 10);
-        const isSameFile = fromFile === kingFile;
-        const isSameRank = fromRank === kingRank;
-        const isDiagonal = Math.abs(kingFile - fromFile) === Math.abs(kingRank - fromRank);
-        if (!isSameFile && !isSameRank && !isDiagonal) return [];
-
-        const fileStep = Math.sign(kingFile - fromFile);
-        const rankStep = Math.sign(kingRank - fromRank);
-        if (fileStep === 0 && rankStep === 0) return [];
-
-        const squares = [];
-        let file = fromFile + fileStep;
-        let rank = fromRank + rankStep;
-        while (file !== kingFile || rank !== kingRank) {
-          squares.push(`${String.fromCharCode(97 + file)}${rank}`);
-          file += fileStep;
-          rank += rankStep;
-        }
-        return squares;
-      };
-
-      const attemptDivineSpawn = (spawnSquare, { captureAttacker = false } = {}) => {
-        if (!spawnSquare) return false;
-
-        const fenBefore = chess.fen();
-        const spawnRank = parseInt(spawnSquare[1], 10);
-        const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
-          || (checkedColor === 'b' && spawnRank === 1);
-        const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
-
-        if (captureAttacker) {
-          const existing = chess.get(spawnSquare);
-          if (!existing || existing.color !== attackerColor || existing.type === 'k') return false;
-          chess.remove(spawnSquare);
-        } else if (chess.get(spawnSquare)) {
-          return false;
-        }
-
-        const placed = chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
-        if (!placed) {
-          safeLoadFen(chess, fenBefore);
-          return false;
-        }
-
-        const stillInCheck = typeof chess.isCheck === 'function'
-          ? chess.isCheck()
-          : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
-
-        if (stillInCheck) {
-          safeLoadFen(chess, fenBefore);
-          return false;
-        }
-
-        gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
-        for (const pid of gameState.playerIds) {
-          if (!pid.startsWith('AI-')) {
-            this.io.to(pid).emit('divineIntervention', {
-              savedPlayer: checkedColor,
-              pawnSquare: spawnSquare,
-              spawnedPiece: blockerType,
-            });
-          }
-        }
-        return true;
-      };
-
-      for (const attacker of attackers) {
-        const blockSquares = getLineBlockSquares(attacker.from, kingSquare);
-        for (const square of blockSquares) {
-          if (attemptDivineSpawn(square, { captureAttacker: false })) return true;
-        }
-      }
-
-      // Fallback for non-line checks (knight/pawn/king): capture the checking piece by spawning.
-      for (const attacker of attackers) {
-        if (attemptDivineSpawn(attacker.from, { captureAttacker: true })) return true;
-      }
-
-      return false;
-    };
 
     const initialInCheck = chess.isCheck();
     if (initialInCheck) {
-      maybeTriggerDivineIntervention();
+      this._maybeTriggerDivineIntervention(gameState, activeColor);
     }
 
     const noLegalMoves = (chess.moves({ verbose: true }) || []).length === 0;
@@ -2861,6 +2517,195 @@ export class GameManager {
   // - drawRandomArcana (kept here as it uses this.io)
   // - applyAstralRebirth
 
+  /**
+   * Reactive Divine Intervention: when `checkedColor` is in check and has the
+   * effect armed, spawn a blocker or jump the king to cancel the check.
+   * Must be reachable from BOTH the human move path and the AI move path —
+   * living as a closure inside handlePlayerAction meant AI-delivered checks
+   * never triggered it.
+   * @returns {boolean} true when the check was cancelled
+   */
+  _maybeTriggerDivineIntervention(gameState, checkedColor) {
+    const chess = gameState.chess;
+      const divineState = gameState.activeEffects.divineIntervention?.[checkedColor];
+      const divineActive = divineState === true || (typeof divineState === 'object' && divineState?.active);
+      if (!divineActive) return false;
+
+      const kingSquare = findKingSquare(chess, checkedColor);
+      if (!kingSquare) return false;
+
+      const attackerColor = checkedColor === 'w' ? 'b' : 'w';
+      const attackers = getMovesForColor(chess, attackerColor).filter((move) => move.to === kingSquare && move.from);
+
+      const attemptKingJumpRescue = () => {
+        const legalKingMoves = getMovesForColor(chess, checkedColor)
+          .filter((move) => move.from === kingSquare)
+          .filter((move) => move.piece === 'k')
+          .filter((move) => move.to && move.to.length === 2);
+
+        if (!legalKingMoves.length) return false;
+
+        const kingRank = parseInt(kingSquare[1], 10);
+        const prefersBackward = (move) => {
+          const toRank = parseInt(move.to[1], 10);
+          return checkedColor === 'w' ? toRank < kingRank : toRank > kingRank;
+        };
+
+        const prioritizedMoves = [
+          ...legalKingMoves.filter(prefersBackward),
+          ...legalKingMoves.filter((move) => !prefersBackward(move)),
+        ];
+
+        for (const move of prioritizedMoves) {
+          const fenBefore = chess.fen();
+          const kingTo = move.to;
+          const occupant = chess.get(kingTo);
+          if (occupant && occupant.color === checkedColor) continue;
+          if (occupant && occupant.type === 'k') continue;
+
+          chess.remove(kingSquare);
+          if (occupant) chess.remove(kingTo);
+          const placedKing = chess.put({ type: 'k', color: checkedColor }, kingTo);
+          if (!placedKing) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          const spawnRank = parseInt(kingSquare[1], 10);
+          // A pawn is unusable on EITHER edge rank: rank 8/1 is the promotion rank for
+          // one colour and the dead-end home rank for the other (zero legal moves
+          // forever, and a FEN chess.js refuses to reload). Spawn a knight instead.
+          const pawnWouldBeInvalid = spawnRank === 1 || spawnRank === 8;
+          const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
+          const spawnPlaced = chess.put({ type: blockerType, color: checkedColor }, kingSquare);
+          if (!spawnPlaced) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          const stillInCheck = typeof chess.isCheck === 'function'
+            ? chess.isCheck()
+            : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
+          if (stillInCheck) {
+            safeLoadFen(chess, fenBefore);
+            continue;
+          }
+
+          gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
+          for (const pid of gameState.playerIds) {
+            if (!pid.startsWith('AI-')) {
+              this.io.to(pid).emit('divineIntervention', {
+                savedPlayer: checkedColor,
+                pawnSquare: kingSquare,
+                spawnedPiece: blockerType,
+                kingFrom: kingSquare,
+                kingTo,
+              });
+            }
+          }
+          return true;
+        }
+
+        return false;
+      };
+
+      const getLineBlockSquares = (attackerSquare, kingSq) => {
+        const fromFile = attackerSquare.charCodeAt(0) - 97;
+        const fromRank = parseInt(attackerSquare[1], 10);
+        const kingFile = kingSq.charCodeAt(0) - 97;
+        const kingRank = parseInt(kingSq[1], 10);
+        const isSameFile = fromFile === kingFile;
+        const isSameRank = fromRank === kingRank;
+        const isDiagonal = Math.abs(kingFile - fromFile) === Math.abs(kingRank - fromRank);
+        if (!isSameFile && !isSameRank && !isDiagonal) return [];
+
+        const fileStep = Math.sign(kingFile - fromFile);
+        const rankStep = Math.sign(kingRank - fromRank);
+        if (fileStep === 0 && rankStep === 0) return [];
+
+        const squares = [];
+        let file = fromFile + fileStep;
+        let rank = fromRank + rankStep;
+        while (file !== kingFile || rank !== kingRank) {
+          squares.push(`${String.fromCharCode(97 + file)}${rank}`);
+          file += fileStep;
+          rank += rankStep;
+        }
+        return squares;
+      };
+
+      const attemptDivineSpawn = (spawnSquare, { captureAttacker = false } = {}) => {
+        if (!spawnSquare) return false;
+
+        const fenBefore = chess.fen();
+        const spawnRank = parseInt(spawnSquare[1], 10);
+        // A pawn is unusable on EITHER edge rank: rank 8/1 is the promotion rank for
+          // one colour and the dead-end home rank for the other (zero legal moves
+          // forever, and a FEN chess.js refuses to reload). Spawn a knight instead.
+          const pawnWouldBeInvalid = spawnRank === 1 || spawnRank === 8;
+        const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
+
+        if (captureAttacker) {
+          const existing = chess.get(spawnSquare);
+          if (!existing || existing.color !== attackerColor || existing.type === 'k') return false;
+          chess.remove(spawnSquare);
+        } else if (chess.get(spawnSquare)) {
+          return false;
+        }
+
+        const placed = chess.put({ type: blockerType, color: checkedColor }, spawnSquare);
+        if (!placed) {
+          safeLoadFen(chess, fenBefore);
+          return false;
+        }
+
+        const stillInCheck = typeof chess.isCheck === 'function'
+          ? chess.isCheck()
+          : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
+
+        if (stillInCheck) {
+          safeLoadFen(chess, fenBefore);
+          return false;
+        }
+
+        gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
+        for (const pid of gameState.playerIds) {
+          if (!pid.startsWith('AI-')) {
+            this.io.to(pid).emit('divineIntervention', {
+              savedPlayer: checkedColor,
+              pawnSquare: spawnSquare,
+              spawnedPiece: blockerType,
+            });
+          }
+        }
+        return true;
+      };
+
+      // Preference order matters to the player: the card promises to "spawn a
+      // blocker (or rescue piece) to cancel the check". Spawning leaves the king
+      // exactly where the player put it, so try that FIRST. Only teleport the
+      // king as a last resort — doing that first made it look like the game had
+      // undone the player's own move.
+
+      // 1. Interpose a blocker on the checking line.
+      for (const attacker of attackers) {
+        const blockSquares = getLineBlockSquares(attacker.from, kingSquare);
+        for (const square of blockSquares) {
+          if (attemptDivineSpawn(square, { captureAttacker: false })) return true;
+        }
+      }
+
+      // 2. Non-line checks (knight/pawn): spawn onto the checking piece to take it.
+      for (const attacker of attackers) {
+        if (attemptDivineSpawn(attacker.from, { captureAttacker: true })) return true;
+      }
+
+      // 3. Last resort: jump the king clear and leave a rescue piece behind.
+      if (attemptKingJumpRescue()) return true;
+
+      return false;
+  }
+
   drawRandomArcana() {
     return pickWeightedArcana();
   }
@@ -2913,6 +2758,7 @@ export class GameManager {
       makeArcanaInstance,
       swapTurn: this._swapTurn.bind(this),
       decrementEffects: this.decrementEffects.bind(this),
+      maybeTriggerDivineIntervention: this._maybeTriggerDivineIntervention.bind(this),
       tryAIUseArcana: this.tryAIUseArcana.bind(this),
       serialiseGameStateForViewer: this.serialiseGameStateForViewer.bind(this),
       scoreArcanaUseIntent,
@@ -3335,76 +3181,6 @@ export class GameManager {
       }
     };
 
-
-      const attemptKingJumpRescue = () => {
-        const legalKingMoves = getMovesForColor(chess, checkedColor)
-          .filter((move) => move.from === kingSquare)
-          .filter((move) => move.piece === 'k')
-          .filter((move) => move.to && move.to.length === 2);
-
-        if (!legalKingMoves.length) return false;
-
-        const kingRank = parseInt(kingSquare[1], 10);
-        const prefersBackward = (move) => {
-          const toRank = parseInt(move.to[1], 10);
-          return checkedColor === 'w' ? toRank < kingRank : toRank > kingRank;
-        };
-
-        const prioritizedMoves = [
-          ...legalKingMoves.filter(prefersBackward),
-          ...legalKingMoves.filter((move) => !prefersBackward(move)),
-        ];
-
-        for (const move of prioritizedMoves) {
-          const fenBefore = chess.fen();
-          const kingTo = move.to;
-          const occupant = chess.get(kingTo);
-          if (occupant && occupant.color === checkedColor) continue;
-          if (occupant && occupant.type === 'k') continue;
-
-          chess.remove(kingSquare);
-          if (occupant) chess.remove(kingTo);
-          const placedKing = chess.put({ type: 'k', color: checkedColor }, kingTo);
-          if (!placedKing) {
-            safeLoadFen(chess, fenBefore);
-            continue;
-          }
-
-          const spawnRank = parseInt(kingSquare[1], 10);
-          const pawnWouldBeInvalid = (checkedColor === 'w' && spawnRank === 8)
-            || (checkedColor === 'b' && spawnRank === 1);
-          const blockerType = pawnWouldBeInvalid ? 'n' : 'p';
-          const spawnPlaced = chess.put({ type: blockerType, color: checkedColor }, kingSquare);
-          if (!spawnPlaced) {
-            safeLoadFen(chess, fenBefore);
-            continue;
-          }
-
-          const stillInCheck = typeof chess.isCheck === 'function'
-            ? chess.isCheck()
-            : (typeof chess.inCheck === 'function' ? chess.inCheck() : false);
-          if (stillInCheck) {
-            safeLoadFen(chess, fenBefore);
-            continue;
-          }
-
-          gameState.activeEffects.divineIntervention[checkedColor] = { active: false, used: true };
-          for (const pid of gameState.playerIds) {
-            if (!pid.startsWith('AI-')) {
-              this.io.to(pid).emit('divineIntervention', {
-                savedPlayer: checkedColor,
-                pawnSquare: kingSquare,
-                spawnedPiece: blockerType,
-                kingFrom: kingSquare,
-                kingTo,
-              });
-            }
-          }
-          return true;
-        }
-
-        return false;
-      };
     remapObjectKey(gameState.arcanaByPlayer);
     remapObjectKey(gameState.usedArcanaIdsByPlayer);
     remapObjectKey(gameState.usedArcanaInstanceIdsByPlayer);

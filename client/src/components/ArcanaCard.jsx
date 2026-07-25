@@ -72,6 +72,10 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
     position: 'relative',
     borderRadius: 8,
     overflow: 'hidden',
+    // Outer glow marks the selected card. The ring itself is drawn as a child
+    // overlay below, because an inset shadow would be painted underneath the
+    // absolutely-positioned background image.
+    boxShadow: isSelected ? '0 0 14px 2px rgba(127, 228, 255, 0.75)' : 'none',
     border: 'none',
     opacity: isUsed ? 0.55 : 1,
     transition: 'transform 0.18s ease, box-shadow 0.18s ease',
@@ -315,6 +319,21 @@ export function ArcanaCard({ arcana, size = 'medium', onClick, isSelected, isUse
             />
           ) : null}
         </div>
+
+        {/* Selection ring */}
+        {isSelected && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: 8,
+              border: '2px solid #7fe4ff',
+              boxShadow: 'inset 0 0 12px rgba(127, 228, 255, 0.45)',
+              pointerEvents: 'none',
+              zIndex: 5,
+            }}
+          />
+        )}
 
         {/* Badge overlay */}
         {isUsed && (

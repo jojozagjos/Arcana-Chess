@@ -21,6 +21,26 @@ html, body {
   height: 100dvh;
 }
 
+/* Shared entrance animations.
+   These live here (rather than in a component <style> block) because overlays
+   such as the game-end panel reference them while no other component that
+   defines keyframes is mounted. */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Thin scrollbars on webkit */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

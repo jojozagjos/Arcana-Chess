@@ -15,6 +15,7 @@ export async function performAIMoveLogic(gameState, ctx) {
     makeArcanaInstance,
     swapTurn,
     decrementEffects,
+    maybeTriggerDivineIntervention,
     tryAIUseArcana,
     serialiseGameStateForViewer,
     constants,
@@ -316,6 +317,13 @@ export async function performAIMoveLogic(gameState, ctx) {
   }
 
   decrementEffects(gameState);
+
+  // The AI's move may have put the human in check. Give their Divine
+  // Intervention the same chance to react that it gets on the human move path,
+  // and do it BEFORE the checkmate test so a rescued king isn't scored as mate.
+  if (chess.isCheck() && typeof maybeTriggerDivineIntervention === 'function') {
+    maybeTriggerDivineIntervention(gameState, chess.turn());
+  }
 
   const aiNoLegalMoves = (chess.moves({ verbose: true }) || []).length === 0;
   const aiInCheck = chess.isCheck();

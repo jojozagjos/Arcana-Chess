@@ -438,6 +438,24 @@ export function createAiCore({ safeLoadFen }) {
     return (ownUnused - enemyUnused) * 4 + turnBonus;
   }
 
+  // Leaf-evaluation cache. evaluateAIBoard is pure w.r.t. (position, perspective)
+  // for the duration of one root search, but it is very expensive — it generates
+  // moves for both colours, which allocates a second Chess instance and reparses
+  // a FEN. Transpositions make the same position recur constantly, so caching
+  // removes a large fraction of that cost with no change in evaluation.
+  // Cleared at the start of every root search, since gameState may have changed.
+  let evalCache = new Map();
+  const EVAL_CACHE_MAX = 80000;
+
+  function evaluateAIBoardCached(chess, perspectiveColor, gameState = {}) {
+    const key = `${chess.fen()}|${perspectiveColor}`;
+    const cached = evalCache.get(key);
+    if (cached !== undefined) return cached;
+    const score = evaluateAIBoard(chess, perspectiveColor, gameState);
+    if (evalCache.size < EVAL_CACHE_MAX) evalCache.set(key, score);
+    return score;
+  }
+
   function evaluateAIBoard(chess, perspectiveColor, gameState = {}) {
     const board = chess.board();
     let score = 0;
@@ -513,7 +531,11 @@ export function createAiCore({ safeLoadFen }) {
     if (recentFenHistory.length > 0) {
       const positionKey = getAiPositionKey(chess);
       let repeats = 0;
-      for (const fen of recentFenHistory) {
+      for (const entry of recentFenHistory) {
+        // moveHistory entries are { fen, snapshot } objects from gameManager and
+        // plain FEN strings from the AI runtime; handle both. Treating them all
+        // as strings silently disabled repetition avoidance entirely.
+        const fen = typeof entry === 'string' ? entry : entry?.fen;
         if (typeof fen !== 'string') continue;
         const fenKey = fen.split(' ').slice(0, 4).join(' ');
         if (fenKey === positionKey) repeats += 1;
@@ -589,10 +611,10 @@ export function createAiCore({ safeLoadFen }) {
     }
 
     if (!hasBothKings(chess)) {
-      return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+      return { score: evaluateAIBoardCached(chess, perspectiveColor, gameState), move: null };
     }
 
-    const standPat = evaluateAIBoard(chess, perspectiveColor, gameState);
+    const standPat = evaluateAIBoardCached(chess, perspectiveColor, gameState);
     const maximizing = chess.turn() === perspectiveColor;
 
     if (maximizing) {
@@ -645,7 +667,7 @@ export function createAiCore({ safeLoadFen }) {
     }
 
     if (!hasBothKings(chess)) {
-      return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+      return { score: evaluateAIBoardCached(chess, perspectiveColor, gameState), move: null };
     }
 
     const alphaStart = alpha;
@@ -657,7 +679,7 @@ export function createAiCore({ safeLoadFen }) {
 
     const legalMoves = plyFromRoot === 0 && Array.isArray(rootMoves) ? rootMoves : chess.moves({ verbose: true });
     if (!legalMoves.length) {
-      return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+      return { score: evaluateAIBoardCached(chess, perspectiveColor, gameState), move: null };
     }
 
     if (depth <= 0) {
@@ -711,7 +733,7 @@ export function createAiCore({ safeLoadFen }) {
       }
 
       if (depth === 1 && !isTacticalMove(move) && !chess.isCheck()) {
-        const staticEval = evaluateAIBoard(chess, perspectiveColor, gameState);
+        const staticEval = evaluateAIBoardCached(chess, perspectiveColor, gameState);
         const margin = config.futilityMargin ?? AI_FUTILITY_MARGIN;
         if (maximizing && staticEval + margin <= alpha) continue;
         if (!maximizing && staticEval - margin >= beta) continue;
@@ -751,7 +773,7 @@ export function createAiCore({ safeLoadFen }) {
     }
 
     if (bestMove === null) {
-      return { score: evaluateAIBoard(chess, perspectiveColor, gameState), move: null };
+      return { score: evaluateAIBoardCached(chess, perspectiveColor, gameState), move: null };
     }
 
     let flag = 'EXACT';
@@ -763,6 +785,10 @@ export function createAiCore({ safeLoadFen }) {
   }
 
   function selectBestAiMove(chess, gameState, perspectiveColor, config, rootMoves = null) {
+    // gameState (arcana counts, effects, move history) can change between turns
+    // and feeds the evaluation, so the per-position cache must not outlive a
+    // single root search.
+    evalCache = new Map();
     const deadlineMs = Date.now() + config.searchBudgetMs;
     const searchChess = new Chess();
     safeLoadFen(searchChess, chess.fen());

@@ -1,6 +1,7 @@
 import { Chess } from 'chess.js';
 import { pickWeightedArcana, pickWeightedArcanaForSacrifice, pickCommonOrUncommonArcana, pickCommonOrUncommonArcanaByCategory, getAdjacentSquares, makeArcanaInstance } from './arcanaUtils.js';
 import { validateArcanaUse } from '../../shared/arcana/arcanaContracts.js';
+import { safeLoadFen } from './fenSafety.js';
 
 /**
  * Validates arcana targeting before applying effects
@@ -107,7 +108,7 @@ export function applyArcana(socketId, gameState, arcanaUsed, moveResult, io) {
     // Global hard-stop safety: no Arcana effect may remove either king.
     if (!hasBothKings(chess)) {
       try {
-        chess.load(preArcanaFen);
+        safeLoadFen(chess, preArcanaFen);
       } catch {
         // If rollback fails, fail closed by skipping this arcana application.
       }
@@ -797,6 +798,10 @@ function applyMetamorphosis({ chess, moverColor, params }) {
   const targetSquare = params?.targetSquare || params?.pieceSquare;
   if (targetSquare && params?.newType) {
     const piece = chess.get(targetSquare);
+    // A pawn on rank 1 or 8 is an illegal position: it has zero legal moves
+    // forever and the resulting FEN cannot be reloaded by chess.js.
+    const rank = targetSquare[1];
+    if (params.newType === 'p' && (rank === '1' || rank === '8')) return null;
     // Cannot transform into king or queen (per card description)
     if (piece && piece.color === moverColor && params.newType !== 'k' && params.newType !== 'q') {
       chess.remove(targetSquare);
@@ -1265,6 +1270,10 @@ function applyRoyalSwap({ chess, gameState, moverColor, params }) {
   const kingSquare = findKing(chess, moverColor);
   if (!kingSquare) return null;
 
+  // The pawn lands on the king's square; on rank 1/8 that strands it forever
+  // and yields a FEN chess.js cannot reload.
+  if (kingSquare[1] === '1' || kingSquare[1] === '8') return null;
+
   const king = chess.get(kingSquare);
   if (!king || king.type !== 'k' || king.color !== moverColor) return null;
 
@@ -1333,7 +1342,7 @@ function applyChaosTheory({ chess, gameState }) {
   let isValid = false;
 
   while (attempts < MAX_ATTEMPTS) {
-    chess.load(originalFen);
+    safeLoadFen(chess, originalFen);
     shuffled = shufflePieces(chess, 3);
     isValid = validateChaosBoard(chess, originalEdgePawnCount);
     if (isValid) break;
@@ -1343,10 +1352,10 @@ function applyChaosTheory({ chess, gameState }) {
   // Graceful fallback: apply a smaller shuffle and accept king-valid boards
   // instead of throwing a hard server error for the entire action.
   if (!isValid) {
-    chess.load(originalFen);
+    safeLoadFen(chess, originalFen);
     shuffled = shufflePieces(chess, 1);
     if (!validateChaosBoard(chess, originalEdgePawnCount, { enforceEdgePawnCap: false })) {
-      chess.load(originalFen);
+      safeLoadFen(chess, originalFen);
       return null;
     }
   }
@@ -1961,7 +1970,7 @@ function undoMoves(gameState, count) {
       undone.push({ fen });
     }
     
-    chess.load(targetFen);
+    safeLoadFen(chess, targetFen);
 
     // Restore captured auxiliary state when snapshots are available.
     if (targetEntry && typeof targetEntry === 'object' && targetEntry.snapshot) {

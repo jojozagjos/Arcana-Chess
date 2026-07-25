@@ -45,11 +45,16 @@
   margin: 0;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  /* Fallback colour for engines without background-clip: text. The transparent
+     fill below is what lets the animated gradient actually show through — without
+     it the opaque colour paints over the gradient and menuTitleGradientShift is
+     invisible. */
   color: #f7efff;
   background: linear-gradient(120deg, #f7efff 8%, #d4b4ff 40%, #ffffff 56%, #c596ff 92%);
   background-size: 160% 160%;
   -webkit-background-clip: text;
   background-clip: text;
+  -webkit-text-fill-color: transparent;
   animation: menuTitleBreathe 3.1s ease-in-out infinite, menuTitleGradientShift 7.8s linear infinite;
 }
 

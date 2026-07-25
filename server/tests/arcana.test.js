@@ -1025,7 +1025,9 @@ test('Necromancy does not apply when no pawn is captured', () => {
   assert(!foundKnight, 'Necromancy should not place a revived non-pawn piece');
 });
 
-test('Royal Swap keeps pawn as pawn on own back rank', () => {
+test('Royal Swap is blocked while the king is on its own back rank', () => {
+  // The pawn would land on e1: permanently immobile, and an illegal position
+  // that chess.js cannot reload (it makes later cards throw).
   const gameState = createMockGameState('4k3/8/8/8/8/8/4P3/4K3 w - - 0 1');
   const socketId = 'player1';
   gameState.arcanaByPlayer[socketId] = [{ id: 'royal_swap', name: 'Royal Swap' }];
@@ -1033,11 +1035,30 @@ test('Royal Swap keeps pawn as pawn on own back rank', () => {
 
   const applied = applyArcana(socketId, gameState, [{ arcanaId: 'royal_swap', params: { targetSquare: 'e2' } }], { color: 'w' }, null);
 
+  assertEqual(applied.length, 0, 'Royal Swap should not apply when the king is on its back rank');
+  const kingStill = gameState.chess.get('e1');
+  assert(kingStill && kingStill.type === 'k', 'King should be untouched');
+  assertEqual(gameState.arcanaByPlayer[socketId].length, 1, 'Card should not be consumed when it cannot apply');
+});
+
+test('Royal Swap works once the king has left its back rank', () => {
+  const gameState = createMockGameState('4k3/8/8/8/4P3/8/4K3/8 w - - 0 1');
+  const socketId = 'player1';
+  gameState.arcanaByPlayer[socketId] = [{ id: 'royal_swap', name: 'Royal Swap' }];
+  gameState.usedArcanaIdsByPlayer = { [socketId]: [] };
+
+  const applied = applyArcana(socketId, gameState, [{ arcanaId: 'royal_swap', params: { targetSquare: 'e4' } }], { color: 'w' }, null);
+
   assertEqual(applied.length, 1, 'Royal Swap should apply with own pawn target');
-  const kingNow = gameState.chess.get('e2');
-  const pawnNow = gameState.chess.get('e1');
+  const kingNow = gameState.chess.get('e4');
+  const pawnNow = gameState.chess.get('e2');
   assert(kingNow && kingNow.type === 'k' && kingNow.color === 'w', 'King should move to the target pawn square');
-  assert(pawnNow && pawnNow.type === 'p' && pawnNow.color === 'w', 'Pawn swapped to own back rank should stay a pawn');
+  assert(pawnNow && pawnNow.type === 'p' && pawnNow.color === 'w', 'Pawn should move to the king square and stay a pawn');
+
+  // Resulting position must be a legal FEN that chess.js can reload.
+  const reloaded = new Chess();
+  reloaded.load(gameState.chess.fen());
+  assert(reloaded.get('e4')?.type === 'k', 'Swapped position must round-trip through FEN');
 });
 
 // ============ SUMMARY ============

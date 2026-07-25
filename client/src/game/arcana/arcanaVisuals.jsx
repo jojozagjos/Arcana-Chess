@@ -84,19 +84,22 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1, color = '#4fc3f7' })
       groupRef.current.rotation.y = t * 0.5;
     }
     
+    // Colour is set in place with .set(). Assigning `new THREE.Color(...)` here
+    // allocated 6 objects every frame per active effect and replaced the
+    // material's colour instances outright, forcing needless uniform churn.
     if (innerRef.current) {
       const pulse = Math.sin(t * 4) * 0.08 + 1;
       innerRef.current.scale.set(pulse, 1, pulse);
       innerRef.current.material.opacity = (0.3 + Math.sin(t * 3) * 0.1) * fadeOpacity;
-      innerRef.current.material.color = new THREE.Color(color);
-      innerRef.current.material.emissive = new THREE.Color(color);
+      innerRef.current.material.color.set(color);
+      innerRef.current.material.emissive.set(color);
     }
 
     if (outerRef.current) {
       outerRef.current.rotation.y = -t * 0.3;
       outerRef.current.material.opacity = (0.15 + Math.sin(t * 2) * 0.05) * fadeOpacity;
-      outerRef.current.material.color = new THREE.Color(color);
-      outerRef.current.material.emissive = new THREE.Color(color);
+      outerRef.current.material.color.set(color);
+      outerRef.current.material.emissive.set(color);
     }
 
     if (runesRef.current) {
@@ -104,8 +107,8 @@ export function ShieldGlowEffect({ square, fadeOpacity = 1, color = '#4fc3f7' })
         const offset = (i / 6) * Math.PI * 2;
         rune.position.y = 0.5 + Math.sin(t * 2 + offset) * 0.1;
         rune.material.opacity = (0.6 + Math.sin(t * 3 + offset) * 0.3) * fadeOpacity;
-        rune.material.color = new THREE.Color(color);
-        rune.material.emissive = new THREE.Color(color);
+        rune.material.color.set(color);
+        rune.material.emissive.set(color);
       });
     }
   });
@@ -256,6 +259,46 @@ export function BreakingPointEffect({ square, targetSquare, impacted = [], onCom
         <octahedronGeometry args={[0.12 + progress * 0.04, 0]} />
         <meshStandardMaterial emissive="#ffffff" emissiveIntensity={2} color="#ffd1d9" transparent depthWrite={false} opacity={(0.75 - progress * 0.4) * (1 - finishT)} />
       </mesh>
+
+      {/* Ground-slam shockwave: three offset rings racing outward across the board. */}
+      {[0, 0.12, 0.26].map((delay, i) => {
+        const local = Math.max(0, Math.min(1, (progress - delay) / (1 - delay || 1)));
+        if (local <= 0) return null;
+        // Fast out, then decelerate — reads as a pressure wave, not a growing circle.
+        const eased = 1 - Math.pow(1 - local, 2.6);
+        const radius = 0.18 + eased * (4.2 - i * 0.55);
+        const thickness = 0.16 * (1 - eased * 0.72);
+        return (
+          <mesh key={`shock-${i}`} position={[0, 0.05 + i * 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[Math.max(0.01, radius - thickness), radius, 64]} />
+            <meshStandardMaterial
+              emissive={i === 0 ? '#ffffff' : '#ff4d6d'}
+              emissiveIntensity={4.5 * (1 - eased)}
+              color={i === 0 ? '#ffe3e8' : '#ff8da1'}
+              transparent
+              depthWrite={false}
+              side={2}
+              opacity={(1 - eased) * 0.85 * (1 - finishT)}
+            />
+          </mesh>
+        );
+      })}
+
+      {/* Impact flash column at the moment of contact. */}
+      {progress < 0.45 && (
+        <mesh position={[0, 0.5, 0]}>
+          <cylinderGeometry args={[0.34, 0.62, 1.0, 20, 1, true]} />
+          <meshStandardMaterial
+            emissive="#ffffff"
+            emissiveIntensity={6 * (1 - progress / 0.45)}
+            color="#fff0f3"
+            transparent
+            depthWrite={false}
+            side={2}
+            opacity={(1 - progress / 0.45) * 0.7 * (1 - finishT)}
+          />
+        </mesh>
+      )}
     </group>
   );
 }

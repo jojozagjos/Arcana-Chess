@@ -13,6 +13,7 @@ import { ReplayOverlay } from './ReplayOverlay.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
 import { getTargetTypeForArcana, simulateArcanaEffect, getValidTargetSquares, canUseCard } from '../game/arcana/arcanaSimulation.js';
+import { getTargetTypePhrase } from '../../../shared/arcana/arcanaContracts.js';
 import { ArcanaVisualHost } from '../game/arcana/ArcanaVisualHost.jsx';
 import { getRarityColor } from '../game/arcanaHelpers.js';
 const ParticleOverlay = React.lazy(() => import('../game/arcana/ParticleOverlay.jsx').then(m => ({ default: m.default ?? m.ParticleOverlay })).catch(err => { console.error('[ParticleOverlay] lazy load failed:', err); return { default: () => null }; }));
@@ -359,6 +360,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   const lastSocketArcanaRef = useRef({ key: null, at: 0 });
   const reviveSequenceTokenRef = useRef(0);
   const timeTravelSequenceTokenRef = useRef(0);
+  // Holds the Time Travel rewind until the card-use reveal overlay has cleared.
+  const pendingTimeTravelRef = useRef(null);
   const pendingRevealAckRef = useRef(null);
   const pendingRevealIntentRef = useRef(null);
   const firedRuntimeVfxRef = useRef(new Map());
@@ -986,10 +989,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       add('fog_of_war', 'Fog of War', 'Opponent position fog active', 'opponent');
     }
 
-    if (effects.divineIntervention?.[myColorCode]) {
+    // After it fires the server stores { active: false, used: true } — a truthy
+    // object — so a plain truthiness check left the card listed forever.
+    const divineArmed = (state) => state === true || (typeof state === 'object' && state?.active === true);
+    if (divineArmed(effects.divineIntervention?.[myColorCode])) {
       add('divine_intervention', 'Divine Intervention', 'Passive protection active (consumes on save)');
     }
-    if (effects.divineIntervention?.[opponentColorChar]) {
+    if (divineArmed(effects.divineIntervention?.[opponentColorChar])) {
       add('divine_intervention', 'Divine Intervention', 'Opponent passive protection active', 'opponent');
     }
 
@@ -1349,6 +1355,16 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
   // When card animation finishes, flush any queued arcana events so visuals play after animation
   useEffect(() => {
     if (isCardAnimationPlaying) return; // still animating
+
+    // Time Travel drives its own rewind rather than the studio runtime, so it is
+    // parked separately and released here.
+    if (pendingTimeTravelRef.current) {
+      const runRewind = pendingTimeTravelRef.current;
+      pendingTimeTravelRef.current = null;
+      runRewind();
+      return;
+    }
+
     if (!pendingLastArcanaRef.current || pendingLastArcanaRef.current.length === 0) return;
 
     // Process queued events in order, but only one at a time to avoid overlap
@@ -1464,7 +1480,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
     const handleArcanaTriggered = (payload) => {
       // Play sound effect for arcana activation, except skip focus_fire here
       try {
-        if (!(payload && payload.arcanaId === 'focus_fire')) {
+        // Cards whose sound belongs to a LATER outcome, not to activation:
+        //  - focus_fire fires on the bonus draw
+        //  - poison_touch fires from `piecePoisoned`, only if a piece is actually
+        //    poisoned (playing it on activation implied an effect that may never land)
+        const deferredSoundCards = new Set(['focus_fire', 'poison_touch']);
+        if (!deferredSoundCards.has(payload?.arcanaId)) {
           const soundId = payload?.soundId || (payload?.arcanaId ? `arcana:${payload.arcanaId}` : '');
           if (soundId) soundManager.play(soundId);
         }
@@ -1497,20 +1518,29 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       const cutsceneStartDelayMs = Math.max(0, Number(params?.cutsceneStartDelayMs || 0));
       const shouldQueueForCardAnimation = shouldPlayAnimation && (isCardAnimationPlayingRef.current || cardAnimationLockRef.current);
 
-      if (shouldPlayAnimation && CUTSCENE_BOARD_LOCK_CARDS.has(arcanaId)) {
-        const preArcanaFen = typeof params?.preArcanaFen === 'string' ? params.preArcanaFen : '';
-        if (preArcanaFen) {
-          setRenderFen(preArcanaFen);
-        }
-        setBoardVisualLockedForCutscene(true);
-        // Promote dismiss intent as soon as the cutscene-triggering event is observed,
-        // including when playback itself is queued behind card reveal animations.
+      const isBoardLockCutsceneCard = CUTSCENE_BOARD_LOCK_CARDS.has(arcanaId);
+
+      // Arm the reveal ACK for every board-lock cutscene card, NOT just the ones
+      // routed through playStudioArcanaRuntime. The server holds the turn (and
+      // rejects every action from this player) until it receives the ACK, and
+      // cards excluded from `shouldPlayAnimation` — time_travel — run their own
+      // bespoke animation. Gating this on `shouldPlayAnimation` left time_travel
+      // with no ACK path at all, stalling the turn for the full 20s timeout.
+      if (isBoardLockCutsceneCard) {
         if (pendingRevealIntentRef.current && pendingRevealIntentRef.current === payload?.owner) {
           pendingRevealAckRef.current = pendingRevealIntentRef.current;
           pendingRevealIntentRef.current = null;
         } else if (!pendingRevealAckRef.current && payload?.owner === socket.id) {
           pendingRevealAckRef.current = payload.owner;
         }
+      }
+
+      if (shouldPlayAnimation && isBoardLockCutsceneCard) {
+        const preArcanaFen = typeof params?.preArcanaFen === 'string' ? params.preArcanaFen : '';
+        if (preArcanaFen) {
+          setRenderFen(preArcanaFen);
+        }
+        setBoardVisualLockedForCutscene(true);
       }
 
       if (shouldQueueForCardAnimation) {
@@ -1601,7 +1631,9 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
         const sequenceToken = ++timeTravelSequenceTokenRef.current;
         const startDelayMs = Math.max(0, Number(baseDelayMs || 0));
-        const stepDelayMs = 3000;
+        // 3000ms per rewound ply made a 4-ply rewind a ~16s cutscene. 650ms still
+        // reads clearly as discrete steps backwards without stalling the match.
+        const stepDelayMs = 650;
 
         setBoardVisualLockedForCutscene(true);
         setIsCardAnimationPlaying(true);
@@ -1680,11 +1712,21 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           break;
         }
         case 'time_travel': {
-          queueSequentialTimeTravelRewind(
+          // Time Travel is excluded from `shouldPlayAnimation`, so it is never
+          // queued behind the card-use reveal like other cutscene cards. Without
+          // this the rewind played UNDER the reveal overlay and was half over by
+          // the time the card cleared. Defer it until the reveal is done.
+          const revealInFlight = isCardAnimationPlayingRef.current || cardAnimationLockRef.current;
+          const runRewind = () => queueSequentialTimeTravelRewind(
             params?.preArcanaFen || latestFenRef.current || gameState?.fen || null,
             Array.isArray(params?.undone) ? params.undone : [],
             0,
           );
+          if (revealInFlight) {
+            pendingTimeTravelRef.current = runRewind;
+          } else {
+            runRewind();
+          }
           break;
         }
         case 'chaos_theory': {
@@ -1796,7 +1838,8 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
 
     // Lightweight handlers for server-only events to provide feedback
     const handlePiecePoisoned = (data) => {
-      try { soundManager.play('arcana:poison_touch'); } catch {}
+      // 'arcana:poison_touch' has no audio file; 'arcana:splash' is the poison clip.
+      try { soundManager.play('arcana:splash'); } catch {}
       appendCombatLog({ type: 'effect', text: `Poison applied${Array.isArray(data?.squares) ? ` at ${data.squares.join(', ')}` : ''}` });
       const squares = Array.isArray(data?.squares) ? data.squares.join(', ') : '';
       setPendingMoveError(squares ? `Pieces poisoned: ${squares}` : 'A piece has been poisoned');
@@ -2060,12 +2103,14 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           // Activate the arcana immediately with the selected target
           if (pendingActionRef.current) return; // Prevent double-click duplicate
           pendingActionRef.current = true;
-          usedArcanaThisTurnRef.current = true;
           socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: updatedParams }] }, (res) => {
             pendingActionRef.current = false;
             if (!res || !res.ok) {
               setPendingMoveError(res?.error || 'Failed to use arcana');
             } else {
+              // Only mark the turn's arcana as spent once the server confirms,
+              // otherwise a rejected use still blocks drawing for the turn.
+              usedArcanaThisTurnRef.current = true;
               setPendingMoveError('');
             }
           });
@@ -2073,21 +2118,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           setTargetingMode(null);
         }
       } else {
-        const targetDescription = {
-          'pawn': 'one of your pawns',
-          'piece': 'one of your pieces',
-          'pieceNoKing': 'one of your non-king pieces',
-          'pieceNoKingWithMoves': 'one of your non-king pieces that can move',
-          'pieceWithMoves': 'one of your pieces that has legal moves',
-          'pieceWithPushTarget': 'one of your pieces that can be pushed',
-          'knight': 'one of your knights',
-          'bishop': 'one of your bishops',
-          'enemyPiece': 'an enemy piece',
-          'enemyRook': 'an enemy rook',
-          'poisoned': 'a poisoned piece',
-          'square': 'any square'
-        }[targetType] || 'a valid target';
-        setPendingMoveError(`Invalid target - please select ${targetDescription}`);
+        setPendingMoveError(`Invalid target - please select ${getTargetTypePhrase(targetType)}`);
       }
       return;
     }
@@ -2866,18 +2897,22 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
           />
         )}
 
-        {!studioCameraRuntimeActive && (
-          <OrbitControls
-            ref={controlsRef}
-            enabled={!studioRuntimeSession}
-            enablePan={false}
-            maxPolarAngle={Math.PI / 2.2}
-            minDistance={6}
-            maxDistance={20}
-            mouseButtons={{ LEFT: MOUSE.PAN, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.ROTATE }}
-            touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
-          />
-        )}
+        {/* Controls stay MOUNTED at all times: the studio runtime host drives
+            `controls.target` directly and needs the ref to exist. Only lock user
+            input while a cutscene is actually driving the camera — gating on
+            `studioRuntimeSession` froze the camera for every sound-only card
+            (Fog of War, Antidote, Pot of Greed, ...) which have a studio
+            timeline but no camera track. */}
+        <OrbitControls
+          ref={controlsRef}
+          enabled={!studioCameraRuntimeActive}
+          enablePan={false}
+          maxPolarAngle={Math.PI / 2.2}
+          minDistance={6}
+          maxDistance={20}
+          mouseButtons={{ LEFT: MOUSE.PAN, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.ROTATE }}
+          touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }}
+        />
       </Canvas>
 
       {gameState?.timePerPlayer && (
@@ -3066,12 +3101,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
               // Activate immediately (guard against double-click)
               if (pendingActionRef.current) return;
               pendingActionRef.current = true;
-              usedArcanaThisTurnRef.current = true;
               socket.emit('playerAction', { actionType: 'useArcana', arcanaUsed: [{ arcanaId, params: {} }] }, (res) => {
                 pendingActionRef.current = false;
                 if (!res || !res.ok) {
                   setPendingMoveError(res?.error || 'Failed to use arcana');
                 } else {
+                  usedArcanaThisTurnRef.current = true;
                   setPendingMoveError('');
                 }
               });
@@ -3509,7 +3544,6 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                   onClick={() => {
                     if (pendingActionRef.current) return;
                     pendingActionRef.current = true;
-                    usedArcanaThisTurnRef.current = true;
                     socket.emit('playerAction', {
                       actionType: 'useArcana',
                       arcanaUsed: [{ arcanaId: filteredCycleDialog.arcanaId, params: { category: category.key } }],
@@ -3518,6 +3552,7 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                       if (!res || !res.ok) {
                         setPendingMoveError(res?.error || 'Failed to use arcana');
                       } else {
+                        usedArcanaThisTurnRef.current = true;
                         setPendingMoveError('');
                       }
                     });
@@ -3570,7 +3605,12 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
                 // but don't emit the ACK yet — wait until the cutscene actually
                 // starts so we don't accidentally ACK before visuals begin.
                 if (shouldDelayRevealAck) {
-                  pendingRevealIntentRef.current = cardReveal.playerId;
+                  // Only stash intent if the trigger handler has not already armed
+                  // the ACK, otherwise a redundant intent lingers and can be
+                  // mis-promoted onto a later card.
+                  if (!pendingRevealAckRef.current) {
+                    pendingRevealIntentRef.current = cardReveal.playerId;
+                  }
                 } else {
                   try {
                     socket.emit('arcanaRevealComplete', { playerId: cardReveal.playerId });
@@ -3632,7 +3672,13 @@ export function GameScene({ gameState, initialReplayPayload, settings, ascendedI
       {metamorphosisDialog && (
         <PieceSelectionDialog
           title="Transform Piece To:"
-          pieces={['r', 'b', 'n', 'p']}
+          // A pawn on rank 1/8 would be permanently immobile and produces a FEN
+          // chess.js cannot reload, so the server rejects it — don't offer it.
+          pieces={
+            metamorphosisDialog.square?.[1] === '1' || metamorphosisDialog.square?.[1] === '8'
+              ? ['r', 'b', 'n']
+              : ['r', 'b', 'n', 'p']
+          }
           onSelect={(pieceType) => {
             const updatedParams = { 
               targetSquare: metamorphosisDialog.square,
@@ -3861,22 +3907,7 @@ function ArcanaSidebar({ myArcana, usedArcanaIds, selectedArcanaId, onSelectArca
       return String(a.card?.name || a.card?.id || '').localeCompare(String(b.card?.name || b.card?.id || ''));
     });
   }, [availableArcana]);
-  const getTargetDescription = (targetType) => {
-    switch(targetType) {
-      case 'pawn': return 'Select a pawn';
-      case 'piece': return 'Select one of your pieces';
-      case 'pieceWithMoves': return 'Select a piece with legal moves';
-      case 'pieceWithPushTarget': return 'Select a piece that can be pushed';
-      case 'knight': return 'Select a knight';
-      case 'bishop': return 'Select a bishop';
-      case 'pieceNoQueenKing': return 'Select a piece (no king/queen)';
-      case 'pieceNoKing': return 'Select a piece (no king)';
-      case 'enemyPiece': return 'Select an enemy piece';
-      case 'enemyRook': return 'Select an enemy rook';
-      case 'square': return 'Select a square';
-      default: return 'Select a target';
-    }
-  };
+  const getTargetDescription = (targetType) => `Select ${getTargetTypePhrase(targetType)}`;
 
   useEffect(() => {
     const row = cardRowRef.current;
@@ -4117,20 +4148,6 @@ function CardRevealAnimation({ arcana, playerId, type, mySocketId, stayUntilClic
           0% { opacity: 1; transform: translateY(0); }
           100% { opacity: 0; transform: translateY(-20px); }
         }
-        
-        // @keyframes energyBurst {
-        //   0% { 
-        //     transform: translate(-50%, -50%) scale(0);
-        //     opacity: 0.9;
-        //   }
-        //   50% {
-        //     opacity: 0.6;
-        //   }
-        //   100% { 
-        //     transform: translate(-50%, -50%) scale(3);
-        //     opacity: 0;
-        //   }
-        // }
         
         @keyframes energyRingPulse {
           0%   { transform: scale(0.55); opacity: 0; border-width: 3px; }

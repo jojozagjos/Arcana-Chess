@@ -6,7 +6,7 @@ import { socket } from '../game/socket.js';
 import { soundManager } from '../game/soundManager.js';
 import { createDefaultActiveEffectsState } from '../game/activeEffectsState.js';
 import { getArcanaDefinition, listSortedArcanaDefinitions } from '../game/arcanaCatalog.js';
-import { getArcanaTargetLabel } from '../../../shared/arcana/arcanaContracts.js';
+import { getArcanaTargetPhrase } from '../../../shared/arcana/arcanaContracts.js';
 import { ArcanaCard } from './ArcanaCard.jsx';
 import { ChessPiece } from './ChessPiece.jsx';
 import { getArcanaEnhancedMoves } from '../game/arcanaMovesHelper.js';
@@ -389,9 +389,9 @@ export function CardBalancingToolV2({ onBack }) {
       setTargetingMode(true);
       setTargetSquare(null);
       
-      const targetDescription = getArcanaTargetLabel(selectedCard.id) || 'target';
-      
-      addLog(`Select a ${targetDescription} for ${selectedCard.name} (${validSquares.length} valid targets highlighted)`, 'info');
+      const targetDescription = getArcanaTargetPhrase(selectedCard.id) || 'a target';
+
+      addLog(`Select ${targetDescription} for ${selectedCard.name} (${validSquares.length} valid targets highlighted)`, 'info');
     } else {
       // For cards that don't need targets, check if they can be used
       const colorChar = playerColor === 'white' ? 'w' : 'b';
@@ -927,7 +927,7 @@ export function CardBalancingToolV2({ onBack }) {
     if (targetingMode && selectedCard) {
       // Check if this is a valid target
       if (!validTargetSquares.includes(square)) {
-        const targetDescription = getArcanaTargetLabel(selectedCard.id) || 'valid target';
+        const targetDescription = getArcanaTargetPhrase(selectedCard.id) || 'a valid target';
         addLog(`Invalid target! Please select ${targetDescription}`, 'error');
         return;
       }
