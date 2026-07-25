@@ -1653,56 +1653,6 @@ function applyEdgerunnerOverdrive({ chess, gameState, moverColor, params }) {
   };
 }
 
-function pickBestOverdriveMove(chess, fromSquare, moverColor, preferCapture = false) {
-  const moves = chess.moves({ square: fromSquare, verbose: true }) || [];
-  if (!moves.length) return null;
-
-  // Overdrive cannot capture kings.
-  const legalMoves = moves.filter((m) => m?.captured !== 'k');
-  if (!legalMoves.length) return null;
-
-  const captureMoves = legalMoves.filter((m) => !!m.captured);
-  if (preferCapture && captureMoves.length === 0) return null;
-
-  const candidateMoves = preferCapture ? captureMoves : legalMoves;
-
-  const enemyKingSquare = findKing(chess, moverColor === 'w' ? 'b' : 'w');
-  const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
-
-  let bestMove = null;
-  let bestScore = -Infinity;
-
-  for (const move of candidateMoves) {
-    let score = 0;
-
-    if (move.captured) score += 12 + (pieceValues[move.captured] || 0) * 11;
-    if (move.promotion) score += 7;
-    if (typeof move.san === 'string' && move.san.includes('+')) score += 4;
-
-    const file = move.to.charCodeAt(0) - 97;
-    const rank = parseInt(move.to[1], 10);
-    const centerDist = Math.abs(file - 3.5) + Math.abs(rank - 4.5);
-    score += (7 - centerDist) * 0.55;
-
-    if (moverColor === 'w') score += (rank - 1) * 0.25;
-    else score += (8 - rank) * 0.25;
-
-    if (enemyKingSquare) {
-      const kingFile = enemyKingSquare.charCodeAt(0) - 97;
-      const kingRank = parseInt(enemyKingSquare[1], 10);
-      const kingDist = Math.abs(file - kingFile) + Math.abs(rank - kingRank);
-      score += Math.max(0, 10 - kingDist) * 0.18;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestMove = move;
-    }
-  }
-
-  return bestMove;
-}
-
 // ============ HELPER FUNCTIONS ============
 
 /**
@@ -1789,33 +1739,6 @@ function revivePawns(gameState, moverColor, maxCount) {
   }
   
   return revived;
-}
-
-function reviveRandomCapturedNonPawn(gameState, moverColor) {
-  const chess = gameState.chess;
-  const captured = gameState.capturedByColor?.[moverColor] || [];
-  const nonPawns = captured.filter((p) => p.type && p.type !== 'p');
-  if (nonPawns.length === 0) return [];
-
-  const selected = nonPawns[Math.floor(Math.random() * nonPawns.length)];
-  const pieceType = selected.type;
-
-  const preferredRank = moverColor === 'w' ? '1' : '8';
-  const fallbackRank = moverColor === 'w' ? '2' : '7';
-  const ranksToTry = [preferredRank, fallbackRank];
-
-  for (const rank of ranksToTry) {
-    for (let file = 0; file < 8; file++) {
-      const square = 'abcdefgh'[file] + rank;
-      if (chess.get(square)) continue;
-      chess.put({ type: pieceType, color: moverColor }, square);
-      const idx = captured.findIndex((p) => p && p.type === pieceType);
-      if (idx !== -1) captured.splice(idx, 1);
-      return [square];
-    }
-  }
-
-  return [];
 }
 
 /**
